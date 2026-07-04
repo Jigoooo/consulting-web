@@ -49,7 +49,7 @@ pnpm --filter @consulting/db-schema drizzle:migrate
 
 # 5) 게이트 검증
 pnpm -r typecheck
-pnpm -r test          # 45 tests (실 DB/Redis 통합 포함)
+pnpm -r test          # 47 tests (실 DB/Redis 통합 포함)
 
 # 6) API 부팅 + health
 pnpm --filter @consulting/api build
@@ -73,12 +73,13 @@ curl -s localhost:3000/health/ready
 - [x] Hermes key 브라우저/계약 미노출
 - [x] Foundation Gate E2E + negative security 테스트
 
-## Phase 1-B/C Backend HTTP Adapter — 부분 완료
+## Phase 1-B/C/D Backend HTTP Adapter + Auth Session — 부분 완료
 
-- [x] `POST /auth/signup` — signup use-case를 strict contract 응답으로 노출(JWT 없음; Phase 1-D에서 인증 토큰 처리)
+- [x] `POST /auth/signup` — signup use-case를 strict bootstrap 응답으로 노출
+- [x] `POST /auth/login` — password verify → public user + JWT access/refresh envelope 반환, refresh token hash는 sessions에만 저장
 - [x] `POST /invitations` — owner/admin 공유링크 초대 생성(raw token은 생성 시 1회만 반환, tokenHash 미노출)
 - [x] `POST /invitations/preview` — 초대 landing용 비소모성 preview(token/tokenHash 미노출)
-- [x] `POST /invitations/accept` — 가입/로그인 후 token 수락 → membership 생성
+- [x] `POST /invitations/accept` — Bearer access token 필수, body userId 금지, 인증 사용자 기준 token 수락 → membership 생성
 - [x] HTTP contract adapter: Zod strict parse, domain error→HTTP status 매핑, response contract violation fail-fast
 
 ## 보안 원칙 (요약)
@@ -88,4 +89,4 @@ curl -s localhost:3000/health/ready
 - 접근권은 membership/invitation 으로만 발생 (ADR-0009)
 - 봇 invoke ≠ capability (ADR-0004)
 
-Phase 1 (백엔드 HTTP 계층 진행 중; UI + Hermes SSE는 후속 승인 범위) 착수는 주인님 명시 승인 후 진행.
+다음 백엔드 우선순위는 SSE/Hermes proxy와 chat/thread API다. UI + apps/web는 후속 승인 범위이며 Slack-like 디자인 리서치 후 착수한다.

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  AuthSessionResponseSchema,
   SignUpResponseSchema,
   PublicUserSchema,
   HealthResponseSchema,
@@ -59,6 +60,27 @@ describe('no secret leak in response contracts', () => {
       tokenHash: 'raw-or-hashed-internal-token',
     });
     expect(leakedTopLevelSecret.success).toBe(false);
+  });
+
+  it('AuthSessionResponse exposes only public user and intended tokens', () => {
+    const clean = {
+      user: {
+        id: '00000000-0000-0000-0000-000000000001',
+        email: 'a@b.com',
+        displayName: 'A',
+        status: 'active' as const,
+      },
+      tokens: { accessToken: 'access.jwt', refreshToken: 'refresh.jwt', expiresInSec: 900 },
+    };
+    expect(AuthSessionResponseSchema.parse(clean)).toEqual(clean);
+    expect(AuthSessionResponseSchema.safeParse({
+      ...clean,
+      user: { ...clean.user, passwordHash: 'hash' },
+    }).success).toBe(false);
+    expect(AuthSessionResponseSchema.safeParse({
+      ...clean,
+      jwtSecret: 'server-secret',
+    }).success).toBe(false);
   });
 
   it('HealthResponse requires all component statuses', () => {

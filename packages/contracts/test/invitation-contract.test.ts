@@ -36,7 +36,8 @@ describe('invitation contracts', () => {
 
   it('request/response schemas are strict for share-link invitation endpoints', () => {
     expect(() => InvitationPreviewRequestSchema.parse({ token: 'abc', extra: true })).toThrow();
-    expect(() => AcceptInvitationRequestSchema.parse({ token: 'abc', userId: cleanUuid(), extra: true })).toThrow();
+    expect(() => AcceptInvitationRequestSchema.parse({ token: 'abc', extra: true })).toThrow();
+    expect(() => AcceptInvitationRequestSchema.parse({ token: 'abc', userId: cleanUuid() })).toThrow();
     expect(() => CreateInvitationRequestSchema.parse(validCreateRequest({ unknown: true }))).toThrow();
     expect(() => CreateInvitationResponseSchema.parse({ invitationId: cleanUuid(), token: 'raw', tokenHash: 'hash' })).toThrow();
     expect(() => AcceptInvitationResponseSchema.parse({ membershipId: cleanUuid(), token: 'raw' })).toThrow();

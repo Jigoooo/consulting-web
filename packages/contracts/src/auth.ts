@@ -25,7 +25,7 @@ export const PublicUserSchema = z.object({
   id: z.string().uuid(),
   email: EmailSchema,
   displayName: z.string(),
-  status: z.enum(['active', 'suspended', 'deleted_soft']),
+  status: z.enum(['active', 'archived', 'suspended', 'deleted_soft']),
 }).strict();
 export type PublicUser = z.infer<typeof PublicUserSchema>;
 
@@ -35,6 +35,12 @@ export const AuthTokensSchema = z.object({
   expiresInSec: z.number().int().positive(),
 }).strict();
 export type AuthTokens = z.infer<typeof AuthTokensSchema>;
+
+export const AuthSessionResponseSchema = z.object({
+  user: PublicUserSchema,
+  tokens: AuthTokensSchema,
+}).strict();
+export type AuthSessionResponse = z.infer<typeof AuthSessionResponseSchema>;
 
 export const SignUpResponseSchema = z.object({
   user: PublicUserSchema,

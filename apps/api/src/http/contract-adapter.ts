@@ -8,26 +8,23 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import type { DomainError } from '@consulting/shared';
-import { ZodError, type ZodSchema } from 'zod';
+import type { ZodSchema } from 'zod';
 
 export function parseBody<T>(schema: ZodSchema<T>, body: unknown): T {
-  try {
-    return schema.parse(body);
-  } catch (e) {
-    if (e instanceof ZodError) {
-      throw new BadRequestException({ code: 'VALIDATION', message: 'invalid request body' });
-    }
-    throw e;
+  const result = schema.safeParse(body);
+  if (!result.success) {
+    throw new BadRequestException({ code: 'VALIDATION', message: 'invalid request body' });
   }
+  return result.data;
 }
 
 export function parseResponse<T>(schema: ZodSchema<T>, body: unknown): T {
-  try {
-    return schema.parse(body);
-  } catch {
+  const result = schema.safeParse(body);
+  if (!result.success) {
     // Response contract mismatch is a server bug. Do not leak schema internals.
     throw new InternalServerErrorException({ code: 'INTERNAL', message: 'response contract violation' });
   }
+  return result.data;
 }
 
 export function throwDomainError(error: DomainError): never {

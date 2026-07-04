@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, Inject, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, Inject, Post, Req, UseGuards } from '@nestjs/common';
 import {
   AcceptInvitationRequestSchema,
   AcceptInvitationResponseSchema,
@@ -9,6 +9,7 @@ import {
 } from '@consulting/contracts';
 import { InvitationUseCase } from './invitation.usecase.js';
 import { parseBody, parseResponse, throwDomainError } from '../http/contract-adapter.js';
+import { AccessTokenGuard, requireAuthUserId, type AuthenticatedRequest } from '../auth/access-token.guard.js';
 
 @Controller('invitations')
 export class InvitationController {
@@ -43,9 +44,10 @@ export class InvitationController {
   }
 
   @Post('accept')
-  async accept(@Body() body: unknown) {
+  @UseGuards(AccessTokenGuard)
+  async accept(@Body() body: unknown, @Req() req: AuthenticatedRequest) {
     const cmd = parseBody(AcceptInvitationRequestSchema, body);
-    const result = await this.invitationUseCase.accept(cmd);
+    const result = await this.invitationUseCase.accept({ token: cmd.token, userId: requireAuthUserId(req) });
     if (!result.ok) return throwDomainError(result.error);
     return parseResponse(AcceptInvitationResponseSchema, result.value);
   }

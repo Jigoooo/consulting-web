@@ -41,7 +41,6 @@ export type InvitationPreviewResponse = z.infer<typeof InvitationPreviewResponse
 
 export const AcceptInvitationRequestSchema = z.object({
   token: z.string().min(1),
-  userId: UuidSchema,
 }).strict();
 export type AcceptInvitationRequest = z.infer<typeof AcceptInvitationRequestSchema>;
 
