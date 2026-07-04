@@ -47,8 +47,18 @@ describe('no secret leak in response contracts', () => {
     };
     const parsed = SignUpResponseSchema.parse(clean);
     expect(parsed.user.email).toBe('a@b.com');
-    // strict-ish: injecting password_hash must not survive into typed user shape
-    expect(Object.keys(parsed.user)).not.toContain('password_hash');
+
+    const leakedUserSecret = SignUpResponseSchema.safeParse({
+      ...clean,
+      user: { ...clean.user, passwordHash: 'hash-that-must-not-cross-contract' },
+    });
+    expect(leakedUserSecret.success).toBe(false);
+
+    const leakedTopLevelSecret = SignUpResponseSchema.safeParse({
+      ...clean,
+      tokenHash: 'raw-or-hashed-internal-token',
+    });
+    expect(leakedTopLevelSecret.success).toBe(false);
   });
 
   it('HealthResponse requires all component statuses', () => {

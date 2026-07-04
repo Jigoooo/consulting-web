@@ -12,8 +12,8 @@ export const HealthResponseSchema = z.object({
     redis: HealthComponentSchema,
     bullmq: HealthComponentSchema,
     hermes: HealthComponentSchema,
-  }),
+  }).strict(),
   version: z.string(),
   time: z.string().datetime(),
-});
+}).strict();
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
