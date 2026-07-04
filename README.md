@@ -22,7 +22,8 @@
 ```
 apps/api            NestJS 백엔드 (config/infra/health/permissions/auth/organization/spaces/chat/queues)
 packages/shared     Result 타입, 스코프 어휘, 위험등급 (ADR-0002/0004)
-packages/contracts  Zod API 계약 (health/auth/invitation/chat/spaces) — strict response/event + secret 미노출 강제
+packages/contracts  Zod API 계약 (health/error/auth/invitation/chat/spaces) — strict response/event + secret 미노출 강제
+packages/api-client 브라우저/서버 공용 타입안전 클라이언트 (fetch + SSE 파서 + ApiClientError)
 packages/db-schema  Drizzle 스키마 (23 tables) + 마이그레이션 러너
 tooling/*           공용 tsconfig, eslint(boundary) 설정
 ```
@@ -49,7 +50,7 @@ pnpm --filter @consulting/db-schema drizzle:migrate
 
 # 5) 게이트 검증
 pnpm -r typecheck
-pnpm -r test          # 53 tests (실 DB/Redis 통합 포함)
+pnpm -r test          # 62 tests (실 DB/Redis 통합 포함)
 
 # 6) API 부팅 + health
 pnpm --filter @consulting/api build
@@ -83,6 +84,9 @@ curl -s localhost:3000/health/ready
 - [x] HTTP contract adapter: Zod strict parse, domain error→HTTP status 매핑, response contract violation fail-fast
 - [x] `POST /chat/stream` — Bearer access token 필수, thread workspace membership 검증, 권한 없는 사용자 403, 실제 Hermes API Server(`/v1/runs`+`/v1/runs/{id}/events`)로 proxy하여 strict SSE(start/delta/done/error)로 변환 (Hermes key/JWT secret 미노출, 서버측만 호출)
 - [x] `POST /spaces/projects|channels|topics|threads` — Bearer access token 필수, workspace membership 검증, Project→Channel→Topic→Thread 생성 후 stream 연결 가능
+- [x] `POST /invitations` — Bearer access token 필수, inviter는 토큰에서 파생(body invitedByUserId 금지=스푸핑 차단), workspace owner/admin만 발행
+- [x] `ApiError` 계약({code,message}) — 브라우저가 실패를 타입 안전하게 파싱, shared DomainErrorCode와 정합
+- [x] `@consulting/api-client` — signup/login/invite preview·accept/space·thread 생성/chat SSE 구독을 타입 안전 함수로 노출, `ApiClientError.code`로 분기, 실제 API+Hermes E2E smoke 통과
 
 ## 보안 원칙 (요약)
 
@@ -91,7 +95,7 @@ curl -s localhost:3000/health/ready
 - 접근권은 membership/invitation 으로만 발생 (ADR-0009)
 - 봇 invoke ≠ capability (ADR-0004)
 
-Hermes SSE proxy 연결이 완료됐다. 다음 백엔드 우선순위는 초대 landing/API 클라이언트 준비다. UI + apps/web는 후속 승인 범위이며 Slack-like 디자인 리서치 후 착수한다.
+Hermes SSE proxy 연결 + 타입안전 api-client + 초대 발행 하드닝이 완료됐다. 다음 백엔드 우선순위는 apps/web 스캐폴딩(인증/초대 UI → workspace shell)이다. UI는 Slack-like 디자인 리서치 후 착수한다.
 
 ### Hermes API Server 연동 (운영 메모)
 

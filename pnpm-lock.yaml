@@ -106,6 +106,31 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.0)(terser@5.48.0)
 
+  packages/api-client:
+    dependencies:
+      '@consulting/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
+      '@consulting/eslint-config':
+        specifier: workspace:*
+        version: link:../../tooling/eslint-config
+      '@consulting/tsconfig':
+        specifier: workspace:*
+        version: link:../../tooling/tsconfig
+      eslint:
+        specifier: ^9.17.0
+        version: 9.39.4
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@26.1.0)(terser@5.48.0)
+
   packages/contracts:
     dependencies:
       '@consulting/shared':
