@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Consulting Web — C안 목업 (Slack 골격 + Linear 밀도 + Notion 표면)</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg-canvas: #ffffff;
+    --bg-sidebar: #f7f8f8;
+    --bg-rail: #191a1b;
+    --bg-surface-warm: #f6f5f4;
+    --text-primary: rgba(0,0,0,0.95);
+    --text-secondary: #615d59;
+    --text-muted: #a39e98;
+    --border-whisper: rgba(0,0,0,0.1);
+    --border-subtle: rgba(0,0,0,0.06);
+    --accent: #5e6ad2;
+    --accent-hover: #7170ff;
+    --link: #0075de;
+    --status-green: #1aae39;
+    --status-amber: #dd5b00;
+    --radius-btn: 6px;
+    --radius-card: 12px;
+    --radius-pill: 9999px;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    font-feature-settings: 'cv01','ss03';
+    color: var(--text-primary);
+    background: var(--bg-canvas);
+    -webkit-font-smoothing: antialiased;
+  }
+  .app {
+    display: grid;
+    grid-template-columns: 56px 260px minmax(560px, 1fr) 320px;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ---- WS RAIL (56px, dark accent) ---- */
+  .rail {
+    background: var(--bg-rail);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 12px 0;
+    gap: 10px;
+  }
+  .rail .ws {
+    width: 38px; height: 38px; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; font-weight: 600; cursor: pointer;
+    color: #f7f8f8; background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.06);
+    transition: all .15s ease;
+  }
+  .rail .ws.active {
+    background: var(--accent);
+    border-radius: 14px;
+    box-shadow: 0 0 0 2px rgba(94,106,210,0.35);
+  }
+  .rail .ws:hover { border-radius: 14px; background: rgba(255,255,255,0.14); }
+  .rail .spacer { flex: 1; }
+  .rail .add {
+    width: 38px; height: 38px; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; color: #a3ffb0; background: rgba(26,174,57,0.14);
+    border: 1px dashed rgba(26,174,57,0.4); cursor: pointer;
+  }
+
+  /* ---- SPACE SIDEBAR (260px) ---- */
+  .sidebar {
+    background: var(--bg-sidebar);
+    border-right: 1px solid var(--border-whisper);
+    display: flex; flex-direction: column;
+    overflow-y: auto;
+  }
+  .sidebar .ws-head {
+    padding: 16px 16px 12px;
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .ws-head .name { font-size: 15px; font-weight: 600; letter-spacing: -0.2px; }
+  .ws-head .role { font-size: 11px; color: var(--text-muted); font-weight: 500; }
+  .search {
+    margin: 12px; padding: 7px 10px;
+    background: #fff; border: 1px solid var(--border-whisper);
+    border-radius: var(--radius-btn);
+    font-size: 13px; color: var(--text-muted);
+    display: flex; align-items: center; justify-content: space-between;
+    cursor: pointer;
+  }
+  .search kbd {
+    font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+    background: var(--bg-surface-warm); border: 1px solid var(--border-subtle);
+    border-radius: 4px; padding: 1px 5px;
+  }
+  .tree { padding: 4px 8px 16px; }
+  .proj { margin-top: 8px; }
+  .proj > .row {
+    padding: 5px 8px; font-size: 12px; font-weight: 600;
+    color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.4px;
+    display: flex; align-items: center; gap: 6px; cursor: pointer;
+  }
+  .chan { padding-left: 6px; }
+  .chan > .row {
+    padding: 5px 8px; font-size: 14px; font-weight: 510; color: var(--text-primary);
+    display: flex; align-items: center; gap: 7px; cursor: pointer; border-radius: 6px;
+  }
+  .chan > .row:hover { background: rgba(0,0,0,0.04); }
+  .topic {
+    padding: 4px 8px 4px 30px; font-size: 13px; color: var(--text-secondary);
+    display: flex; align-items: center; gap: 7px; cursor: pointer; border-radius: 6px;
+  }
+  .topic:hover { background: rgba(0,0,0,0.04); }
+  .topic.active {
+    background: rgba(94,106,210,0.1); color: var(--accent);
+    font-weight: 510;
+  }
+  .topic .hash { color: var(--text-muted); font-family: var(--mono); font-size: 12px; }
+  .topic.active .hash { color: var(--accent); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--status-green); display:inline-block; }
+  .new-proj {
+    margin: 8px; padding: 7px; font-size: 13px; color: var(--text-secondary);
+    border: 1px dashed var(--border-whisper); border-radius: 6px; text-align: center; cursor: pointer;
+  }
+
+  /* ---- THREAD CENTER ---- */
+  .thread { display: flex; flex-direction: column; background: var(--bg-canvas); overflow: hidden; }
+  .thread-head {
+    padding: 12px 20px; border-bottom: 1px solid var(--border-whisper);
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .crumb { font-size: 12px; color: var(--text-muted); font-weight: 500; }
+  .crumb b { color: var(--text-secondary); font-weight: 510; }
+  .thread-title { font-size: 20px; font-weight: 590; letter-spacing: -0.24px; }
+  .stream { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 18px; }
+  .msg { display: flex; gap: 12px; }
+  .msg .avatar {
+    width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 600; color: #fff;
+  }
+  .msg.user .avatar { background: #6b7280; }
+  .msg.ai .avatar { background: var(--accent); }
+  .msg .body { flex: 1; }
+  .msg .meta { display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px; }
+  .msg .who { font-size: 14px; font-weight: 590; }
+  .msg .time { font-size: 12px; color: var(--text-muted); }
+  .msg .runid { font-family: var(--mono); font-size: 11px; color: var(--text-muted); background: var(--bg-surface-warm); border-radius: 4px; padding: 1px 5px; }
+  .msg .text { font-size: 15px; line-height: 1.6; color: var(--text-primary); }
+  .msg .text .cursor { display:inline-block; width: 7px; background: var(--accent); color: transparent; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .composer { padding: 14px 20px 18px; border-top: 1px solid var(--border-whisper); }
+  .composer .box {
+    border: 1px solid var(--border-whisper); border-radius: var(--radius-card);
+    padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+    background: #fff;
+  }
+  .composer textarea {
+    border: none; outline: none; resize: none; font: inherit; font-size: 15px;
+    color: var(--text-primary); min-height: 22px;
+  }
+  .composer .actions { display: flex; justify-content: space-between; align-items: center; }
+  .composer .hint { font-size: 12px; color: var(--text-muted); }
+  .btn {
+    font: inherit; font-size: 14px; font-weight: 510; cursor: pointer;
+    padding: 7px 14px; border-radius: var(--radius-btn); border: 1px solid transparent;
+  }
+  .btn.primary { background: var(--accent); color: #fff; }
+  .btn.primary:hover { background: var(--accent-hover); }
+  .btn.ghost { background: transparent; color: var(--text-secondary); border-color: var(--border-whisper); }
+
+  /* ---- CONTEXT PANEL (320px) ---- */
+  .context { background: var(--bg-sidebar); border-left: 1px solid var(--border-whisper); display: flex; flex-direction: column; overflow-y: auto; }
+  .context .tabs { display: flex; border-bottom: 1px solid var(--border-whisper); }
+  .context .tab { flex: 1; text-align: center; padding: 11px 0; font-size: 13px; font-weight: 510; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent; }
+  .context .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .context .section { padding: 14px 16px; }
+  .context h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-muted); margin-bottom: 10px; }
+  .card {
+    background: #fff; border: 1px solid var(--border-whisper); border-radius: var(--radius-card);
+    padding: 12px; margin-bottom: 10px;
+    box-shadow: rgba(0,0,0,0.04) 0 4px 18px, rgba(0,0,0,0.02) 0 0.8px 2.9px;
+  }
+  .card .t { font-size: 14px; font-weight: 590; margin-bottom: 4px; }
+  .card .d { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
+  .pill { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: 0.1px; padding: 3px 8px; border-radius: var(--radius-pill); background: #f2f9ff; color: #097fe8; }
+  .member { display: flex; align-items: center; gap: 9px; padding: 6px 0; }
+  .member .av { width: 26px; height: 26px; border-radius: 7px; background: #6b7280; color:#fff; display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600; }
+  .member .mn { font-size: 13px; font-weight: 510; }
+  .member .mr { font-size: 11px; color: var(--text-muted); margin-left: auto; }
+  .badge-soon { font-size: 10px; color: var(--text-muted); border: 1px dashed var(--border-whisper); border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- WS RAIL -->
+  <div class="rail">
+    <div class="ws active" title="지구 개인 workspace">지</div>
+    <div class="ws" title="창원시 컨설팅">창</div>
+    <div class="ws" title="A사 프로젝트">A</div>
+    <div class="ws" title="B사 프로젝트">B</div>
+    <div class="spacer"></div>
+    <div class="add" title="workspace 추가 / 초대">+</div>
+  </div>
+
+  <!-- SPACE SIDEBAR -->
+  <div class="sidebar">
+    <div class="ws-head">
+      <div>
+        <div class="name">지구 Workspace</div>
+        <div class="role">owner · 개인</div>
+      </div>
+    </div>
+    <div class="search"><span>검색…</span><kbd>⌘K</kbd></div>
+    <div class="tree">
+      <div class="proj">
+        <div class="row">▾ 창원시 적정성 검토</div>
+        <div class="chan">
+          <div class="row"># 진단</div>
+          <div class="topic"><span class="hash">#</span> 인구·재정 지표</div>
+          <div class="topic active"><span class="hash">#</span> 서비스 연속성 <span class="dot"></span></div>
+          <div class="topic"><span class="hash">#</span> 이관 타당성</div>
+        </div>
+        <div class="chan">
+          <div class="row"># 보고서</div>
+          <div class="topic"><span class="hash">#</span> 초안 v2</div>
+        </div>
+      </div>
+      <div class="proj">
+        <div class="row">▾ 데이터 파이프라인</div>
+        <div class="chan">
+          <div class="row"># 파싱</div>
+          <div class="topic"><span class="hash">#</span> GBrain 임베딩</div>
+        </div>
+      </div>
+      <div class="new-proj">+ 새 프로젝트</div>
+    </div>
+  </div>
+
+  <!-- THREAD CENTER -->
+  <div class="thread">
+    <div class="thread-head">
+      <div class="crumb">창원시 적정성 검토 <b>›</b> 진단 <b>›</b> 서비스 연속성</div>
+      <div class="thread-title">이관 시 서비스 연속성 리스크 정리</div>
+    </div>
+    <div class="stream">
+      <div class="msg user">
+        <div class="avatar">주</div>
+        <div class="body">
+          <div class="meta"><span class="who">주인님</span><span class="time">오후 2:14</span></div>
+          <div class="text">서비스 연속성 관점에서 이관 시 주민 편익이 훼손되지 않는지 핵심 리스크만 3가지로 정리해줘.</div>
+        </div>
+      </div>
+      <div class="msg ai">
+        <div class="avatar">🌍</div>
+        <div class="body">
+          <div class="meta"><span class="who">지구</span><span class="time">오후 2:14</span><span class="runid">run_a91f…c2</span></div>
+          <div class="text">서비스 연속성 핵심 리스크는 세 가지입니다. 첫째, 인수인계 공백기 동안의 민원 처리 지연. 둘째, 기존 위탁계약의 승계 불확실성. 셋째, 현장 인력의 숙련도 이전<span class="cursor">▉</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="composer">
+      <div class="box">
+        <textarea placeholder="메시지를 입력하세요…  (Enter 전송, Shift+Enter 줄바꿈)"></textarea>
+        <div class="actions">
+          <span class="hint">스트리밍 중엔 취소 버튼으로 중단할 수 있어요</span>
+          <div style="display:flex; gap:8px;">
+            <button class="btn ghost">취소</button>
+            <button class="btn primary">전송</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONTEXT PANEL -->
+  <div class="context">
+    <div class="tabs">
+      <div class="tab active">근거</div>
+      <div class="tab">산출물</div>
+      <div class="tab">활동</div>
+      <div class="tab">멤버</div>
+    </div>
+    <div class="section">
+      <h4>연결된 근거 <span class="badge-soon">Phase 2</span></h4>
+      <div class="card">
+        <div class="t">창원시 위탁계약 현황 <span class="pill">PDF</span></div>
+        <div class="d">2024~2026 위탁계약 12건 요약. 승계 조항 존재 여부 표기.</div>
+      </div>
+      <div class="card">
+        <div class="t">주민 민원 처리 통계 <span class="pill">XLSX</span></div>
+        <div class="d">월별 민원 접수·처리 소요일. 공백기 리스크 산정 근거.</div>
+      </div>
+    </div>
+    <div class="section">
+      <h4>멤버</h4>
+      <div class="member"><div class="av">주</div><div class="mn">주인님</div><div class="mr">owner</div></div>
+      <div class="member"><div class="av" style="background:var(--accent)">🌍</div><div class="mn">지구 (AI)</div><div class="mr">assistant</div></div>
+      <div class="member"><div class="av" style="background:#2a9d99">김</div><div class="mn">김담당</div><div class="mr">editor</div></div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

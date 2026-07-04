@@ -21,6 +21,7 @@
 
 ```
 apps/api            NestJS 백엔드 (config/infra/health/permissions/auth/organization/spaces/chat/queues)
+apps/web            React SPA (TanStack Router 파일기반 + Vite + CSS 토큰 + GSAP) — 4분할 앱 셸
 packages/shared     Result 타입, 스코프 어휘, 위험등급 (ADR-0002/0004)
 packages/contracts  Zod API 계약 (health/error/auth/invitation/chat/spaces) — strict response/event + secret 미노출 강제
 packages/api-client 브라우저/서버 공용 타입안전 클라이언트 (fetch + SSE 파서 + ApiClientError)
@@ -95,7 +96,15 @@ curl -s localhost:3000/health/ready
 - 접근권은 membership/invitation 으로만 발생 (ADR-0009)
 - 봇 invoke ≠ capability (ADR-0004)
 
-Hermes SSE proxy 연결 + 타입안전 api-client + 초대 발행 하드닝이 완료됐다. 다음 백엔드 우선순위는 apps/web 스캐폴딩(인증/초대 UI → workspace shell)이다. UI는 Slack-like 디자인 리서치 후 착수한다.
+Hermes SSE proxy 연결 + 타입안전 api-client + 초대 발행 하드닝이 완료됐다. Phase 1-K 스캐폴딩 완료: apps/web(TanStack Router 파일기반 라우팅 + Vite + React 19 + CSS 토큰 + GSAP + TanStack Query), 4분할 앱 셸/ThreadView 셸 렌더 검증(typecheck/build/dev). 다음은 Phase 1-L 인증/초대 UI다. UI 세부 방침은 plans/consulting-web-phase1j-ui-direction.md §8(파일기반 라우팅, 최신 docs 준수, 반응형, reactbits/magicui/21st.dev 모션 패턴 적용).
+
+### apps/web 로컬 실행
+
+```bash
+pnpm --filter @consulting/web dev     # http://127.0.0.1:5273 (Vite, /api → NestJS 프록시)
+pnpm --filter @consulting/web build   # vite build (routeTree.gen.ts 자동 생성)
+pnpm --filter @consulting/web typecheck
+```
 
 ### Hermes API Server 연동 (운영 메모)
 

@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Consulting Web — C안+ 고도화 목업</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg-canvas: #ffffff;
+    --bg-sidebar: #fbfbfa;
+    --bg-rail: #0f1011;
+    --bg-rail-2: #191a1b;
+    --bg-warm: #f7f6f4;
+    --text-primary: #1a1a19;
+    --text-secondary: #6b6862;
+    --text-muted: #a8a49d;
+    --border-whisper: rgba(15,16,17,0.08);
+    --border-hair: rgba(15,16,17,0.05);
+    --accent: #5e6ad2;
+    --accent-hi: #7170ff;
+    --accent-soft: rgba(94,106,210,0.10);
+    --accent-glow: rgba(94,106,210,0.28);
+    --link: #0075de;
+    --green: #1aae39;
+    --amber: #dd8a00;
+    --radius-btn: 7px;
+    --radius-card: 14px;
+    --radius-pill: 9999px;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --shadow-card: rgba(15,16,17,0.04) 0 1px 2px, rgba(15,16,17,0.04) 0 6px 20px -8px;
+    --shadow-pop: rgba(15,16,17,0.10) 0 8px 30px -6px, rgba(15,16,17,0.06) 0 2px 6px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    font-feature-settings: 'cv01','ss03','cv11';
+    color: var(--text-primary);
+    background: var(--bg-canvas);
+    -webkit-font-smoothing: antialiased;
+    letter-spacing: -0.01em;
+  }
+  .app { display: grid; grid-template-columns: 64px 268px minmax(560px,1fr) 340px; height: 100vh; overflow: hidden; }
+
+  /* RAIL */
+  .rail { background: linear-gradient(180deg,#141517 0%, #0d0e0f 100%); display: flex; flex-direction: column; align-items: center; padding: 14px 0; gap: 4px; position: relative; }
+  .rail .grp-label { font-size: 9px; font-weight: 600; color: rgba(255,255,255,0.28); letter-spacing: 0.6px; text-transform: uppercase; margin: 8px 0 2px; }
+  .ws-wrap { position: relative; display:flex; align-items:center; justify-content:center; width: 100%; }
+  .ws-wrap .bar { position: absolute; left: 0; width: 3px; height: 0; background: #fff; border-radius: 0 3px 3px 0; transition: height .2s ease; }
+  .ws-wrap.active .bar { height: 24px; }
+  .ws { width: 40px; height: 40px; border-radius: 13px; display:flex; align-items:center; justify-content:center; font-size:15px; font-weight:600; cursor:pointer; color:#e9eaec; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.05); transition: all .16s cubic-bezier(.2,.8,.2,1); }
+  .ws:hover { border-radius: 15px; background: rgba(255,255,255,0.13); transform: translateY(-1px); }
+  .ws-wrap.active .ws { background: linear-gradient(135deg,#5e6ad2,#7170ff); border-color: transparent; border-radius: 15px; box-shadow: 0 0 0 3px var(--accent-glow), 0 4px 14px -4px var(--accent-glow); }
+  .rail .spacer { flex: 1; }
+  .rail .rbtn { width: 40px; height: 40px; border-radius: 13px; display:flex;align-items:center;justify-content:center; font-size:18px; color: rgba(255,255,255,0.55); background: rgba(255,255,255,0.05); cursor:pointer; }
+  .rail .rbtn:hover { color:#fff; background: rgba(255,255,255,0.12); }
+
+  /* SIDEBAR */
+  .sidebar { background: var(--bg-sidebar); border-right: 1px solid var(--border-whisper); display:flex; flex-direction:column; overflow-y:auto; }
+  .ws-head { padding: 16px 16px 14px; display:flex; align-items:center; gap:10px; border-bottom: 1px solid var(--border-hair); }
+  .ws-head .ico { width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,#5e6ad2,#7170ff);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;font-size:14px; }
+  .ws-head .name { font-size: 14.5px; font-weight: 600; letter-spacing: -0.2px; }
+  .ws-head .sub { font-size: 11px; color: var(--text-muted); font-weight: 500; margin-top:1px; }
+  .ws-head .chev { margin-left:auto; color: var(--text-muted); font-size: 12px; }
+  .search { margin: 12px 12px 6px; padding: 8px 11px; background:#fff; border:1px solid var(--border-whisper); border-radius: var(--radius-btn); font-size:13px; color:var(--text-muted); display:flex; align-items:center; gap:8px; cursor:pointer; box-shadow: var(--shadow-card); }
+  .search svg { opacity:.5; }
+  .search .k { margin-left:auto; font-family:var(--mono); font-size:10.5px; color:var(--text-muted); background:var(--bg-warm); border:1px solid var(--border-hair); border-radius:4px; padding:1px 5px; }
+  .tree { padding: 6px 8px 20px; }
+  .sec-label { padding: 10px 8px 4px; font-size: 10.5px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .proj-row { padding: 5px 8px; font-size: 13px; font-weight: 600; color: var(--text-secondary); display:flex; align-items:center; gap:6px; cursor:pointer; border-radius:6px; }
+  .proj-row:hover { background: rgba(15,16,17,0.035); }
+  .proj-row .cx { color: var(--text-muted); font-size:10px; }
+  .chan-row { padding: 5px 8px 5px 20px; font-size: 13.5px; font-weight: 510; color: var(--text-primary); display:flex; align-items:center; gap:7px; cursor:pointer; border-radius:6px; }
+  .chan-row:hover { background: rgba(15,16,17,0.035); }
+  .topic { margin-left: 20px; padding: 5px 10px; font-size: 13px; color: var(--text-secondary); display:flex; align-items:center; gap:8px; cursor:pointer; border-radius:7px; position:relative; }
+  .topic:hover { background: rgba(15,16,17,0.035); }
+  .topic.active { background: var(--accent-soft); color: var(--accent); font-weight: 560; }
+  .topic .hash { font-family: var(--mono); font-size:12px; color: var(--text-muted); }
+  .topic.active .hash { color: var(--accent); }
+  .topic .live { margin-left:auto; width:6px;height:6px;border-radius:50%;background:var(--green); box-shadow:0 0 0 3px rgba(26,174,57,0.15); }
+  .topic .unread { margin-left:auto; font-size:10.5px; font-weight:600; color:#fff; background:var(--accent); border-radius:9999px; padding:0 6px; min-width:17px; text-align:center; }
+  .new-proj { margin: 10px 8px; padding: 8px; font-size:12.5px; color: var(--text-secondary); border:1px dashed var(--border-whisper); border-radius:8px; text-align:center; cursor:pointer; }
+  .new-proj:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* THREAD */
+  .thread { display:flex; flex-direction:column; overflow:hidden; background: var(--bg-canvas); }
+  .thread-head { padding: 13px 22px; border-bottom: 1px solid var(--border-whisper); display:flex; align-items:center; gap:14px; backdrop-filter: blur(8px); background: rgba(255,255,255,0.75); }
+  .thread-head .tt { display:flex; flex-direction:column; gap:3px; }
+  .crumb { font-size: 11.5px; color: var(--text-muted); font-weight:500; display:flex; align-items:center; gap:6px; }
+  .crumb .sep { opacity:.5; }
+  .thread-title { font-size: 18px; font-weight: 600; letter-spacing: -0.3px; }
+  .thread-head .right { margin-left:auto; display:flex; align-items:center; gap:10px; }
+  .status-chip { display:flex; align-items:center; gap:6px; font-size:11.5px; font-weight:560; color:var(--green); background: rgba(26,174,57,0.09); border:1px solid rgba(26,174,57,0.2); border-radius:var(--radius-pill); padding:4px 10px; }
+  .status-chip .pulse { width:6px;height:6px;border-radius:50%;background:var(--green); animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  .icon-btn { width:30px;height:30px;border-radius:8px;border:1px solid var(--border-whisper);background:#fff;color:var(--text-secondary);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px; }
+
+  .stream { flex:1; overflow-y:auto; padding: 24px 22px; display:flex; flex-direction:column; gap:22px; }
+  .day-div { display:flex; align-items:center; gap:12px; color:var(--text-muted); font-size:11px; font-weight:500; }
+  .day-div::before, .day-div::after { content:''; flex:1; height:1px; background: var(--border-hair); }
+  .msg { display:flex; gap:13px; }
+  .avatar { width:34px;height:34px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;color:#fff; }
+  .msg.user .avatar { background: linear-gradient(135deg,#8b8f98,#6b6f78); }
+  .msg.ai .avatar { background: linear-gradient(135deg,#5e6ad2,#7170ff); box-shadow: 0 3px 10px -3px var(--accent-glow); }
+  .msg .body { flex:1; min-width:0; }
+  .msg .meta { display:flex; align-items:center; gap:9px; margin-bottom:4px; }
+  .msg .who { font-size: 14px; font-weight: 600; }
+  .msg .time { font-size: 11.5px; color: var(--text-muted); }
+  .msg .runid { font-family:var(--mono); font-size:10.5px; color:var(--text-secondary); background: var(--bg-warm); border:1px solid var(--border-hair); border-radius:5px; padding:1px 6px; }
+  .msg .text { font-size: 15px; line-height: 1.65; color: var(--text-primary); }
+  .tool-strip { margin-top:10px; display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-secondary); background: var(--bg-warm); border:1px solid var(--border-hair); border-radius:9px; padding:7px 11px; width:fit-content; }
+  .tool-strip .sp { width:13px;height:13px;border:2px solid var(--accent);border-right-color:transparent;border-radius:50%;animation:spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .tool-strip .done { color: var(--green); font-weight:600; }
+  .cursor { display:inline-block; width:7px; height:16px; vertical-align:-2px; background:var(--accent); border-radius:2px; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .composer { padding: 12px 22px 20px; }
+  .composer .box { border:1px solid var(--border-whisper); border-radius:var(--radius-card); background:#fff; box-shadow: var(--shadow-card); transition: box-shadow .18s, border-color .18s; }
+  .composer .box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .composer .top { padding: 12px 14px 6px; }
+  .composer textarea { width:100%; border:none; outline:none; resize:none; font:inherit; font-size:15px; color:var(--text-primary); }
+  .composer .bar { display:flex; align-items:center; gap:8px; padding: 6px 12px 10px; }
+  .composer .tool { width:28px;height:28px;border-radius:7px;border:1px solid var(--border-hair);background:var(--bg-warm);color:var(--text-secondary);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px; }
+  .composer .hint { font-size:11.5px; color:var(--text-muted); margin-left:4px; }
+  .composer .send-wrap { margin-left:auto; display:flex; gap:8px; }
+  .btn { font:inherit; font-size:13.5px; font-weight:560; cursor:pointer; padding:8px 15px; border-radius:var(--radius-btn); border:1px solid transparent; display:flex; align-items:center; gap:6px; }
+  .btn.primary { background: linear-gradient(135deg,#5e6ad2,#6b74e0); color:#fff; box-shadow: 0 3px 10px -3px var(--accent-glow); }
+  .btn.primary:hover { background: linear-gradient(135deg,#6b74e0,#7170ff); }
+  .btn.ghost { background:transparent; color:var(--text-secondary); border-color:var(--border-whisper); }
+
+  /* CONTEXT */
+  .context { background: var(--bg-sidebar); border-left:1px solid var(--border-whisper); display:flex; flex-direction:column; overflow-y:auto; }
+  .ctx-head { padding: 14px 16px 0; }
+  .ctx-title { font-size:13px; font-weight:600; margin-bottom:12px; display:flex; align-items:center; gap:7px; }
+  .tabs { display:flex; gap:2px; background: var(--bg-warm); border:1px solid var(--border-hair); border-radius:9px; padding:3px; }
+  .tab { flex:1; text-align:center; padding:6px 0; font-size:12px; font-weight:560; color:var(--text-secondary); cursor:pointer; border-radius:6px; }
+  .tab.active { color:var(--accent); background:#fff; box-shadow: var(--shadow-card); }
+  .section { padding: 16px; }
+  .section h4 { font-size:10.5px; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-muted); margin-bottom:11px; display:flex; align-items:center; gap:7px; }
+  .section h4 .cnt { color:var(--text-secondary); background:var(--bg-warm); border-radius:9999px; padding:0 6px; font-size:10px; }
+  .card { background:#fff; border:1px solid var(--border-whisper); border-radius:12px; padding:13px; margin-bottom:10px; box-shadow: var(--shadow-card); cursor:pointer; transition: transform .14s, box-shadow .14s; }
+  .card:hover { transform: translateY(-1px); box-shadow: var(--shadow-pop); }
+  .card .ch { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
+  .card .ci { width:26px;height:26px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#fff; }
+  .card .t { font-size:13.5px; font-weight:600; }
+  .card .d { font-size:12.5px; color:var(--text-secondary); line-height:1.5; }
+  .pill { display:inline-block; font-size:10px; font-weight:600; letter-spacing:0.2px; padding:2px 7px; border-radius:9999px; }
+  .pill.pdf { background:#fff1f0; color:#d4380d; }
+  .pill.xlsx { background:#f0fbf1; color:#1aae39; }
+  .member { display:flex; align-items:center; gap:10px; padding:7px 0; }
+  .member .av { width:28px;height:28px;border-radius:8px;color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600; }
+  .member .mn { font-size:13px; font-weight:510; }
+  .member .mr { font-size:10.5px; color:var(--text-muted); margin-left:auto; background:var(--bg-warm); border-radius:9999px; padding:2px 8px; }
+  .soon { font-size:9.5px; color:var(--text-muted); border:1px dashed var(--border-whisper); border-radius:5px; padding:1px 6px; margin-left:auto; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- RAIL -->
+  <div class="rail">
+    <div class="ws-wrap active"><span class="bar"></span><div class="ws">지</div></div>
+    <div class="ws-wrap"><span class="bar"></span><div class="ws">창</div></div>
+    <div class="grp-label">공유</div>
+    <div class="ws-wrap"><span class="bar"></span><div class="ws">A</div></div>
+    <div class="ws-wrap"><span class="bar"></span><div class="ws">B</div></div>
+    <div class="spacer"></div>
+    <div class="rbtn" title="workspace 추가">+</div>
+    <div class="rbtn" title="설정">⚙</div>
+  </div>
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="ws-head">
+      <div class="ico">지</div>
+      <div>
+        <div class="name">지구 Workspace</div>
+        <div class="sub">owner · 개인</div>
+      </div>
+      <div class="chev">▾</div>
+    </div>
+    <div class="search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+      <span>검색 또는 이동…</span><span class="k">⌘K</span>
+    </div>
+    <div class="tree">
+      <div class="sec-label">프로젝트</div>
+      <div class="proj-row"><span class="cx">▾</span> 창원시 적정성 검토</div>
+      <div class="chan-row"># 진단</div>
+      <div class="topic"><span class="hash">#</span> 인구·재정 지표</div>
+      <div class="topic active"><span class="hash">#</span> 서비스 연속성 <span class="live"></span></div>
+      <div class="topic"><span class="hash">#</span> 이관 타당성 <span class="unread">3</span></div>
+      <div class="chan-row"># 보고서</div>
+      <div class="topic"><span class="hash">#</span> 초안 v2</div>
+      <div class="proj-row" style="margin-top:6px;"><span class="cx">▾</span> 데이터 파이프라인</div>
+      <div class="chan-row"># 파싱</div>
+      <div class="topic"><span class="hash">#</span> GBrain 임베딩</div>
+      <div class="new-proj">+ 새 프로젝트</div>
+    </div>
+  </div>
+
+  <!-- THREAD -->
+  <div class="thread">
+    <div class="thread-head">
+      <div class="tt">
+        <div class="crumb">창원시 적정성 검토 <span class="sep">›</span> 진단 <span class="sep">›</span> 서비스 연속성</div>
+        <div class="thread-title">이관 시 서비스 연속성 리스크 정리</div>
+      </div>
+      <div class="right">
+        <div class="status-chip"><span class="pulse"></span> 응답 생성 중</div>
+        <div class="icon-btn">⤢</div>
+        <div class="icon-btn">⋯</div>
+      </div>
+    </div>
+    <div class="stream">
+      <div class="day-div">오늘</div>
+      <div class="msg user">
+        <div class="avatar">주</div>
+        <div class="body">
+          <div class="meta"><span class="who">주인님</span><span class="time">오후 2:14</span></div>
+          <div class="text">서비스 연속성 관점에서 이관 시 주민 편익이 훼손되지 않는지 핵심 리스크만 3가지로 정리해줘. 근거 문서도 함께 참조해서.</div>
+        </div>
+      </div>
+      <div class="msg ai">
+        <div class="avatar">🌍</div>
+        <div class="body">
+          <div class="meta"><span class="who">지구</span><span class="time">오후 2:14</span><span class="runid">run_a91f…c2</span></div>
+          <div class="text">서비스 연속성 핵심 리스크는 세 가지입니다. 첫째, 인수인계 공백기 동안의 민원 처리 지연. 둘째, 기존 위탁계약의 승계 불확실성. 셋째, 현장 인력의 숙련도 이전 리스크<span class="cursor"></span></div>
+          <div class="tool-strip"><span class="sp"></span> 근거 문서 검색 중 · <b>창원시 위탁계약 현황.pdf</b></div>
+        </div>
+      </div>
+    </div>
+    <div class="composer">
+      <div class="box">
+        <div class="top"><textarea rows="1" placeholder="메시지를 입력하세요…">서비스 연속성 리스크별 완화 방안도 표로 정리해줘</textarea></div>
+        <div class="bar">
+          <div class="tool" title="파일 첨부">📎</div>
+          <div class="tool" title="근거 연결">🔗</div>
+          <span class="hint">Enter 전송 · Shift+Enter 줄바꿈</span>
+          <div class="send-wrap">
+            <button class="btn ghost">■ 중단</button>
+            <button class="btn primary">전송 ↵</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONTEXT -->
+  <div class="context">
+    <div class="ctx-head">
+      <div class="ctx-title">🧭 맥락 패널</div>
+      <div class="tabs">
+        <div class="tab active">근거</div>
+        <div class="tab">산출물</div>
+        <div class="tab">활동</div>
+        <div class="tab">멤버</div>
+      </div>
+    </div>
+    <div class="section">
+      <h4>연결된 근거 <span class="cnt">2</span> <span class="soon">Phase 2</span></h4>
+      <div class="card">
+        <div class="ch"><div class="ci" style="background:#d4380d">PDF</div><div class="t">창원시 위탁계약 현황</div><span class="pill pdf">참조됨</span></div>
+        <div class="d">2024~2026 위탁계약 12건 요약. 승계 조항 존재 여부 표기.</div>
+      </div>
+      <div class="card">
+        <div class="ch"><div class="ci" style="background:#1aae39">XLS</div><div class="t">주민 민원 처리 통계</div><span class="pill xlsx">신규</span></div>
+        <div class="d">월별 민원 접수·처리 소요일. 공백기 리스크 산정 근거.</div>
+      </div>
+    </div>
+    <div class="section" style="padding-top:0;">
+      <h4>멤버 <span class="cnt">3</span></h4>
+      <div class="member"><div class="av" style="background:#6b6f78">주</div><div class="mn">주인님</div><div class="mr">owner</div></div>
+      <div class="member"><div class="av" style="background:linear-gradient(135deg,#5e6ad2,#7170ff)">🌍</div><div class="mn">지구 (AI)</div><div class="mr">assistant</div></div>
+      <div class="member"><div class="av" style="background:#2a9d99">김</div><div class="mn">김담당</div><div class="mr">editor</div></div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

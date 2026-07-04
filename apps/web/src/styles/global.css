@@ -1,0 +1,51 @@
+@import './tokens.css';
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: 'cv01', 'ss03', 'cv11';
+  color: var(--text-primary);
+  background: var(--bg-canvas);
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.01em;
+}
+a {
+  color: var(--link);
+  text-decoration: none;
+}
+button {
+  font-family: inherit;
+}
+
+/* Respect reduced-motion: GSAP timelines also check this at runtime. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* thin, unobtrusive scrollbars matching the Notion-warm surface */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-whisper) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-whisper);
+  border-radius: 9999px;
+}
