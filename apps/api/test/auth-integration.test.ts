@@ -79,6 +79,26 @@ d('auth + invitation integration (ADR-0001/0009)', () => {
     if (!b.ok) expect(b.error.code).toBe('CONFLICT');
   });
 
+  it('concurrent sign-up with the same email returns CONFLICT, not INTERNAL (double-submit)', async () => {
+    const uc = new SignUpUseCase(db, new ScryptPasswordHasher());
+    const email = `race-${Date.now()}@example.com`;
+    const [a, b] = await Promise.all([
+      uc.execute({ email, password: 'supersecret1', displayName: 'A' }),
+      uc.execute({ email, password: 'supersecret1', displayName: 'B' }),
+    ]);
+    for (const r of [a, b]) {
+      if (r.ok) {
+        createdUsers.push(r.value.userId);
+        createdWorkspaces.push(r.value.personalWorkspaceId);
+      }
+    }
+    const okCount = [a, b].filter((r) => r.ok).length;
+    expect(okCount).toBe(1);
+    const loser = [a, b].find((r) => !r.ok);
+    // the concurrent loser must be a clean CONFLICT (409), never INTERNAL (500)
+    expect(loser && !loser.ok && loser.error.code).toBe('CONFLICT');
+  });
+
   it('invitation: create → accept creates membership; reuse rejected', async () => {
     const signup = new SignUpUseCase(db, new ScryptPasswordHasher());
     const inviter = await signup.execute({

@@ -95,8 +95,19 @@ export class SignUpUseCase {
 
         return ok({ userId: user.id, personalWorkspaceId: ws.id });
       });
-    } catch {
+    } catch (e) {
+      // The users_email_unique constraint is the real invariant; the pre-SELECT is
+      // only a fast path. Under concurrent double-submit the loser hits 23505 —
+      // map it to a clean CONFLICT (409) instead of a misleading INTERNAL (500).
+      if (isUniqueViolation(e)) {
+        return err(domainError('CONFLICT', 'email already registered'));
+      }
       return err(domainError('INTERNAL', 'sign-up transaction failed'));
     }
   }
+}
+
+/** Postgres unique_violation (SQLSTATE 23505). */
+function isUniqueViolation(e: unknown): boolean {
+  return typeof e === 'object' && e !== null && 'code' in e && (e as { code?: string }).code === '23505';
 }
