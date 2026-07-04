@@ -6,6 +6,7 @@
 - 백엔드 상세 설계: `~/.hermes/plans/consulting-web-backend-design.md`
 - 결정 잠금(ADR): `~/.hermes/plans/consulting-web-adr/` (ADR-0001~0021)
 - Phase 0 구현계획: `~/.hermes/plans/consulting-web-phase0-plan.md`
+- Phase 1 구현계획: `~/.hermes/plans/consulting-web-phase1-plan.md`
 
 ## 스택
 
@@ -48,7 +49,7 @@ pnpm --filter @consulting/db-schema drizzle:migrate
 
 # 5) 게이트 검증
 pnpm -r typecheck
-pnpm -r test          # 33 tests (실 DB/Redis 통합 포함)
+pnpm -r test          # 41 tests (실 DB/Redis 통합 포함)
 
 # 6) API 부팅 + health
 pnpm --filter @consulting/api build
@@ -59,13 +60,13 @@ curl -s localhost:3000/health/ready
 ## Phase 0 Foundation Gate — 완료 기준 (달성)
 
 - [x] pnpm typecheck / test / (lint 설정) 그린
-- [x] packages/contracts = API 계약 단일 원천, secret 미노출 테스트
+- [x] packages/contracts = API 계약 단일 원천, strict response shape + secret 미노출 테스트
 - [x] config 검증 실패 시 부팅 차단 (Zod env)
 - [x] workspace-first 스키마 (모든 주요 테이블 workspace_id)
 - [x] Redis/BullMQ health 분리 표시
 - [x] permission engine: role/상속/deny 우선/explain — 9 유닛 테스트
 - [x] context graph: 직접 생성 시 태그/edge 자동 상속 — 통합 테스트
-- [x] outbox: 트랜잭션 내 기록 + relay + idempotency
+- [x] outbox: 트랜잭션 내 기록 + relay + idempotency + workspace_id NOT NULL + relay index
 - [x] audit: 주요 변경 기록
 - [x] invitation share-link preview/accept → membership (email optional, 재사용/만료 차단)
 - [x] 개인 workspace 자동 생성
