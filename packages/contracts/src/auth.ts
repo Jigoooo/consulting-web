@@ -15,6 +15,12 @@ export const SignUpRequestSchema = z.object({
 }).strict();
 export type SignUpRequest = z.infer<typeof SignUpRequestSchema>;
 
+export const SignUpBootstrapResponseSchema = z.object({
+  userId: z.string().uuid(),
+  personalWorkspaceId: z.string().uuid(),
+}).strict();
+export type SignUpBootstrapResponse = z.infer<typeof SignUpBootstrapResponseSchema>;
+
 export const PublicUserSchema = z.object({
   id: z.string().uuid(),
   email: EmailSchema,

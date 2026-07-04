@@ -22,7 +22,7 @@
 ```
 apps/api            NestJS 백엔드 (config/infra/health/permissions/auth/organization/spaces/queues)
 packages/shared     Result 타입, 스코프 어휘, 위험등급 (ADR-0002/0004)
-packages/contracts  Zod API 계약 (health/auth) — secret 미노출 강제
+packages/contracts  Zod API 계약 (health/auth/invitation) — strict response + secret 미노출 강제
 packages/db-schema  Drizzle 스키마 (23 tables) + 마이그레이션 러너
 tooling/*           공용 tsconfig, eslint(boundary) 설정
 ```
@@ -49,7 +49,7 @@ pnpm --filter @consulting/db-schema drizzle:migrate
 
 # 5) 게이트 검증
 pnpm -r typecheck
-pnpm -r test          # 41 tests (실 DB/Redis 통합 포함)
+pnpm -r test          # 45 tests (실 DB/Redis 통합 포함)
 
 # 6) API 부팅 + health
 pnpm --filter @consulting/api build
@@ -73,6 +73,14 @@ curl -s localhost:3000/health/ready
 - [x] Hermes key 브라우저/계약 미노출
 - [x] Foundation Gate E2E + negative security 테스트
 
+## Phase 1-B/C Backend HTTP Adapter — 부분 완료
+
+- [x] `POST /auth/signup` — signup use-case를 strict contract 응답으로 노출(JWT 없음; Phase 1-D에서 인증 토큰 처리)
+- [x] `POST /invitations` — owner/admin 공유링크 초대 생성(raw token은 생성 시 1회만 반환, tokenHash 미노출)
+- [x] `POST /invitations/preview` — 초대 landing용 비소모성 preview(token/tokenHash 미노출)
+- [x] `POST /invitations/accept` — 가입/로그인 후 token 수락 → membership 생성
+- [x] HTTP contract adapter: Zod strict parse, domain error→HTTP status 매핑, response contract violation fail-fast
+
 ## 보안 원칙 (요약)
 
 - Hermes api_server는 백엔드만 접근 (브라우저 노출 금지, ADR-0007)
@@ -80,4 +88,4 @@ curl -s localhost:3000/health/ready
 - 접근권은 membership/invitation 으로만 발생 (ADR-0009)
 - 봇 invoke ≠ capability (ADR-0004)
 
-Phase 1 (채팅 UI + Hermes SSE) 착수는 주인님 명시 승인 후 시작.
+Phase 1 (백엔드 HTTP 계층 진행 중; UI + Hermes SSE는 후속 승인 범위) 착수는 주인님 명시 승인 후 진행.
