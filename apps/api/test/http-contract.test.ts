@@ -9,6 +9,10 @@ import { Pool } from 'pg';
 import { schema } from '@consulting/db-schema';
 import {
   ChatStreamEventSchema,
+  CreateProjectResponseSchema,
+  CreateChannelResponseSchema,
+  CreateTopicResponseSchema,
+  CreateThreadResponseSchema,
   AuthSessionResponseSchema,
   AcceptInvitationResponseSchema,
   CreateInvitationResponseSchema,
@@ -251,5 +255,85 @@ d('HTTP API contract adapters', () => {
       expect(JSON.stringify(event)).not.toContain('HERMES_API_KEY');
       expect(JSON.stringify(event)).not.toContain('jwtSecret');
     }
+  });
+
+  it('protected space creation endpoints create a thread that can be streamed', async () => {
+    const email = `space-owner-${Date.now()}@example.com`;
+    const outsiderEmail = `space-outsider-${Date.now()}@example.com`;
+    const password = 'supersecret1';
+    const ownerSignup = await request(app.getHttpServer())
+      .post('/auth/signup')
+      .send({ email, password, displayName: 'Space Owner' })
+      .expect(201);
+    const ownerBody = SignUpBootstrapResponseSchema.parse(ownerSignup.body);
+    createdUsers.push(ownerBody.userId);
+    createdWorkspaces.push(ownerBody.personalWorkspaceId);
+
+    const ownerLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email, password })
+      .expect(200);
+    const ownerSession = AuthSessionResponseSchema.parse(ownerLogin.body);
+
+    await request(app.getHttpServer())
+      .post('/spaces/projects')
+      .send({ workspaceId: ownerBody.personalWorkspaceId, name: 'No Auth Project', slug: `no-auth-${Date.now()}` })
+      .expect(401);
+
+    const outsiderSignup = await request(app.getHttpServer())
+      .post('/auth/signup')
+      .send({ email: outsiderEmail, password, displayName: 'Space Outsider' })
+      .expect(201);
+    const outsiderBody = SignUpBootstrapResponseSchema.parse(outsiderSignup.body);
+    createdUsers.push(outsiderBody.userId);
+    createdWorkspaces.push(outsiderBody.personalWorkspaceId);
+    const outsiderLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: outsiderEmail, password })
+      .expect(200);
+    const outsiderSession = AuthSessionResponseSchema.parse(outsiderLogin.body);
+
+    await request(app.getHttpServer())
+      .post('/spaces/projects')
+      .set('authorization', `Bearer ${outsiderSession.tokens.accessToken}`)
+      .send({ workspaceId: ownerBody.personalWorkspaceId, name: 'Foreign Project', slug: `foreign-${Date.now()}` })
+      .expect(403);
+
+    const project = await request(app.getHttpServer())
+      .post('/spaces/projects')
+      .set('authorization', `Bearer ${ownerSession.tokens.accessToken}`)
+      .send({ workspaceId: ownerBody.personalWorkspaceId, name: 'HTTP Project', slug: `http-project-${Date.now()}` })
+      .expect(201);
+    const projectBody = CreateProjectResponseSchema.parse(project.body);
+
+    const channel = await request(app.getHttpServer())
+      .post('/spaces/channels')
+      .set('authorization', `Bearer ${ownerSession.tokens.accessToken}`)
+      .send({ projectId: projectBody.id, name: 'HTTP Channel', slug: `http-channel-${Date.now()}` })
+      .expect(201);
+    const channelBody = CreateChannelResponseSchema.parse(channel.body);
+
+    const topic = await request(app.getHttpServer())
+      .post('/spaces/topics')
+      .set('authorization', `Bearer ${ownerSession.tokens.accessToken}`)
+      .send({ channelId: channelBody.id, name: 'HTTP Topic', slug: `http-topic-${Date.now()}` })
+      .expect(201);
+    const topicBody = CreateTopicResponseSchema.parse(topic.body);
+
+    const thread = await request(app.getHttpServer())
+      .post('/spaces/threads')
+      .set('authorization', `Bearer ${ownerSession.tokens.accessToken}`)
+      .send({ topicId: topicBody.id, title: 'HTTP Thread' })
+      .expect(201);
+    const threadBody = CreateThreadResponseSchema.parse(thread.body);
+
+    const stream = await request(app.getHttpServer())
+      .post('/chat/stream')
+      .set('authorization', `Bearer ${ownerSession.tokens.accessToken}`)
+      .send({ threadId: threadBody.id, message: 'thread api smoke' })
+      .expect(200)
+      .expect('content-type', /text\/event-stream/);
+    const events = sseEvents(stream.text);
+    expect(events.map((e) => (e as { type: string }).type)).toEqual(['start', 'delta', 'done']);
   });
 });

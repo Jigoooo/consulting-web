@@ -22,7 +22,7 @@
 ```
 apps/api            NestJS 백엔드 (config/infra/health/permissions/auth/organization/spaces/chat/queues)
 packages/shared     Result 타입, 스코프 어휘, 위험등급 (ADR-0002/0004)
-packages/contracts  Zod API 계약 (health/auth/invitation/chat) — strict response/event + secret 미노출 강제
+packages/contracts  Zod API 계약 (health/auth/invitation/chat/spaces) — strict response/event + secret 미노출 강제
 packages/db-schema  Drizzle 스키마 (23 tables) + 마이그레이션 러너
 tooling/*           공용 tsconfig, eslint(boundary) 설정
 ```
@@ -49,7 +49,7 @@ pnpm --filter @consulting/db-schema drizzle:migrate
 
 # 5) 게이트 검증
 pnpm -r typecheck
-pnpm -r test          # 50 tests (실 DB/Redis 통합 포함)
+pnpm -r test          # 53 tests (실 DB/Redis 통합 포함)
 
 # 6) API 부팅 + health
 pnpm --filter @consulting/api build
@@ -73,7 +73,7 @@ curl -s localhost:3000/health/ready
 - [x] Hermes key 브라우저/계약 미노출
 - [x] Foundation Gate E2E + negative security 테스트
 
-## Phase 1-B/C/D/G Backend HTTP Adapter + Auth Session + SSE Mock — 부분 완료
+## Phase 1-B/C/D/G + Thread API Backend — 부분 완료
 
 - [x] `POST /auth/signup` — signup use-case를 strict bootstrap 응답으로 노출
 - [x] `POST /auth/login` — password verify → public user + JWT access/refresh envelope 반환, refresh token hash는 sessions에만 저장
@@ -82,6 +82,7 @@ curl -s localhost:3000/health/ready
 - [x] `POST /invitations/accept` — Bearer access token 필수, body userId 금지, 인증 사용자 기준 token 수락 → membership 생성
 - [x] HTTP contract adapter: Zod strict parse, domain error→HTTP status 매핑, response contract violation fail-fast
 - [x] `POST /chat/stream` — Bearer access token 필수, thread workspace membership 검증, 권한 없는 사용자 403, strict mock SSE(start/delta/done) 반환
+- [x] `POST /spaces/projects|channels|topics|threads` — Bearer access token 필수, workspace membership 검증, Project→Channel→Topic→Thread 생성 후 stream 연결 가능
 
 ## 보안 원칙 (요약)
 
@@ -90,4 +91,4 @@ curl -s localhost:3000/health/ready
 - 접근권은 membership/invitation 으로만 발생 (ADR-0009)
 - 봇 invoke ≠ capability (ADR-0004)
 
-다음 백엔드 우선순위는 실제 Hermes SSE proxy 연결 또는 chat/thread 생성 API다. UI + apps/web는 후속 승인 범위이며 Slack-like 디자인 리서치 후 착수한다.
+다음 백엔드 우선순위는 실제 Hermes SSE proxy 연결 또는 초대 landing/API 클라이언트 준비다. UI + apps/web는 후속 승인 범위이며 Slack-like 디자인 리서치 후 착수한다.

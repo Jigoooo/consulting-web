@@ -30,7 +30,7 @@ const DEFAULT_BOT_POLICY = 'mention_only';
 export class CreateChannelUseCase {
   constructor(
     @Inject(DRIZZLE) private readonly db: Db,
-    private readonly scopes: ScopeRepository,
+    @Inject(ScopeRepository) private readonly scopes: ScopeRepository,
   ) {}
 
   /** Preview: compute inheritance WITHOUT mutating (ADR-0002, design §29.2). */
