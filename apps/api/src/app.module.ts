@@ -7,6 +7,8 @@ import { HealthModule } from './health/health.module.js';
 import { PermissionsModule } from './permissions/permissions.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { OrganizationModule } from './organization/organization.module.js';
+import { SpacesModule } from './spaces/spaces.module.js';
+import { QueuesModule } from './queues/queues.module.js';
 
 @Module({
   imports: [
@@ -18,6 +20,8 @@ import { OrganizationModule } from './organization/organization.module.js';
     PermissionsModule,
     AuthModule,
     OrganizationModule,
+    SpacesModule,
+    QueuesModule,
   ],
 })
 export class AppModule {}
