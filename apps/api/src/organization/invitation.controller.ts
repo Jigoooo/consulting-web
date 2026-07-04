@@ -16,16 +16,19 @@ export class InvitationController {
   constructor(@Inject(InvitationUseCase) private readonly invitationUseCase: InvitationUseCase) {}
 
   @Post()
-  async create(@Body() body: unknown) {
-    const req = parseBody(CreateInvitationRequestSchema, body);
+  @UseGuards(AccessTokenGuard)
+  async create(@Body() body: unknown, @Req() req: AuthenticatedRequest) {
+    const request = parseBody(CreateInvitationRequestSchema, body);
     const result = await this.invitationUseCase.create({
-      workspaceId: req.workspaceId,
-      invitedByUserId: req.invitedByUserId,
-      scopeType: req.scopeType,
-      scopeId: req.scopeId,
-      role: req.role,
-      ...(req.email !== undefined ? { email: req.email } : {}),
-      ...(req.ttlMs !== undefined ? { ttlMs: req.ttlMs } : {}),
+      workspaceId: request.workspaceId,
+      // The inviter identity is derived from the bearer token, never the body,
+      // so a caller cannot spoof who minted the share link.
+      invitedByUserId: requireAuthUserId(req),
+      scopeType: request.scopeType,
+      scopeId: request.scopeId,
+      role: request.role,
+      ...(request.email !== undefined ? { email: request.email } : {}),
+      ...(request.ttlMs !== undefined ? { ttlMs: request.ttlMs } : {}),
     });
     if (!result.ok) return throwDomainError(result.error);
     return parseResponse(CreateInvitationResponseSchema, result.value);

@@ -39,6 +39,8 @@ describe('invitation contracts', () => {
     expect(() => AcceptInvitationRequestSchema.parse({ token: 'abc', extra: true })).toThrow();
     expect(() => AcceptInvitationRequestSchema.parse({ token: 'abc', userId: cleanUuid() })).toThrow();
     expect(() => CreateInvitationRequestSchema.parse(validCreateRequest({ unknown: true }))).toThrow();
+    expect(() => CreateInvitationRequestSchema.parse(validCreateRequest({ invitedByUserId: cleanUuid() }))).toThrow();
+    expect(CreateInvitationRequestSchema.parse(validCreateRequest())).toEqual(validCreateRequest());
     expect(() => CreateInvitationResponseSchema.parse({ invitationId: cleanUuid(), token: 'raw', tokenHash: 'hash' })).toThrow();
     expect(() => AcceptInvitationResponseSchema.parse({ membershipId: cleanUuid(), token: 'raw' })).toThrow();
   });
@@ -51,7 +53,6 @@ function cleanUuid(): string {
 function validCreateRequest(extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     workspaceId: cleanUuid(),
-    invitedByUserId: cleanUuid(),
     scopeType: 'workspace',
     scopeId: cleanUuid(),
     role: 'viewer',

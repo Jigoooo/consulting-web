@@ -6,7 +6,6 @@ const RoleSchema = z.enum(['owner', 'admin', 'editor', 'commenter', 'viewer']);
 
 export const CreateInvitationRequestSchema = z.object({
   workspaceId: UuidSchema,
-  invitedByUserId: UuidSchema,
   email: z.string().email().max(320).optional(),
   scopeType: ScopeTypeSchema,
   scopeId: UuidSchema,

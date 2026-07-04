@@ -158,11 +158,60 @@ d('HTTP API contract adapters', () => {
     createdUsers.push(ownerBody.userId, guestBody.userId);
     createdWorkspaces.push(ownerBody.personalWorkspaceId, guestBody.personalWorkspaceId);
 
-    const created = await request(app.getHttpServer())
+    const ownerLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: ownerEmail, password: 'supersecret1' })
+      .expect(200);
+    const ownerSession = AuthSessionResponseSchema.parse(ownerLogin.body);
+
+    const guestLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: guestEmail, password: 'supersecret1' })
+      .expect(200);
+    const guestSession = AuthSessionResponseSchema.parse(guestLogin.body);
+
+    // Unauthenticated create is rejected (share-link minting requires a bearer).
+    await request(app.getHttpServer())
       .post('/invitations')
       .send({
         workspaceId: ownerBody.personalWorkspaceId,
-        invitedByUserId: ownerBody.userId,
+        scopeType: 'workspace',
+        scopeId: ownerBody.personalWorkspaceId,
+        role: 'viewer',
+      })
+      .expect(401);
+
+    // A non-member cannot mint an invitation for someone else's workspace,
+    // and cannot spoof invitedByUserId via the body (field no longer accepted).
+    await request(app.getHttpServer())
+      .post('/invitations')
+      .set('authorization', `Bearer ${guestSession.tokens.accessToken}`)
+      .send({
+        workspaceId: ownerBody.personalWorkspaceId,
+        scopeType: 'workspace',
+        scopeId: ownerBody.personalWorkspaceId,
+        role: 'viewer',
+      })
+      .expect(403);
+
+    // invitedByUserId is no longer an accepted field — strict schema rejects it (400).
+    await request(app.getHttpServer())
+      .post('/invitations')
+      .set('authorization', `Bearer ${ownerSession.tokens.accessToken}`)
+      .send({
+        workspaceId: ownerBody.personalWorkspaceId,
+        scopeType: 'workspace',
+        scopeId: ownerBody.personalWorkspaceId,
+        role: 'viewer',
+        invitedByUserId: guestBody.userId,
+      })
+      .expect(400);
+
+    const created = await request(app.getHttpServer())
+      .post('/invitations')
+      .set('authorization', `Bearer ${ownerSession.tokens.accessToken}`)
+      .send({
+        workspaceId: ownerBody.personalWorkspaceId,
         scopeType: 'workspace',
         scopeId: ownerBody.personalWorkspaceId,
         role: 'viewer',
@@ -180,12 +229,6 @@ d('HTTP API contract adapters', () => {
     expect(previewBody.workspaceId).toBe(ownerBody.personalWorkspaceId);
     expect(JSON.stringify(preview.body)).not.toContain(createBody.token);
     expect(JSON.stringify(preview.body)).not.toContain('tokenHash');
-
-    const guestLogin = await request(app.getHttpServer())
-      .post('/auth/login')
-      .send({ email: guestEmail, password: 'supersecret1' })
-      .expect(200);
-    const guestSession = AuthSessionResponseSchema.parse(guestLogin.body);
 
     await request(app.getHttpServer())
       .post('/invitations/accept')
