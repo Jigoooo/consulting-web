@@ -10,9 +10,11 @@ export const outboxEvents = pgTable(
   'outbox_events',
   {
     id: primaryId,
-    workspaceId: uuid('workspace_id').references(() => workspaces.id, {
-      onDelete: 'cascade',
-    }),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, {
+        onDelete: 'cascade',
+      }),
     eventType: text('event_type').notNull(),
     aggregateType: text('aggregate_type').notNull(),
     aggregateId: uuid('aggregate_id').notNull(),
@@ -25,6 +27,7 @@ export const outboxEvents = pgTable(
   (t) => [
     unique('outbox_idem_unique').on(t.idempotencyKey),
     index('outbox_status_idx').on(t.status),
+    index('outbox_status_created_idx').on(t.status, t.createdAt),
     index('outbox_workspace_idx').on(t.workspaceId),
   ],
 );
