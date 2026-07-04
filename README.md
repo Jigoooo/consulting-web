@@ -67,7 +67,7 @@ curl -s localhost:3000/health/ready
 - [x] context graph: 직접 생성 시 태그/edge 자동 상속 — 통합 테스트
 - [x] outbox: 트랜잭션 내 기록 + relay + idempotency
 - [x] audit: 주요 변경 기록
-- [x] invitation accept → membership (재사용/만료 차단)
+- [x] invitation share-link preview/accept → membership (email optional, 재사용/만료 차단)
 - [x] 개인 workspace 자동 생성
 - [x] Hermes key 브라우저/계약 미노출
 - [x] Foundation Gate E2E + negative security 테스트

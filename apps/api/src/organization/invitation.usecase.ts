@@ -10,7 +10,8 @@ type SpaceRole = 'owner' | 'admin' | 'editor' | 'commenter' | 'viewer';
 export interface CreateInvitationCommand {
   workspaceId: string;
   invitedByUserId: string;
-  email: string;
+  /** Optional display/notification hint only. Share-link access is NOT email-bound. */
+  email?: string;
   scopeType: ScopeType;
   scopeId: string;
   role: SpaceRole;
@@ -20,6 +21,20 @@ export interface CreateInvitationCommand {
 export interface AcceptInvitationCommand {
   token: string;
   userId: string;
+}
+
+export interface PreviewInvitationCommand {
+  token: string;
+}
+
+export interface InvitationPreview {
+  workspaceId: string;
+  scopeType: ScopeType;
+  scopeId: string;
+  role: SpaceRole;
+  expiresAt: Date;
+  accepted: boolean;
+  emailHint: string | null;
 }
 
 @Injectable()
@@ -38,7 +53,7 @@ export class InvitationUseCase {
       .insert(schema.invitations)
       .values({
         workspaceId: cmd.workspaceId,
-        email: cmd.email.trim().toLowerCase(),
+        email: cmd.email?.trim().toLowerCase() || null,
         invitedByUserId: cmd.invitedByUserId,
         scopeType: cmd.scopeType,
         scopeId: cmd.scopeId,
@@ -50,6 +65,35 @@ export class InvitationUseCase {
     if (!row) return err(domainError('INTERNAL', 'invitation insert failed'));
 
     return ok({ invitationId: row.id, token });
+  }
+
+  /**
+   * Non-consuming share-link preview for the invitation landing page.
+   * UI uses this to branch: already signed in → accept; not signed in → sign up/login then accept.
+   * Does not return raw token/hash and does not create membership.
+   */
+  async preview(cmd: PreviewInvitationCommand): Promise<Result<InvitationPreview>> {
+    const tokenHash = hashToken(cmd.token);
+    const [inv] = await this.db
+      .select()
+      .from(schema.invitations)
+      .where(eq(schema.invitations.tokenHash, tokenHash))
+      .limit(1);
+
+    if (!inv) return err(domainError('NOT_FOUND', 'invitation not found'));
+    if (inv.expiresAt.getTime() < Date.now()) {
+      return err(domainError('PRECONDITION', 'invitation expired'));
+    }
+
+    return ok({
+      workspaceId: inv.workspaceId,
+      scopeType: inv.scopeType,
+      scopeId: inv.scopeId,
+      role: inv.role,
+      expiresAt: inv.expiresAt,
+      accepted: inv.acceptedAt !== null,
+      emailHint: inv.email,
+    });
   }
 
   /** Accept an invitation: create membership. Rejects reuse/expired (ADR-0009/0020). */

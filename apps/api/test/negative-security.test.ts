@@ -62,6 +62,113 @@ d('Foundation negative security', () => {
     expect(r.source).toBe('no_grant');
   });
 
+  it('share-link invitation can be created without binding to an email', async () => {
+    const signup = new SignUpUseCase(db, new ScryptPasswordHasher());
+    const owner = await signup.execute({
+      email: `link-o-${Date.now()}@example.com`,
+      password: 'supersecret1',
+      displayName: 'LinkOwner',
+    });
+    expect(owner.ok).toBe(true);
+    if (!owner.ok) return;
+    users.push(owner.value.userId);
+    workspaces.push(owner.value.personalWorkspaceId);
+
+    const inv = new InvitationUseCase(db);
+    const created = await inv.create({
+      workspaceId: owner.value.personalWorkspaceId,
+      invitedByUserId: owner.value.userId,
+      scopeType: 'workspace',
+      scopeId: owner.value.personalWorkspaceId,
+      role: 'viewer',
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const stored = await db.select().from(schema.invitations);
+    const row = stored.find((x) => x.id === created.value.invitationId);
+    expect(row?.email).toBeNull();
+    expect(JSON.stringify(row)).not.toContain(created.value.token);
+  });
+
+  it('share-link invitation can be accepted by an already signed-up user', async () => {
+    const signup = new SignUpUseCase(db, new ScryptPasswordHasher());
+    const owner = await signup.execute({
+      email: `link-existing-o-${Date.now()}@example.com`,
+      password: 'supersecret1',
+      displayName: 'ExistingOwner',
+    });
+    const member = await signup.execute({
+      email: `link-existing-m-${Date.now()}@example.com`,
+      password: 'supersecret1',
+      displayName: 'ExistingMember',
+    });
+    expect(owner.ok && member.ok).toBe(true);
+    if (!owner.ok || !member.ok) return;
+    users.push(owner.value.userId, member.value.userId);
+    workspaces.push(owner.value.personalWorkspaceId, member.value.personalWorkspaceId);
+
+    const inv = new InvitationUseCase(db);
+    const created = await inv.create({
+      workspaceId: owner.value.personalWorkspaceId,
+      invitedByUserId: owner.value.userId,
+      scopeType: 'workspace',
+      scopeId: owner.value.personalWorkspaceId,
+      role: 'editor',
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const accepted = await inv.accept({ token: created.value.token, userId: member.value.userId });
+    expect(accepted.ok).toBe(true);
+  });
+
+  it('share-link invitation supports non-signed-up flow: preview first, sign up, then accept', async () => {
+    const signup = new SignUpUseCase(db, new ScryptPasswordHasher());
+    const owner = await signup.execute({
+      email: `link-new-o-${Date.now()}@example.com`,
+      password: 'supersecret1',
+      displayName: 'NewFlowOwner',
+    });
+    expect(owner.ok).toBe(true);
+    if (!owner.ok) return;
+    users.push(owner.value.userId);
+    workspaces.push(owner.value.personalWorkspaceId);
+
+    const inv = new InvitationUseCase(db);
+    const created = await inv.create({
+      workspaceId: owner.value.personalWorkspaceId,
+      invitedByUserId: owner.value.userId,
+      scopeType: 'workspace',
+      scopeId: owner.value.personalWorkspaceId,
+      role: 'commenter',
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const preview = await inv.preview({ token: created.value.token });
+    expect(preview.ok).toBe(true);
+    if (preview.ok) {
+      expect(preview.value.accepted).toBe(false);
+      expect(preview.value.role).toBe('commenter');
+      expect(preview.value.scopeType).toBe('workspace');
+      expect(preview.value.emailHint).toBeNull();
+    }
+
+    const newcomer = await signup.execute({
+      email: `link-new-m-${Date.now()}@example.com`,
+      password: 'supersecret1',
+      displayName: 'NewMember',
+    });
+    expect(newcomer.ok).toBe(true);
+    if (!newcomer.ok) return;
+    users.push(newcomer.value.userId);
+    workspaces.push(newcomer.value.personalWorkspaceId);
+
+    const accepted = await inv.accept({ token: created.value.token, userId: newcomer.value.userId });
+    expect(accepted.ok).toBe(true);
+  });
+
   it('invitation token cannot be reused after acceptance', async () => {
     const signup = new SignUpUseCase(db, new ScryptPasswordHasher());
     const owner = await signup.execute({

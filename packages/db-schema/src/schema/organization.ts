@@ -52,7 +52,8 @@ export const invitations = pgTable(
     workspaceId: uuid('workspace_id')
       .notNull()
       .references(() => workspaces.id, { onDelete: 'cascade' }),
-    email: text('email').notNull(),
+    /** Optional display/notification hint only. Access is granted by share-link token + signed-in user. */
+    email: text('email'),
     invitedByUserId: uuid('invited_by_user_id')
       .notNull()
       .references(() => users.id),
