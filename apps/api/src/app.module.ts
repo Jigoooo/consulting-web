@@ -8,6 +8,7 @@ import { PermissionsModule } from './permissions/permissions.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { OrganizationModule } from './organization/organization.module.js';
 import { SpacesModule } from './spaces/spaces.module.js';
+import { ChatModule } from './chat/chat.module.js';
 import { QueuesModule } from './queues/queues.module.js';
 
 @Module({
@@ -21,6 +22,7 @@ import { QueuesModule } from './queues/queues.module.js';
     AuthModule,
     OrganizationModule,
     SpacesModule,
+    ChatModule,
     QueuesModule,
   ],
 })

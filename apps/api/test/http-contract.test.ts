@@ -8,6 +8,7 @@ import { eq, inArray } from 'drizzle-orm';
 import { Pool } from 'pg';
 import { schema } from '@consulting/db-schema';
 import {
+  ChatStreamEventSchema,
   AuthSessionResponseSchema,
   AcceptInvitationResponseSchema,
   CreateInvitationResponseSchema,
@@ -24,6 +25,18 @@ let pool: Pool;
 let db: NodePgDatabase<typeof schema>;
 const createdUsers: string[] = [];
 const createdWorkspaces: string[] = [];
+
+function sseEvents(text: string): unknown[] {
+  return text
+    .split('\n\n')
+    .map((chunk) => chunk.trim())
+    .filter(Boolean)
+    .map((chunk) => {
+      const dataLine = chunk.split('\n').find((line) => line.startsWith('data: '));
+      if (!dataLine) throw new Error(`missing data line in ${chunk}`);
+      return JSON.parse(dataLine.slice('data: '.length));
+    });
+}
 
 d('HTTP API contract adapters', () => {
   beforeAll(async () => {
@@ -157,5 +170,86 @@ d('HTTP API contract adapters', () => {
       .from(schema.memberships)
       .where(eq(schema.memberships.userId, guestBody.userId));
     expect(memberships.some((m) => m.workspaceId === ownerBody.personalWorkspaceId)).toBe(true);
+  });
+
+  it('protected chat stream requires bearer access and returns strict mock SSE events for readable threads', async () => {
+    const email = `chat-owner-${Date.now()}@example.com`;
+    const password = 'supersecret1';
+    const signedUp = await request(app.getHttpServer())
+      .post('/auth/signup')
+      .send({ email, password, displayName: 'Chat Owner' })
+      .expect(201);
+    const ownerBody = SignUpBootstrapResponseSchema.parse(signedUp.body);
+    createdUsers.push(ownerBody.userId);
+    createdWorkspaces.push(ownerBody.personalWorkspaceId);
+
+    const login = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email, password })
+      .expect(200);
+    const session = AuthSessionResponseSchema.parse(login.body);
+
+    const [project] = await db.insert(schema.projects).values({
+      workspaceId: ownerBody.personalWorkspaceId,
+      name: 'Chat Project',
+      slug: `chat-project-${Date.now()}`,
+    }).returning({ id: schema.projects.id });
+    const [channel] = await db.insert(schema.channels).values({
+      workspaceId: ownerBody.personalWorkspaceId,
+      projectId: project!.id,
+      name: 'Chat Channel',
+      slug: `chat-channel-${Date.now()}`,
+    }).returning({ id: schema.channels.id });
+    const [topic] = await db.insert(schema.topics).values({
+      workspaceId: ownerBody.personalWorkspaceId,
+      channelId: channel!.id,
+      name: 'Chat Topic',
+      slug: `chat-topic-${Date.now()}`,
+    }).returning({ id: schema.topics.id });
+    const [thread] = await db.insert(schema.threads).values({
+      workspaceId: ownerBody.personalWorkspaceId,
+      topicId: topic!.id,
+      title: 'Chat Thread',
+    }).returning({ id: schema.threads.id });
+
+    await request(app.getHttpServer())
+      .post('/chat/stream')
+      .send({ threadId: thread!.id, message: 'hello' })
+      .expect(401);
+
+    const outsiderEmail = `chat-outsider-${Date.now()}@example.com`;
+    const outsider = await request(app.getHttpServer())
+      .post('/auth/signup')
+      .send({ email: outsiderEmail, password, displayName: 'Outsider' })
+      .expect(201);
+    const outsiderBody = SignUpBootstrapResponseSchema.parse(outsider.body);
+    createdUsers.push(outsiderBody.userId);
+    createdWorkspaces.push(outsiderBody.personalWorkspaceId);
+    const outsiderLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: outsiderEmail, password })
+      .expect(200);
+    const outsiderSession = AuthSessionResponseSchema.parse(outsiderLogin.body);
+
+    await request(app.getHttpServer())
+      .post('/chat/stream')
+      .set('authorization', `Bearer ${outsiderSession.tokens.accessToken}`)
+      .send({ threadId: thread!.id, message: 'hello' })
+      .expect(403);
+
+    const response = await request(app.getHttpServer())
+      .post('/chat/stream')
+      .set('authorization', `Bearer ${session.tokens.accessToken}`)
+      .send({ threadId: thread!.id, message: 'hello' })
+      .expect(200)
+      .expect('content-type', /text\/event-stream/);
+
+    const events = sseEvents(response.text);
+    expect(events.map((e) => (e as { type: string }).type)).toEqual(['start', 'delta', 'done']);
+    for (const event of events) {
+      expect(ChatStreamEventSchema.parse(event)).toEqual(event);
+      expect(JSON.stringify(event)).not.toContain('HERMES_API_KEY');
+      expect(JSON.stringify(event)).not.toContain('jwtSecret');
+    }
   });
 });
