@@ -1,33 +1,65 @@
 import { ConsultingApiClient } from '@consulting/api-client';
+import type { PublicUser } from '@consulting/contracts';
+
+const STORAGE_KEY = 'consulting.auth.v1';
+
+interface PersistedAuth {
+  accessToken: string;
+  refreshToken: string;
+  user: PublicUser;
+}
 
 /**
- * Auth token store. Phase 1-K: in-memory access token (survives route changes,
- * cleared on reload). Phase 1-L will layer refresh-token rotation via an
- * httpOnly cookie set by the API; the getter stays the same so callers don't change.
+ * Auth store. Phase 1-L: access+refresh+user persisted to localStorage so a
+ * reload keeps the session. Phase 2 will move refresh to an httpOnly cookie;
+ * the public getters stay the same so callers won't change.
+ *
+ * NOTE: localStorage is XSS-readable — acceptable for this phase (no secrets
+ * beyond the user's own session tokens), hardened later with cookie rotation.
  */
-let accessToken: string | null = null;
-const listeners = new Set<(token: string | null) => void>();
+let state: PersistedAuth | null = load();
+const listeners = new Set<() => void>();
+
+function load(): PersistedAuth | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as PersistedAuth) : null;
+  } catch {
+    return null;
+  }
+}
+
+function persist(next: PersistedAuth | null): void {
+  state = next;
+  try {
+    if (next) localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    else localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    /* storage unavailable — keep in-memory */
+  }
+  for (const l of listeners) l();
+}
 
 export const authStore = {
-  get: (): string | null => accessToken,
-  set: (token: string | null): void => {
-    accessToken = token;
-    for (const l of listeners) l(token);
-  },
-  clear: (): void => authStore.set(null),
-  subscribe: (fn: (token: string | null) => void): (() => void) => {
+  get: (): PersistedAuth | null => state,
+  getAccessToken: (): string | null => state?.accessToken ?? null,
+  getUser: (): PublicUser | null => state?.user ?? null,
+  isAuthed: (): boolean => state !== null,
+  setSession: (session: PersistedAuth): void => persist(session),
+  clear: (): void => persist(null),
+  subscribe: (fn: () => void): (() => void) => {
     listeners.add(fn);
     return () => listeners.delete(fn);
   },
-  isAuthed: (): boolean => accessToken !== null,
 };
 
+export type AuthStore = typeof authStore;
+
 /**
- * Single API client instance for the app. In dev the browser talks to the
- * Vite proxy at /api → NestJS; in prod the same-origin API path is used.
- * Secrets (Hermes key, JWT secret) never reach this client.
+ * Single API client. Dev: browser → Vite proxy /api → NestJS. Prod: same-origin.
+ * Secrets (Hermes key, JWT secret) never reach the browser.
  */
 export const api = new ConsultingApiClient({
   baseUrl: import.meta.env.VITE_API_BASE_URL ?? '/api',
-  getAccessToken: () => authStore.get(),
+  getAccessToken: () => authStore.getAccessToken(),
 });

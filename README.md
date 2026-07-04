@@ -21,7 +21,7 @@
 
 ```
 apps/api            NestJS 백엔드 (config/infra/health/permissions/auth/organization/spaces/chat/queues)
-apps/web            React SPA (TanStack Router 파일기반 + Vite + CSS 토큰 + GSAP) — 4분할 앱 셸
+apps/web            React SPA (TanStack Router 파일기반 + Vite + CSS 토큰 + GSAP) — 4분할 셸 + 인증/초대 UI
 packages/shared     Result 타입, 스코프 어휘, 위험등급 (ADR-0002/0004)
 packages/contracts  Zod API 계약 (health/error/auth/invitation/chat/spaces) — strict response/event + secret 미노출 강제
 packages/api-client 브라우저/서버 공용 타입안전 클라이언트 (fetch + SSE 파서 + ApiClientError)

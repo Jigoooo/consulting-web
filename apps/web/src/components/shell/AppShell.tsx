@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { Link } from '@tanstack/react-router';
+import { Link, useRouter } from '@tanstack/react-router';
+import { useAuth } from '../../lib/useAuth';
 import s from './AppShell.module.css';
 
 /**
@@ -21,6 +22,8 @@ export function AppShell({ children }: { children: ReactNode }) {
 }
 
 function Rail() {
+  const router = useRouter();
+  const { logout } = useAuth();
   return (
     <div className={s.rail}>
       <div className={`${s.wsWrap} ${s.active}`}>
@@ -42,18 +45,29 @@ function Rail() {
       </div>
       <div className={s.spacer} />
       <div className={s.rbtn} title="workspace 추가">+</div>
-      <div className={s.rbtn} title="설정">⚙</div>
+      <div
+        className={s.rbtn}
+        title="로그아웃"
+        onClick={() => {
+          logout();
+          void router.navigate({ to: '/login' });
+        }}
+      >
+        ⎋
+      </div>
     </div>
   );
 }
 
 function Sidebar() {
+  const { user } = useAuth();
+  const name = user?.displayName ?? '내';
   return (
     <div className={s.sidebar}>
       <div className={s.wsHead}>
-        <div className={s.wsIco}>지</div>
+        <div className={s.wsIco}>{name.slice(0, 1)}</div>
         <div>
-          <div className={s.wsName}>지구 Workspace</div>
+          <div className={s.wsName}>{name} Workspace</div>
           <div className={s.wsSub}>owner · 개인</div>
         </div>
       </div>

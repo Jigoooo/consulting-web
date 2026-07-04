@@ -42,7 +42,14 @@ export class HttpCore {
   }
 
   private get fetchImpl(): typeof fetch {
-    return this.options.fetch ?? globalThis.fetch;
+    // Always return a function detached from `this`. Calling
+    // `this.fetchImpl(...)` would otherwise invoke fetch with `this` = HttpCore,
+    // which browsers reject with "Illegal invocation" (platform fetch must run
+    // in the window/worker context). Injected fetches (tests) are wrapped too so
+    // they never receive the client as their thisArg.
+    const injected = this.options.fetch;
+    if (injected) return (input, init) => injected(input, init);
+    return globalThis.fetch.bind(globalThis);
   }
 
   headers(extra: Record<string, string> = {}, auth = true): Record<string, string> {

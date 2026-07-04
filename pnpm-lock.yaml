@@ -129,6 +129,9 @@ importers:
       react-dom:
         specifier: ^19.0.0
         version: 19.2.7(react@19.2.7)
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
     devDependencies:
       '@consulting/eslint-config':
         specifier: workspace:*
