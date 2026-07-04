@@ -1,0 +1,11 @@
+{
+  "extends": "@consulting/tsconfig/nestjs.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "types": ["node", "reflect-metadata"],
+    "baseUrl": "."
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "test/**/*"]
+}

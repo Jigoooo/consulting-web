@@ -1,0 +1,28 @@
+# deps
+node_modules/
+.pnpm-store/
+
+# build
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+
+# env & secrets — never commit
+.env
+.env.*
+!.env.example
+
+# logs
+*.log
+logs/
+
+# os
+.DS_Store
+Thumbs.db
+
+# test
+coverage/
+
+# drizzle
+packages/db-schema/drizzle/**/*.sql.bak

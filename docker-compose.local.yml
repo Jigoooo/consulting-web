@@ -1,0 +1,43 @@
+# Consulting Web — local infra (Phase 0)
+# Dedicated PostgreSQL 5434 + Redis 6380 (6379 is taken by Honcho).
+# Passwords come from .env.local (gitignored). Never hardcode secrets here.
+
+name: consulting-web
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: consulting-postgres
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5434:5432"
+    environment:
+      POSTGRES_DB: consulting
+      POSTGRES_USER: consulting_app
+      POSTGRES_PASSWORD: ${CONSULTING_POSTGRES_PASSWORD:?set CONSULTING_POSTGRES_PASSWORD in .env.local}
+    volumes:
+      - consulting_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U consulting_app -d consulting"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    container_name: consulting-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6380:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - consulting_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  consulting_pgdata:
+  consulting_redisdata:
