@@ -49,6 +49,13 @@ export class InvitationUseCase {
     const tokenHash = hashToken(token);
     const expiresAt = new Date(Date.now() + (cmd.ttlMs ?? 7 * 24 * 3600 * 1000));
 
+    if (!(await this.scopeBelongsToWorkspace(cmd.scopeType, cmd.scopeId, cmd.workspaceId))) {
+      return err(domainError('PRECONDITION', 'invitation scope does not belong to workspace'));
+    }
+    if (!(await this.actorCanCreateInvitation(cmd.invitedByUserId, cmd.workspaceId))) {
+      return err(domainError('FORBIDDEN', 'only owner/admin can create invitations'));
+    }
+
     const [row] = await this.db
       .insert(schema.invitations)
       .values({
@@ -160,6 +167,80 @@ export class InvitationUseCase {
       }
       throw e;
     });
+  }
+
+  /**
+   * Phase 0 minimum invitation policy: only workspace owner/admin may mint
+   * share-link invitations. Controllers may later add finer project/channel
+   * delegation, but the use-case itself must not trust caller-side gating.
+   */
+  private async actorCanCreateInvitation(userId: string, workspaceId: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ role: schema.memberships.role })
+      .from(schema.memberships)
+      .where(
+        and(
+          eq(schema.memberships.userId, userId),
+          eq(schema.memberships.workspaceId, workspaceId),
+          eq(schema.memberships.scopeType, 'workspace'),
+          eq(schema.memberships.scopeId, workspaceId),
+        ),
+      )
+      .limit(1);
+    return row?.role === 'owner' || row?.role === 'admin';
+  }
+
+  /**
+   * Polymorphic scope_id has no FK target, so workspace ownership is an
+   * application invariant. Enforce it at invitation creation to prevent
+   * cross-tenant membership rows such as workspace A + project B.
+   */
+  private async scopeBelongsToWorkspace(
+    scopeType: ScopeType,
+    scopeId: string,
+    workspaceId: string,
+  ): Promise<boolean> {
+    if (scopeType === 'workspace') {
+      const [row] = await this.db
+        .select({ id: schema.workspaces.id })
+        .from(schema.workspaces)
+        .where(and(eq(schema.workspaces.id, scopeId), eq(schema.workspaces.id, workspaceId)))
+        .limit(1);
+      return Boolean(row);
+    }
+    if (scopeType === 'project') {
+      const [row] = await this.db
+        .select({ id: schema.projects.id })
+        .from(schema.projects)
+        .where(and(eq(schema.projects.id, scopeId), eq(schema.projects.workspaceId, workspaceId)))
+        .limit(1);
+      return Boolean(row);
+    }
+    if (scopeType === 'channel') {
+      const [row] = await this.db
+        .select({ id: schema.channels.id })
+        .from(schema.channels)
+        .where(and(eq(schema.channels.id, scopeId), eq(schema.channels.workspaceId, workspaceId)))
+        .limit(1);
+      return Boolean(row);
+    }
+    if (scopeType === 'topic') {
+      const [row] = await this.db
+        .select({ id: schema.topics.id })
+        .from(schema.topics)
+        .where(and(eq(schema.topics.id, scopeId), eq(schema.topics.workspaceId, workspaceId)))
+        .limit(1);
+      return Boolean(row);
+    }
+    if (scopeType === 'thread') {
+      const [row] = await this.db
+        .select({ id: schema.threads.id })
+        .from(schema.threads)
+        .where(and(eq(schema.threads.id, scopeId), eq(schema.threads.workspaceId, workspaceId)))
+        .limit(1);
+      return Boolean(row);
+    }
+    return false;
   }
 }
 

@@ -62,6 +62,76 @@ d('Foundation negative security', () => {
     expect(r.source).toBe('no_grant');
   });
 
+  it('rejects invitation whose target scope does not belong to the declared workspace', async () => {
+    const signup = new SignUpUseCase(db, new ScryptPasswordHasher());
+    const ownerA = await signup.execute({
+      email: `tenant-a-${Date.now()}@example.com`,
+      password: 'supersecret1',
+      displayName: 'TenantA',
+    });
+    const ownerB = await signup.execute({
+      email: `tenant-b-${Date.now()}@example.com`,
+      password: 'supersecret1',
+      displayName: 'TenantB',
+    });
+    expect(ownerA.ok && ownerB.ok).toBe(true);
+    if (!ownerA.ok || !ownerB.ok) return;
+    users.push(ownerA.value.userId, ownerB.value.userId);
+    workspaces.push(ownerA.value.personalWorkspaceId, ownerB.value.personalWorkspaceId);
+
+    const projects = new CreateProjectUseCase(db);
+    const foreignProject = await projects.execute({
+      workspaceId: ownerB.value.personalWorkspaceId,
+      actorUserId: ownerB.value.userId,
+      name: 'Foreign Project',
+      slug: `foreign-${Date.now()}`,
+    });
+    expect(foreignProject.ok).toBe(true);
+    if (!foreignProject.ok) return;
+
+    const inv = new InvitationUseCase(db);
+    const bad = await inv.create({
+      workspaceId: ownerA.value.personalWorkspaceId,
+      invitedByUserId: ownerA.value.userId,
+      scopeType: 'project',
+      scopeId: foreignProject.value.projectId,
+      role: 'viewer',
+    });
+
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.error.code).toBe('PRECONDITION');
+  });
+
+  it('rejects invitation creation by a user who is not an owner/admin member of the target workspace', async () => {
+    const signup = new SignUpUseCase(db, new ScryptPasswordHasher());
+    const owner = await signup.execute({
+      email: `tenant-owner-${Date.now()}@example.com`,
+      password: 'supersecret1',
+      displayName: 'TenantOwner',
+    });
+    const outsider = await signup.execute({
+      email: `tenant-outsider-${Date.now()}@example.com`,
+      password: 'supersecret1',
+      displayName: 'Outsider',
+    });
+    expect(owner.ok && outsider.ok).toBe(true);
+    if (!owner.ok || !outsider.ok) return;
+    users.push(owner.value.userId, outsider.value.userId);
+    workspaces.push(owner.value.personalWorkspaceId, outsider.value.personalWorkspaceId);
+
+    const inv = new InvitationUseCase(db);
+    const bad = await inv.create({
+      workspaceId: owner.value.personalWorkspaceId,
+      invitedByUserId: outsider.value.userId,
+      scopeType: 'workspace',
+      scopeId: owner.value.personalWorkspaceId,
+      role: 'viewer',
+    });
+
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.error.code).toBe('FORBIDDEN');
+  });
+
   it('share-link invitation can be created without binding to an email', async () => {
     const signup = new SignUpUseCase(db, new ScryptPasswordHasher());
     const owner = await signup.execute({
