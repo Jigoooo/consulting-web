@@ -52,20 +52,24 @@ export class InvitationUseCase {
     return ok({ invitationId: row.id, token });
   }
 
-  /** Accept an invitation: create membership. Rejects reuse/expired (ADR-0009). */
+  /** Accept an invitation: create membership. Rejects reuse/expired (ADR-0009/0020). */
   async accept(cmd: AcceptInvitationCommand): Promise<Result<{ membershipId: string }>> {
     const tokenHash = hashToken(cmd.token);
 
     return this.db.transaction(async (tx) => {
+      // Atomic single-use claim: only ONE concurrent accept wins the row
+      // (UPDATE ... WHERE acceptedAt IS NULL RETURNING). Prevents the
+      // SELECT-then-UPDATE TOCTOU double-accept window (ADR-0020).
       const [inv] = await tx
-        .select()
-        .from(schema.invitations)
+        .update(schema.invitations)
+        .set({ acceptedByUserId: cmd.userId, acceptedAt: new Date() })
         .where(and(eq(schema.invitations.tokenHash, tokenHash), isNull(schema.invitations.acceptedAt)))
-        .limit(1);
+        .returning();
 
       if (!inv) return err(domainError('NOT_FOUND', 'invitation not found or already used'));
       if (inv.expiresAt.getTime() < Date.now()) {
-        return err(domainError('PRECONDITION', 'invitation expired'));
+        // expired: roll back the claim so the row is not falsely marked accepted
+        throw new InvitationExpiredError();
       }
 
       const [membership] = await tx
@@ -79,11 +83,6 @@ export class InvitationUseCase {
         })
         .onConflictDoNothing()
         .returning({ id: schema.memberships.id });
-
-      await tx
-        .update(schema.invitations)
-        .set({ acceptedByUserId: cmd.userId, acceptedAt: new Date() })
-        .where(eq(schema.invitations.id, inv.id));
 
       await tx.insert(schema.auditEvents).values({
         workspaceId: inv.workspaceId,
@@ -111,6 +110,14 @@ export class InvitationUseCase {
       }
 
       return ok({ membershipId: membership.id });
+    }).catch((e): Result<{ membershipId: string }> => {
+      if (e instanceof InvitationExpiredError) {
+        return err(domainError('PRECONDITION', 'invitation expired'));
+      }
+      throw e;
     });
   }
 }
+
+/** Internal sentinel used to force a transaction rollback on expiry. */
+class InvitationExpiredError extends Error {}

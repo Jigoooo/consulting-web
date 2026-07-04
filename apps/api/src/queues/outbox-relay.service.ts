@@ -23,6 +23,7 @@ export class OutboxRelayService {
       .select()
       .from(schema.outboxEvents)
       .where(eq(schema.outboxEvents.status, 'pending'))
+      .orderBy(schema.outboxEvents.createdAt)
       .limit(limit);
 
     let published = 0;
@@ -37,23 +38,33 @@ export class OutboxRelayService {
         .returning({ id: schema.outboxEvents.id });
       if (claimed.length === 0) continue;
 
-      await this.queue.add(
-        evt.eventType,
-        {
-          eventId: evt.id,
-          eventType: evt.eventType,
-          aggregateType: evt.aggregateType,
-          aggregateId: evt.aggregateId,
-          workspaceId: evt.workspaceId,
-          payload: evt.payload,
-        },
-        {
-          // BullMQ jobId cannot contain ':' — sanitize while preserving dedup semantics.
-          jobId: evt.idempotencyKey.replace(/:/g, '_'),
-          removeOnComplete: 1000,
-          removeOnFail: 5000,
-        },
-      );
+      try {
+        await this.queue.add(
+          evt.eventType,
+          {
+            eventId: evt.id,
+            eventType: evt.eventType,
+            aggregateType: evt.aggregateType,
+            aggregateId: evt.aggregateId,
+            workspaceId: evt.workspaceId,
+            payload: evt.payload,
+          },
+          {
+            // BullMQ jobId cannot contain ':' — sanitize while preserving dedup semantics.
+            jobId: evt.idempotencyKey.replace(/:/g, '_'),
+            removeOnComplete: 1000,
+            removeOnFail: 5000,
+          },
+        );
+      } catch {
+        // enqueue failed — revert the claim so the event is retried next pass,
+        // never stuck in 'processing' (ADR-0005 at-least-once).
+        await this.db
+          .update(schema.outboxEvents)
+          .set({ status: 'pending', updatedAt: sql`now()` })
+          .where(eq(schema.outboxEvents.id, evt.id));
+        continue;
+      }
 
       await this.db
         .update(schema.outboxEvents)

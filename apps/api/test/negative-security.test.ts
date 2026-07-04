@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { schema } from '@consulting/db-schema';
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { Pool } from 'pg';
 import { SignUpUseCase } from '../src/auth/sign-up.usecase.js';
 import { ScryptPasswordHasher } from '../src/auth/password.js';
@@ -128,6 +128,51 @@ d('Foundation negative security', () => {
     expect(stored?.tokenHash).toBe(hashToken(created.value.token));
     expect(stored?.tokenHash).not.toBe(created.value.token);
     expect(JSON.stringify(stored)).not.toContain(created.value.token);
+  });
+
+  it('concurrent accept of the same token yields exactly one membership (ADR-0020)', async () => {
+    const signup = new SignUpUseCase(db, new ScryptPasswordHasher());
+    const owner = await signup.execute({
+      email: `neg-race-o-${Date.now()}@example.com`,
+      password: 'supersecret1',
+      displayName: 'RaceOwner',
+    });
+    const guest = await signup.execute({
+      email: `neg-race-g-${Date.now()}@example.com`,
+      password: 'supersecret1',
+      displayName: 'RaceGuest',
+    });
+    expect(owner.ok && guest.ok).toBe(true);
+    if (!owner.ok || !guest.ok) return;
+    users.push(owner.value.userId, guest.value.userId);
+    workspaces.push(owner.value.personalWorkspaceId, guest.value.personalWorkspaceId);
+
+    const inv = new InvitationUseCase(db);
+    const created = await inv.create({
+      workspaceId: owner.value.personalWorkspaceId,
+      invitedByUserId: owner.value.userId,
+      email: 'race@example.com',
+      scopeType: 'workspace',
+      scopeId: owner.value.personalWorkspaceId,
+      role: 'viewer',
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    // fire two accepts concurrently — exactly one must succeed
+    const [a, b] = await Promise.all([
+      inv.accept({ token: created.value.token, userId: guest.value.userId }),
+      inv.accept({ token: created.value.token, userId: guest.value.userId }),
+    ]);
+    const okCount = [a, b].filter((r) => r.ok).length;
+    expect(okCount).toBe(1);
+
+    // exactly one audit row for this acceptance
+    const audits = await db
+      .select()
+      .from(schema.auditEvents)
+      .where(eq(schema.auditEvents.workspaceId, owner.value.personalWorkspaceId));
+    expect(audits.filter((x) => x.action === 'invitation.accept')).toHaveLength(1);
   });
 
   it('duplicate channel slug within a project is rejected', async () => {
