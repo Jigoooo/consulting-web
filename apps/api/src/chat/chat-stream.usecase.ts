@@ -1,8 +1,6 @@
-import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { schema } from '@consulting/db-schema';
 import { and, eq } from 'drizzle-orm';
-import type { ChatStreamEvent, ChatStreamRequest } from '@consulting/contracts';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 
 export type ChatStreamAccess = 'allowed' | 'not_found' | 'forbidden';
@@ -32,12 +30,4 @@ export class ChatStreamUseCase {
     return membership ? 'allowed' : 'forbidden';
   }
 
-  mockEvents(cmd: ChatStreamRequest): ChatStreamEvent[] {
-    const runId = randomUUID();
-    return [
-      { type: 'start', runId, threadId: cmd.threadId, ts: new Date().toISOString() },
-      { type: 'delta', runId, text: `mock: ${cmd.message}` },
-      { type: 'done', runId },
-    ];
-  }
 }

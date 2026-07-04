@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 const UuidSchema = z.string().uuid();
+const RunIdSchema = z.string().trim().min(1).max(128);
 
 export const ChatStreamRequestSchema = z.object({
   threadId: UuidSchema,
@@ -11,20 +12,20 @@ export type ChatStreamRequest = z.infer<typeof ChatStreamRequestSchema>;
 
 export const ChatStreamStartEventSchema = z.object({
   type: z.literal('start'),
-  runId: UuidSchema,
+  runId: RunIdSchema,
   threadId: UuidSchema,
   ts: z.string().datetime(),
 }).strict();
 
 export const ChatStreamDeltaEventSchema = z.object({
   type: z.literal('delta'),
-  runId: UuidSchema,
+  runId: RunIdSchema,
   text: z.string(),
 }).strict();
 
 export const ChatStreamDoneEventSchema = z.object({
   type: z.literal('done'),
-  runId: UuidSchema,
+  runId: RunIdSchema,
 }).strict();
 
 export const ChatStreamErrorEventSchema = z.object({

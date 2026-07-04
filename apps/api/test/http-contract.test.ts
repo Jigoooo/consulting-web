@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
 import request from 'supertest';
@@ -42,6 +42,39 @@ function sseEvents(text: string): unknown[] {
     });
 }
 
+function installHermesRunsFetchMock(finalText = 'proxied hello') {
+  const calls: string[] = [];
+  const body = [
+    'data: {"event":"message.delta","run_id":"run_test_proxy","delta":"proxied "}',
+    '',
+    `data: {"event":"run.completed","run_id":"run_test_proxy","output":"${finalText}"}`,
+    '',
+    ': stream closed',
+    '',
+  ].join('\n');
+  const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : String(input);
+    calls.push(url);
+    if (url.endsWith('/v1/runs')) {
+      const parsed = JSON.parse(String(init?.body ?? '{}')) as { input?: string; session_id?: string };
+      expect(parsed.input).toBeTruthy();
+      expect(parsed.session_id).toBeTruthy();
+      const headers = init?.headers as Record<string, string> | undefined;
+      expect(headers?.authorization).toMatch(/^Bearer\s+.+/);
+      return new Response(JSON.stringify({ run_id: 'run_test_proxy', status: 'started' }), {
+        status: 202,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (url.endsWith('/v1/runs/run_test_proxy/events')) {
+      return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    }
+    return new Response('not found', { status: 404 });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return { fetchMock, calls };
+}
+
 d('HTTP API contract adapters', () => {
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -60,6 +93,10 @@ d('HTTP API contract adapters', () => {
     }
     await pool.end();
     await app.close();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('POST /auth/signup returns strict bootstrap response without password/token secrets', async () => {
@@ -176,7 +213,8 @@ d('HTTP API contract adapters', () => {
     expect(memberships.some((m) => m.workspaceId === ownerBody.personalWorkspaceId)).toBe(true);
   });
 
-  it('protected chat stream requires bearer access and returns strict mock SSE events for readable threads', async () => {
+  it('protected chat stream requires bearer access and proxies readable threads through Hermes runs SSE', async () => {
+    const { calls } = installHermesRunsFetchMock('proxied hello');
     const email = `chat-owner-${Date.now()}@example.com`;
     const password = 'supersecret1';
     const signedUp = await request(app.getHttpServer())
@@ -250,14 +288,23 @@ d('HTTP API contract adapters', () => {
 
     const events = sseEvents(response.text);
     expect(events.map((e) => (e as { type: string }).type)).toEqual(['start', 'delta', 'done']);
+    expect((events[0] as { runId: string }).runId).toBe('run_test_proxy');
+    expect((events[1] as { text: string }).text).toBe('proxied ');
+    const hermesBase = (process.env.HERMES_API_BASE_URL ?? 'http://127.0.0.1:8642').replace(/\/$/, '');
+    expect(calls).toEqual([
+      `${hermesBase}/v1/runs`,
+      `${hermesBase}/v1/runs/run_test_proxy/events`,
+    ]);
     for (const event of events) {
       expect(ChatStreamEventSchema.parse(event)).toEqual(event);
       expect(JSON.stringify(event)).not.toContain('HERMES_API_KEY');
       expect(JSON.stringify(event)).not.toContain('jwtSecret');
+      expect(JSON.stringify(event)).not.toContain('test-hermes-key');
     }
   });
 
   it('protected space creation endpoints create a thread that can be streamed', async () => {
+    installHermesRunsFetchMock('thread api smoke');
     const email = `space-owner-${Date.now()}@example.com`;
     const outsiderEmail = `space-outsider-${Date.now()}@example.com`;
     const password = 'supersecret1';

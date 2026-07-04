@@ -16,9 +16,9 @@ describe('chat stream contracts', () => {
   });
 
   it('accepts strict SSE event frames only', () => {
-    const start = { type: 'start', runId: uuid, threadId: uuid, ts: '2026-07-05T00:00:00.000Z' };
-    const delta = { type: 'delta', runId: uuid, text: 'hello' };
-    const done = { type: 'done', runId: uuid };
+    const start = { type: 'start', runId: 'run_hermes_123', threadId: uuid, ts: '2026-07-05T00:00:00.000Z' };
+    const delta = { type: 'delta', runId: 'run_hermes_123', text: 'hello' };
+    const done = { type: 'done', runId: 'run_hermes_123' };
     expect(ChatStreamEventSchema.parse(start)).toEqual(start);
     expect(ChatStreamEventSchema.parse(delta)).toEqual(delta);
     expect(ChatStreamEventSchema.parse(done)).toEqual(done);
