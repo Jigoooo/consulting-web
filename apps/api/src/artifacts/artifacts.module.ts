@@ -5,11 +5,12 @@ import { SpacesModule } from '../spaces/spaces.module.js';
 import { ChatModule } from '../chat/chat.module.js';
 import { ArtifactsController } from './artifacts.controller.js';
 import { ArtifactStore } from './artifact.store.js';
+import { ArtifactExportService } from './artifact-export.service.js';
 
 @Module({
   imports: [DrizzleModule, AuthModule, SpacesModule, ChatModule],
   controllers: [ArtifactsController],
-  providers: [ArtifactStore],
+  providers: [ArtifactStore, ArtifactExportService],
   exports: [ArtifactStore],
 })
 export class ArtifactsModule {}

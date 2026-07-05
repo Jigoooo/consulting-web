@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
 import { useSelectedWorkspace } from '../lib/wsStore';
 import { useWorkspaceTree } from '../lib/spaces';
-import { useArtifacts, useArtifactDetail, useCreateArtifact, useAddArtifactVersion } from '../lib/collab';
+import { useArtifacts, useArtifactDetail, useCreateArtifact, useAddArtifactVersion, saveArtifactExport } from '../lib/collab';
 import { Markdown } from '../components/chat/Markdown';
 import { useToast } from '../components/ui/Toast';
 import s from '../components/artifacts/Artifacts.module.css';
@@ -30,6 +30,7 @@ function ArtifactsPage() {
   const [vContent, setVContent] = useState('');
   const [vNote, setVNote] = useState('');
   const [viewVersion, setViewVersion] = useState<number | null>(null);
+  const [exporting, setExporting] = useState<'pdf' | 'docx' | null>(null);
 
   const projects = tree?.projects ?? [];
   const artifacts = data?.artifacts ?? [];
@@ -69,6 +70,19 @@ function ArtifactsPage() {
       setViewVersion(null);
     } catch {
       toast('error', '버전 추가에 실패했어요.');
+    }
+  }
+
+  async function download(format: 'pdf' | 'docx') {
+    if (!selected || !detail.data || !shown) return;
+    setExporting(format);
+    try {
+      await saveArtifactExport(selected, detail.data.title, format, shown.versionNo);
+      toast('success', `${format.toUpperCase()} 파일을 내려받았어요.`);
+    } catch {
+      toast('error', `${format.toUpperCase()} 내보내기에 실패했어요.`);
+    } finally {
+      setExporting(null);
     }
   }
 
@@ -156,9 +170,17 @@ function ArtifactsPage() {
                   {shown?.authorName ? ` · ${shown.authorName}` : ''}
                 </div>
               </div>
-              <button type="button" className={s.newBtn} onClick={() => setVersionOpen(true)}>
-                + 새 버전
-              </button>
+              <div className={s.headActions}>
+                <button type="button" className={s.ghost} disabled={Boolean(exporting)} onClick={() => void download('pdf')}>
+                  {exporting === 'pdf' ? 'PDF 생성 중…' : 'PDF'}
+                </button>
+                <button type="button" className={s.ghost} disabled={Boolean(exporting)} onClick={() => void download('docx')}>
+                  {exporting === 'docx' ? 'DOCX 생성 중…' : 'DOCX'}
+                </button>
+                <button type="button" className={s.newBtn} onClick={() => setVersionOpen(true)}>
+                  + 새 버전
+                </button>
+              </div>
             </div>
             <div className={s.timeline}>
               {versions.map((v) => (

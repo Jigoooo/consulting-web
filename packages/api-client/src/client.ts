@@ -279,4 +279,12 @@ export class ConsultingApiClient {
     const response = await this.http.raw(`/attachments/${id}/content`, { method: 'GET' });
     return response.blob();
   }
+
+  /** Authenticated artifact export (PDF/DOCX) — returns a downloadable blob. */
+  async exportArtifact(id: string, format: 'pdf' | 'docx', version?: number): Promise<Blob> {
+    const params = new URLSearchParams({ format });
+    if (version) params.set('version', String(version));
+    const response = await this.http.raw(`/artifacts/${id}/export?${params.toString()}`, { method: 'GET' });
+    return response.blob();
+  }
 }

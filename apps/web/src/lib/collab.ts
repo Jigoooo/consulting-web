@@ -122,3 +122,15 @@ export async function saveAttachment(id: string, fileName: string): Promise<void
   a.click();
   URL.revokeObjectURL(url);
 }
+
+export async function saveArtifactExport(id: string, title: string, format: 'pdf' | 'docx', version?: number): Promise<void> {
+  const blob = await api.exportArtifact(id, format, version);
+  const safeTitle = title.trim().replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-').replace(/\s+/g, '-').slice(0, 80) || 'artifact';
+  const suffix = version ? `-v${version}` : '';
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${safeTitle}${suffix}.${format}`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
