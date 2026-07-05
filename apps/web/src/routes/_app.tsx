@@ -1,5 +1,6 @@
 import { createFileRoute, redirect, Outlet } from '@tanstack/react-router';
 import { AppShell } from '../components/shell/AppShell';
+import { CommandPalette } from '../components/ui/CommandPalette';
 
 /**
  * Pathless authed layout: guards everything inside the workspace shell.
@@ -16,8 +17,11 @@ export const Route = createFileRoute('/_app')({
 
 function AppLayout() {
   return (
-    <AppShell>
-      <Outlet />
-    </AppShell>
+    <>
+      <CommandPalette />
+      <AppShell>
+        <Outlet />
+      </AppShell>
+    </>
   );
 }

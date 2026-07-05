@@ -153,6 +153,50 @@
   background-size: 400% 100%;
   animation: shimmer 1.4s ease infinite;
 }
+.msgHover .msgActions {
+  opacity: 0;
+  transition: opacity var(--dur-fast);
+}
+.msgHover:hover .msgActions {
+  opacity: 1;
+}
+.msgActions {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 4px;
+}
+.msgActionBtn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.msgActionBtn:hover {
+  background: var(--bg-warm);
+  color: var(--text-primary);
+}
+.msgActionBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.retryBtn {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 560;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: none;
+  border-radius: 6px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
 @keyframes shimmer {
   0% {
     background-position: 100% 0;
