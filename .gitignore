@@ -32,3 +32,6 @@ packages/db-schema/drizzle/**/*.sql.bak
 
 # graphify artifacts (hook가 커밋마다 재생성)
 graphify-out/
+
+# understand-anything generated graph/dashboard artifacts
+.understand-anything/
