@@ -13,7 +13,7 @@ describe('HttpCore fetch binding', () => {
     const fakeFetch = vi.fn(function (this: unknown, _url: string | URL | Request, _init?: RequestInit) {
       capturedThis = this;
       return Promise.resolve(
-        new Response(JSON.stringify({ userId: '00000000-0000-0000-0000-000000000001', personalWorkspaceId: '00000000-0000-0000-0000-000000000002' }), {
+        new Response(JSON.stringify({ userId: '00000000-0000-4000-8000-000000000001', personalWorkspaceId: '00000000-0000-4000-8000-000000000002' }), {
           status: 201,
           headers: { 'content-type': 'application/json' },
         }),
@@ -26,7 +26,7 @@ describe('HttpCore fetch binding', () => {
     });
 
     const res = await client.signup({ email: 'a@b.com', password: 'supersecret1', displayName: 'A' });
-    expect(res.userId).toBe('00000000-0000-0000-0000-000000000001');
+    expect(res.userId).toBe('00000000-0000-4000-8000-000000000001');
     expect(fakeFetch).toHaveBeenCalledOnce();
     // Called as a free function → `this` is undefined (strict) or the module,
     // never the HttpCore/client instance.

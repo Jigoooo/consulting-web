@@ -5,15 +5,15 @@
     "module": "CommonJS",
     "moduleResolution": "Node",
     "ignoreDeprecations": "6.0",
-    "rootDir": ".",
+    "rootDir": "src",
     "outDir": "dist"
   },
   "include": [
-    "src/**/*.ts",
-    "test/**/*.ts"
+    "src/**/*.ts"
   ],
   "exclude": [
     "node_modules",
-    "dist"
+    "dist",
+    "test/**/*"
   ]
 }

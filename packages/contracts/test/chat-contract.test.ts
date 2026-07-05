@@ -5,7 +5,7 @@ import {
   ChatStreamSseFrameSchema,
 } from '../src/index.js';
 
-const uuid = '00000000-0000-0000-0000-000000000001';
+const uuid = '00000000-0000-4000-8000-000000000001';
 
 describe('chat stream contracts', () => {
   it('accepts strict chat stream requests', () => {

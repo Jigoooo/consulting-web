@@ -5,7 +5,7 @@ import {
   ListThreadsResponseSchema,
 } from '../src/index.js';
 
-const uuid = (n: number) => `00000000-0000-0000-0000-00000000000${n}`;
+const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 describe('space read contracts (Phase 1-M)', () => {
   it('parses a workspace list with caller role', () => {

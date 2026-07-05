@@ -1,7 +1,7 @@
 {
   "extends": "@consulting/tsconfig/library.json",
   "compilerOptions": {
-    "rootDir": ".",
+    "rootDir": "src",
     "outDir": "dist",
     "lib": [
       "ES2022",
@@ -10,11 +10,11 @@
     ]
   },
   "include": [
-    "src/**/*.ts",
-    "test/**/*.ts"
+    "src/**/*.ts"
   ],
   "exclude": [
     "node_modules",
-    "dist"
+    "dist",
+    "test/**/*"
   ]
 }

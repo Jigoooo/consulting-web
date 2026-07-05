@@ -38,12 +38,12 @@ describe('no secret leak in response contracts', () => {
   it('SignUpResponse parses a clean payload and rejects extra secret keys', () => {
     const clean = {
       user: {
-        id: '00000000-0000-0000-0000-000000000001',
+        id: '00000000-0000-4000-8000-000000000001',
         email: 'a@b.com',
         displayName: 'A',
         status: 'active' as const,
       },
-      personalWorkspaceId: '00000000-0000-0000-0000-000000000002',
+      personalWorkspaceId: '00000000-0000-4000-8000-000000000002',
       tokens: { accessToken: 'x', refreshToken: 'y', expiresInSec: 900 },
     };
     const parsed = SignUpResponseSchema.parse(clean);
@@ -65,7 +65,7 @@ describe('no secret leak in response contracts', () => {
   it('AuthSessionResponse exposes only public user and intended tokens', () => {
     const clean = {
       user: {
-        id: '00000000-0000-0000-0000-000000000001',
+        id: '00000000-0000-4000-8000-000000000001',
         email: 'a@b.com',
         displayName: 'A',
         status: 'active' as const,

@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
+import react, { reactCompilerPreset } from '@vitejs/plugin-react';
+import babel from '@rolldown/plugin-babel';
 import { tanstackRouter } from '@tanstack/router-plugin/vite';
 
 // NOTE (2026-07-05, per TanStack docs): the router plugin MUST come before
@@ -9,6 +10,7 @@ export default defineConfig({
   plugins: [
     tanstackRouter({ target: 'react', autoCodeSplitting: true }),
     react(),
+    babel({ presets: [reactCompilerPreset()] }),
   ],
   server: {
     port: 5273,

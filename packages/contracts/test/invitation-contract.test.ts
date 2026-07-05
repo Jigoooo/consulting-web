@@ -11,9 +11,9 @@ import {
 describe('invitation contracts', () => {
   it('preview response is public and rejects token/hash leaks', () => {
     const clean = {
-      workspaceId: '00000000-0000-0000-0000-000000000001',
+      workspaceId: '00000000-0000-4000-8000-000000000001',
       scopeType: 'workspace',
-      scopeId: '00000000-0000-0000-0000-000000000001',
+      scopeId: '00000000-0000-4000-8000-000000000001',
       role: 'viewer',
       expiresAt: new Date().toISOString(),
       accepted: false,
@@ -47,7 +47,7 @@ describe('invitation contracts', () => {
 });
 
 function cleanUuid(): string {
-  return '00000000-0000-0000-0000-000000000001';
+  return '00000000-0000-4000-8000-000000000001';
 }
 
 function validCreateRequest(extra: Record<string, unknown> = {}): Record<string, unknown> {

@@ -63,15 +63,15 @@ d('Foundation negative security', () => {
   });
 
   it('rejects tenantless outbox event at the DB boundary', async () => {
-    await expect(
-      db.insert(schema.outboxEvents).values({
-        eventType: 'TenantlessEvent',
-        aggregateType: 'test',
-        aggregateId: crypto.randomUUID(),
-        payload: {},
-        idempotencyKey: `tenantless-${Date.now()}`,
-      }),
-    ).rejects.toThrow();
+    const tenantlessEvent = {
+      eventType: 'TenantlessEvent',
+      aggregateType: 'test',
+      aggregateId: crypto.randomUUID(),
+      payload: {},
+      idempotencyKey: `tenantless-${Date.now()}`,
+    } as never;
+
+    await expect(db.insert(schema.outboxEvents).values(tenantlessEvent)).rejects.toThrow();
   });
 
   it('rejects invitation whose target scope does not belong to the declared workspace', async () => {

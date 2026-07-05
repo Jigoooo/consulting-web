@@ -1,7 +1,7 @@
 {
   "extends": "@consulting/tsconfig/nestjs.json",
   "compilerOptions": {
-    "rootDir": ".",
+    "rootDir": "src",
     "outDir": "dist",
     "types": [
       "node",
@@ -11,11 +11,11 @@
     "ignoreDeprecations": "6.0"
   },
   "include": [
-    "src/**/*.ts",
-    "test/**/*.ts"
+    "src/**/*.ts"
   ],
   "exclude": [
     "node_modules",
-    "dist"
+    "dist",
+    "test/**/*"
   ]
 }
