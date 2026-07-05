@@ -31,7 +31,7 @@ function TopicPage() {
           스레드
         </div>
 
-        <form onSubmit={onCreate} style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+        <form onSubmit={(event) => void onCreate(event)} style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}

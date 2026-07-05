@@ -1,18 +1,14 @@
 import { createFileRoute } from '@tanstack/react-router';
+import { EmptyState as SharedEmptyState } from '../shared/ui/feedback/EmptyState';
 
 export const Route = createFileRoute('/_app/')({
-  component: EmptyState,
+  component: IndexEmptyState,
 });
 
-function EmptyState() {
+function IndexEmptyState() {
   return (
     <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--text-muted)' }}>
-      <div style={{ textAlign: 'center' }}>
-        <div style={{ fontSize: 40, marginBottom: 12 }}>🧭</div>
-        <div style={{ fontSize: 15, fontWeight: 560, color: 'var(--text-secondary)' }}>
-          왼쪽에서 토픽을 선택하거나 새로 만들어 시작하세요
-        </div>
-      </div>
+      <SharedEmptyState icon="navigation" title="토픽을 선택하세요" description="왼쪽에서 토픽을 고르거나 새로 만들어 시작합니다." />
     </div>
   );
 }

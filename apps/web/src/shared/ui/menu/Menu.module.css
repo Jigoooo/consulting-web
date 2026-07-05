@@ -1,0 +1,71 @@
+.wrap {
+  position: relative;
+  display: inline-flex;
+  margin-left: auto;
+}
+.trigger {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.4;
+  transition: opacity var(--dur-fast), background var(--dur-fast);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.trigger:hover,
+.triggerOpen {
+  opacity: 1;
+  background: rgba(15, 16, 17, 0.06);
+  color: var(--text-primary);
+}
+.pop {
+  position: absolute;
+  top: 24px;
+  right: 0;
+  z-index: 60;
+  min-width: 140px;
+  background: var(--surface-card);
+  border: 1px solid var(--border-whisper);
+  border-radius: 10px;
+  box-shadow: var(--shadow-pop);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+.item {
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 510;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  color: var(--text-primary);
+}
+.item:hover {
+  background: var(--bg-warm);
+}
+.danger {
+  color: var(--red);
+}
+.danger:hover {
+  background: rgba(212, 56, 13, 0.07);
+}
+.dialogForm {
+  display: grid;
+  gap: 14px;
+}
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

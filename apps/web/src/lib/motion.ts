@@ -22,7 +22,6 @@ export function useEntrance(deps: readonly unknown[] = []) {
       });
     }, el);
     return () => ctx.revert();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
   return ref;
 }

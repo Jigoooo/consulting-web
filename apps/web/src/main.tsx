@@ -4,8 +4,8 @@ import { RouterProvider, createRouter } from '@tanstack/react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { routeTree } from './routeTree.gen';
 import { authStore } from './lib/api';
-import { ToastProvider } from './components/ui/Toast';
-import { ErrorBoundary } from './components/ui/ErrorBoundary';
+import { ToastProvider } from './shared/ui/toast/Toast';
+import { ErrorBoundary } from './shared/ui/error-boundary/ErrorBoundary';
 import './styles/global.css';
 
 const queryClient = new QueryClient({

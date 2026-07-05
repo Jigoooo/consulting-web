@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { ChatThread } from '../components/chat/ChatThread';
+import { ChatThread } from '../widgets/chat-thread/ui/ChatThread';
 
 /**
  * Thread page (N-6): title comes from GET /spaces/threads/:id — no more

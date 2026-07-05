@@ -3,7 +3,7 @@ import { useState } from 'react';
 import type { InvitationPreviewResponse } from '@consulting/contracts';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/useAuth';
-import { AuthShell, SubmitButton, ErrorBanner, friendlyError, authStyles as s } from '../components/auth/AuthKit';
+import { AuthShell, SubmitButton, ErrorBanner, friendlyError, authStyles as s } from '../features/auth-session/ui/AuthKit';
 
 const roleLabel: Record<string, string> = {
   owner: '소유자',

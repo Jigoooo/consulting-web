@@ -2,7 +2,7 @@ import { createFileRoute, redirect, useRouter, Link } from '@tanstack/react-rout
 import { useState } from 'react';
 import { z } from 'zod';
 import { api, authStore } from '../lib/api';
-import { AuthShell, Field, SubmitButton, ErrorBanner, friendlyError, authStyles as s } from '../components/auth/AuthKit';
+import { AuthShell, Field, SubmitButton, ErrorBanner, friendlyError, authStyles as s } from '../features/auth-session/ui/AuthKit';
 
 const searchSchema = z.object({
   redirect: z.string().default('/'),
@@ -12,6 +12,8 @@ export const Route = createFileRoute('/signup')({
   validateSearch: searchSchema,
   beforeLoad: ({ context, search }) => {
     if (context.auth.isAuthed()) {
+      // TanStack Router uses thrown redirects for control flow.
+      // eslint-disable-next-line @typescript-eslint/only-throw-error
       throw redirect({ to: search.redirect });
     }
   },
@@ -57,7 +59,7 @@ function SignupPage() {
       <div className={s.title} data-stagger>지구 워크스페이스 시작하기</div>
       <div className={s.subtitle} data-stagger>가입하면 개인 워크스페이스가 자동으로 만들어져요.</div>
       {error ? <ErrorBanner message={error} /> : null}
-      <form onSubmit={onSubmit}>
+      <form onSubmit={(event) => void onSubmit(event)}>
         <Field label="이름" type="text" value={displayName} onChange={setDisplayName} placeholder="홍길동" autoComplete="name" autoFocus />
         <Field label="이메일" type="email" value={email} onChange={setEmail} placeholder="you@example.com" autoComplete="email" />
         <Field label="비밀번호" type="password" value={password} onChange={setPassword} placeholder="10자 이상" autoComplete="new-password" />

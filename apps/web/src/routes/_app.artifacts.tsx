@@ -3,8 +3,11 @@ import { createFileRoute } from '@tanstack/react-router';
 import { useSelectedWorkspace } from '../lib/wsStore';
 import { useWorkspaceTree } from '../lib/spaces';
 import { useArtifacts, useArtifactDetail, useCreateArtifact, useAddArtifactVersion, saveArtifactExport } from '../lib/collab';
-import { Markdown } from '../components/chat/Markdown';
-import { useToast } from '../components/ui/Toast';
+import { Markdown } from '../shared/ui/markdown/Markdown';
+import { useToast } from '../shared/ui/toast/Toast';
+import { Button } from '../shared/ui/button/Button';
+import { Input, Textarea, NativeSelect } from '../shared/ui/input/Input';
+import { EmptyState } from '../shared/ui/feedback/EmptyState';
 import s from '../components/artifacts/Artifacts.module.css';
 
 export const Route = createFileRoute('/_app/artifacts')({
@@ -49,7 +52,7 @@ function ArtifactsPage() {
         content,
         note: '초판',
       });
-      toast('success', '산출물을 등록했어요.');
+      toast('success', '산출물 등록 완료');
       setCreating(false);
       setTitle('');
       setContent('');
@@ -63,7 +66,7 @@ function ArtifactsPage() {
     if (!selected || !vContent.trim()) return;
     try {
       await addVersion.mutateAsync({ id: selected, body: { content: vContent, note: vNote.trim() } });
-      toast('success', '새 버전을 추가했어요.');
+      toast('success', '버전 추가 완료');
       setVersionOpen(false);
       setVContent('');
       setVNote('');
@@ -78,7 +81,7 @@ function ArtifactsPage() {
     setExporting(format);
     try {
       await saveArtifactExport(selected, detail.data.title, format, shown.versionNo);
-      toast('success', `${format.toUpperCase()} 파일을 내려받았어요.`);
+      toast('success', `${format.toUpperCase()} 다운로드 완료`);
     } catch {
       toast('error', `${format.toUpperCase()} 내보내기에 실패했어요.`);
     } finally {
@@ -91,9 +94,9 @@ function ArtifactsPage() {
       <div className={s.list}>
         <div className={s.listHead}>
           <span>산출물</span>
-          <button type="button" className={s.newBtn} onClick={() => setCreating(true)}>
-            + 새 산출물
-          </button>
+          <Button type="button" variant="primary" size="sm" className={s.newBtn} leadingIcon="file-text" onClick={() => setCreating(true)}>
+            새 산출물
+          </Button>
         </div>
         {isLoading ? <div className={s.muted}>불러오는 중…</div> : null}
         {!isLoading && artifacts.length === 0 ? (
@@ -125,38 +128,37 @@ function ArtifactsPage() {
         {creating ? (
           <div className={s.editor}>
             <div className={s.editorTitle}>새 산출물</div>
-            <select className={s.input} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+            <NativeSelect className={s.input} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
                 </option>
               ))}
-            </select>
-            <input
+            </NativeSelect>
+            <Input
               className={s.input}
               placeholder="제목 (예: 공공시설 적정성 1차 보고)"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
             />
-            <textarea
+            <Textarea
               className={`${s.input} ${s.textarea}`}
               placeholder="마크다운 본문…"
               value={content}
               onChange={(e) => setContent(e.target.value)}
             />
             <div style={{ display: 'flex', gap: 8 }}>
-              <button type="button" className={s.primary} disabled={createArtifact.isPending} onClick={() => void submitCreate()}>
+              <Button type="button" variant="primary" className={s.primary} disabled={createArtifact.isPending} onClick={() => void submitCreate()}>
                 등록
-              </button>
-              <button type="button" className={s.ghost} onClick={() => setCreating(false)}>
+              </Button>
+              <Button type="button" variant="ghost" className={s.ghost} onClick={() => setCreating(false)}>
                 취소
-              </button>
+              </Button>
             </div>
           </div>
         ) : !selected ? (
           <div className={s.placeholder}>
-            <div style={{ fontSize: 34, marginBottom: 10 }}>📄</div>
-            좌측에서 산출물을 선택하거나 새로 만들어보세요
+            <EmptyState icon="file-text" title="산출물을 선택하세요" description="왼쪽 목록에서 선택하거나 새 산출물을 만듭니다." />
           </div>
         ) : detail.isLoading ? (
           <div className={s.placeholder}>불러오는 중…</div>
@@ -171,15 +173,15 @@ function ArtifactsPage() {
                 </div>
               </div>
               <div className={s.headActions}>
-                <button type="button" className={s.ghost} disabled={Boolean(exporting)} onClick={() => void download('pdf')}>
+                <Button type="button" variant="ghost" size="sm" className={s.ghost} disabled={Boolean(exporting)} onClick={() => void download('pdf')}>
                   {exporting === 'pdf' ? 'PDF 생성 중…' : 'PDF'}
-                </button>
-                <button type="button" className={s.ghost} disabled={Boolean(exporting)} onClick={() => void download('docx')}>
+                </Button>
+                <Button type="button" variant="ghost" size="sm" className={s.ghost} disabled={Boolean(exporting)} onClick={() => void download('docx')}>
                   {exporting === 'docx' ? 'DOCX 생성 중…' : 'DOCX'}
-                </button>
-                <button type="button" className={s.newBtn} onClick={() => setVersionOpen(true)}>
-                  + 새 버전
-                </button>
+                </Button>
+                <Button type="button" variant="primary" size="sm" className={s.newBtn} leadingIcon="file-text" onClick={() => setVersionOpen(true)}>
+                  새 버전
+                </Button>
               </div>
             </div>
             <div className={s.timeline}>
@@ -188,7 +190,7 @@ function ArtifactsPage() {
                   key={v.id}
                   type="button"
                   className={`${s.vChip} ${
-                    (viewVersion ?? detail.data!.headVersion) === v.versionNo ? s.vChipOn : ''
+                    (viewVersion ?? detail.data.headVersion) === v.versionNo ? s.vChipOn : ''
                   }`}
                   title={v.note || `버전 ${v.versionNo}`}
                   onClick={() => setViewVersion(v.versionNo)}
@@ -199,35 +201,36 @@ function ArtifactsPage() {
             </div>
             {versionOpen ? (
               <div className={s.editor}>
-                <input
+                <Input
                   className={s.input}
                   placeholder="변경 메모 (예: 수치 보강)"
                   value={vNote}
                   onChange={(e) => setVNote(e.target.value)}
                 />
-                <textarea
+                <Textarea
                   className={`${s.input} ${s.textarea}`}
                   placeholder="새 버전 마크다운 본문…"
                   value={vContent}
                   onChange={(e) => setVContent(e.target.value)}
                 />
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button type="button" className={s.primary} disabled={addVersion.isPending} onClick={() => void submitVersion()}>
+                  <Button type="button" variant="primary" className={s.primary} disabled={addVersion.isPending} onClick={() => void submitVersion()}>
                     버전 추가
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    variant="ghost"
                     className={s.ghost}
                     onClick={() => {
                       setVContent(shown?.content ?? '');
-                      toast('info', '현재 버전 내용을 편집기에 불러왔어요.');
+                      toast('info', '현재 버전 불러옴');
                     }}
                   >
-                    현재 버전 불러오기
-                  </button>
-                  <button type="button" className={s.ghost} onClick={() => setVersionOpen(false)}>
+                    현재 버전
+                  </Button>
+                  <Button type="button" variant="ghost" className={s.ghost} onClick={() => setVersionOpen(false)}>
                     닫기
-                  </button>
+                  </Button>
                 </div>
               </div>
             ) : null}

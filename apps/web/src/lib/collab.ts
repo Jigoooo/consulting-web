@@ -104,10 +104,11 @@ export function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
-      const url = String(reader.result ?? '');
+      const result = reader.result;
+      const url = typeof result === 'string' ? result : '';
       resolve(url.slice(url.indexOf(',') + 1));
     };
-    reader.onerror = () => reject(reader.error);
+    reader.onerror = () => reject(reader.error ?? new Error('파일을 읽지 못했습니다.'));
     reader.readAsDataURL(file);
   });
 }
@@ -125,7 +126,16 @@ export async function saveAttachment(id: string, fileName: string): Promise<void
 
 export async function saveArtifactExport(id: string, title: string, format: 'pdf' | 'docx', version?: number): Promise<void> {
   const blob = await api.exportArtifact(id, format, version);
-  const safeTitle = title.trim().replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-').replace(/\s+/g, '-').slice(0, 80) || 'artifact';
+  const safeTitle = title
+    .trim()
+    .split('')
+    .map((char) => {
+      const code = char.charCodeAt(0);
+      return code <= 31 || '\\/:*?"<>|'.includes(char) ? '-' : char;
+    })
+    .join('')
+    .replace(/\s+/g, '-')
+    .slice(0, 80) || 'artifact';
   const suffix = version ? `-v${version}` : '';
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

@@ -2,7 +2,7 @@ import { createFileRoute, redirect, useRouter, Link } from '@tanstack/react-rout
 import { useState } from 'react';
 import { z } from 'zod';
 import { api, authStore } from '../lib/api';
-import { AuthShell, Field, SubmitButton, ErrorBanner, friendlyError, authStyles as s } from '../components/auth/AuthKit';
+import { AuthShell, Field, SubmitButton, ErrorBanner, friendlyError, authStyles as s } from '../features/auth-session/ui/AuthKit';
 
 const searchSchema = z.object({
   redirect: z.string().default('/'),
@@ -13,6 +13,8 @@ export const Route = createFileRoute('/login')({
   beforeLoad: ({ context, search }) => {
     // Already authed → skip login, honor the redirect target if present.
     if (context.auth.isAuthed()) {
+      // TanStack Router uses thrown redirects for control flow.
+      // eslint-disable-next-line @typescript-eslint/only-throw-error
       throw redirect({ to: search.redirect });
     }
   },
@@ -51,7 +53,7 @@ function LoginPage() {
       <div className={s.title} data-stagger>다시 오신 걸 환영해요</div>
       <div className={s.subtitle} data-stagger>컨설팅 워크스페이스에 로그인하세요.</div>
       {error ? <ErrorBanner message={error} /> : null}
-      <form onSubmit={onSubmit}>
+      <form onSubmit={(event) => void onSubmit(event)}>
         <Field label="이메일" type="email" value={email} onChange={setEmail} placeholder="you@example.com" autoComplete="email" autoFocus />
         <Field label="비밀번호" type="password" value={password} onChange={setPassword} placeholder="••••••••" autoComplete="current-password" />
         <SubmitButton loading={loading}>로그인</SubmitButton>
