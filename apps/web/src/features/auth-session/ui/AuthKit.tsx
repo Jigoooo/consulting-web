@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { gsap } from 'gsap';
 import { ApiClientError } from '@consulting/api-client';
-import { Icon } from '../../../shared/icons/Icon';
+import { BrandMark } from '../../../shared/icons/BrandMark';
 import { Button } from '../../../shared/ui/button/Button';
 import { Input } from '../../../shared/ui/input/Input';
 import s from './Auth.module.css';
@@ -49,7 +49,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
       <div className={`${s.blob} ${s.blob2}`} ref={blob2} />
       <div className={s.card} ref={cardRef}>
         <div className={s.brand} data-stagger>
-          <div className={s.brandIco}><Icon name="bot" size="md" decorative /></div>
+          <div className={s.brandIco}><BrandMark size="sm" /></div>
           <div>
             <div className={s.brandName}>Consulting Web</div>
             <div className={s.brandSub}>지구 컨설팅 워크스페이스</div>

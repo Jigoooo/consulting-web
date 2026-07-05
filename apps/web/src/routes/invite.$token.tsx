@@ -3,6 +3,7 @@ import { useState } from 'react';
 import type { InvitationPreviewResponse } from '@consulting/contracts';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/useAuth';
+import { Icon } from '../shared/icons/Icon';
 import { AuthShell, SubmitButton, ErrorBanner, friendlyError, authStyles as s } from '../features/auth-session/ui/AuthKit';
 
 const roleLabel: Record<string, string> = {
@@ -69,7 +70,9 @@ function InvitePage() {
     return (
       <AuthShell>
         <div className={s.center}>
-          <div className={s.checkCircle}>✓</div>
+          <div className={s.checkCircle} aria-hidden>
+            <Icon name="check" size="lg" decorative />
+          </div>
           <div className={s.title}>참여 완료!</div>
           <div className={s.subtitle}>워크스페이스로 이동하고 있어요…</div>
         </div>

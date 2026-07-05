@@ -53,14 +53,14 @@
 .brandIco {
   width: 36px;
   height: 36px;
-  border-radius: 11px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-hi));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  font-size: 18px;
-  box-shadow: 0 4px 14px -4px var(--accent-glow);
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 8px 22px -10px var(--accent-glow);
+}
+.brandIco svg {
+  display: block;
+  filter: drop-shadow(0 6px 16px rgba(94, 106, 210, 0.22));
 }
 .brandName {
   font-size: 15px;
