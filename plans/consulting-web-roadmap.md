@@ -74,3 +74,11 @@ Phase 3 Cloudflare/외부 노출: ░░░░░░░░░░ 0%
 
 3. Phase 3 Cloudflare
    - 계정/도메인/tunnel token 준비 후 외부 노출 게이트 진행.
+
+## 2026-07-06 완료 — 로그인 디테일 완성 + API 타임아웃 (Phase 1~6)
+- api-client 15s 타임아웃 + TIMEOUT/NETWORK 에러코드 (무한 스피너 구조적 차단)
+- favicon/브랜드 이모지 → 순수 SVG BrandMark, forbidden 테스트 public/ 확장
+- 공통 Button loading/shine/focus-ring, Input invalid/shake, disabled=회색조
+- 로그인/회원가입 split 레이아웃 재구축: 인라인 검증, 비밀번호 토글, 강도미터
+- Google Fonts(Inter/JetBrains Mono) 제거 → Wanted Sans 셀프호스팅 + 시스템 mono
+- E2E: 가입→AppShell 진입, 콘솔에러 0 검증 완료
