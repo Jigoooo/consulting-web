@@ -2,3 +2,16 @@ packages:
   - "apps/*"
   - "packages/*"
   - "tooling/*"
+
+allowBuilds:
+  '@swc/core': true
+  esbuild: true
+  msgpackr-extract: true
+
+onlyBuiltDependencies:
+  - "@swc/core"
+  - esbuild
+  - msgpackr-extract
+
+overrides:
+  baseline-browser-mapping: 2.10.41

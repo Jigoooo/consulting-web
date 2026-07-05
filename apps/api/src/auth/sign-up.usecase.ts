@@ -107,7 +107,16 @@ export class SignUpUseCase {
   }
 }
 
-/** Postgres unique_violation (SQLSTATE 23505). */
+/** Postgres unique_violation (SQLSTATE 23505), including driver/wrapper cause chains. */
 function isUniqueViolation(e: unknown): boolean {
-  return typeof e === 'object' && e !== null && 'code' in e && (e as { code?: string }).code === '23505';
+  const seen = new Set<unknown>();
+  let current: unknown = e;
+  for (let depth = 0; depth < 6; depth += 1) {
+    if (typeof current !== 'object' || current === null || seen.has(current)) return false;
+    seen.add(current);
+    const candidate = current as { code?: unknown; cause?: unknown };
+    if (candidate.code === '23505') return true;
+    current = candidate.cause;
+  }
+  return false;
 }

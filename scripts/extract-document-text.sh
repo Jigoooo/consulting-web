@@ -3,11 +3,13 @@ set -euo pipefail
 
 if [[ $# -lt 2 ]]; then
   cat >&2 <<'USAGE'
-Usage: scripts/extract-document-text.sh <input.pdf|image> <output.txt>
+Usage: scripts/extract-document-text.sh <input.pdf|image|hwp|hwpx> <output.txt>
 
 Local document-intelligence extraction ladder:
 1) PDF text layer: pdftotext -layout
 2) scanned PDF/image OCR: tesseract kor+eng
+3) HWPX: unzip XML text
+4) HWP: hwp5txt when installed
 
 Normal stdout: concise status line. Extracted text is written to output.txt.
 USAGE
@@ -26,18 +28,21 @@ need() {
   command -v "$1" >/dev/null 2>&1 || { echo "missing command: $1" >&2; exit 127; }
 }
 
+char_count() {
+  python3 - "$1" <<'PY'
+import sys, pathlib
+p=pathlib.Path(sys.argv[1])
+print(len(p.read_text('utf-8', errors='ignore').strip()) if p.exists() else 0)
+PY
+}
+
 ext="${IN##*.}"
 ext="$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]')"
 
 if [[ "$ext" == "pdf" ]]; then
   need pdftotext
   pdftotext -layout -enc UTF-8 "$IN" "$TMP/text.txt" || true
-  text_len=$(python3 - "$TMP/text.txt" <<'PY'
-import sys, pathlib
-p=pathlib.Path(sys.argv[1])
-print(len(p.read_text('utf-8', errors='ignore').strip()) if p.exists() else 0)
-PY
-)
+  text_len=$(char_count "$TMP/text.txt")
   if [[ "$text_len" -ge 80 ]]; then
     cp "$TMP/text.txt" "$OUT"
     echo "extractor=pdftotext chars=$text_len output=$OUT"
@@ -57,15 +62,30 @@ PY
     tesseract "$page" stdout -l kor+eng --psm 3 >> "$OUT" 2>/dev/null || true
     printf '\n\n' >> "$OUT"
   done
-else
-  need tesseract
-  tesseract "$IN" stdout -l kor+eng --psm 3 > "$OUT" 2>/dev/null || true
+  chars=$(char_count "$OUT")
+  echo "extractor=ocr chars=$chars output=$OUT"
+  exit 0
 fi
 
-chars=$(python3 - "$OUT" <<'PY'
-import sys, pathlib
-p=pathlib.Path(sys.argv[1])
-print(len(p.read_text('utf-8', errors='ignore').strip()) if p.exists() else 0)
-PY
-)
+if [[ "$ext" == "hwpx" ]]; then
+  need unzip
+  unzip -p "$IN" '*.xml' \
+    | python3 -c "import html,re,sys; print(re.sub(r'\\s+', ' ', re.sub(r'<[^>]+>', ' ', html.unescape(sys.stdin.read()))).strip())" \
+    > "$OUT"
+  chars=$(char_count "$OUT")
+  echo "extractor=hwpx chars=$chars output=$OUT"
+  exit 0
+fi
+
+if [[ "$ext" == "hwp" ]]; then
+  need hwp5txt
+  hwp5txt "$IN" > "$OUT"
+  chars=$(char_count "$OUT")
+  echo "extractor=hwp5txt chars=$chars output=$OUT"
+  exit 0
+fi
+
+need tesseract
+tesseract "$IN" stdout -l kor+eng --psm 3 > "$OUT" 2>/dev/null || true
+chars=$(char_count "$OUT")
 echo "extractor=ocr chars=$chars output=$OUT"

@@ -9,11 +9,12 @@ import { HermesRunsClient } from './hermes-runs-client.js';
 import { ChatMessageStore } from './chat-message.store.js';
 import { EvidenceStore } from './evidence.store.js';
 import { NotificationStore } from './notification.store.js';
+import { DocumentExtractionService } from './document-extraction.service.js';
 
 @Module({
   imports: [DrizzleModule, AuthModule],
   controllers: [ChatStreamController, NotificationsController, AttachmentsController],
-  providers: [ChatStreamUseCase, HermesRunsClient, ChatMessageStore, EvidenceStore, NotificationStore],
-  exports: [ChatStreamUseCase, HermesRunsClient, ChatMessageStore, EvidenceStore, NotificationStore],
+  providers: [ChatStreamUseCase, HermesRunsClient, ChatMessageStore, EvidenceStore, NotificationStore, DocumentExtractionService],
+  exports: [ChatStreamUseCase, HermesRunsClient, ChatMessageStore, EvidenceStore, NotificationStore, DocumentExtractionService],
 })
 export class ChatModule {}

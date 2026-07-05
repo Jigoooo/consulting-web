@@ -1,0 +1,156 @@
+{
+  "generatedAt": "2026-07-05T12:11:44.697Z",
+  "command": "pnpm --filter @consulting/web profile:react-compiler",
+  "comparison": {
+    "withoutCompiler": {
+      "label": "without-react-compiler",
+      "compilerEnabled": false,
+      "totalBytes": 719156,
+      "totalGzipBytes": 229855,
+      "compilerRuntimeAssets": [],
+      "topAssets": [
+        {
+          "file": "assets/index-Cc-BN_nF.js",
+          "bytes": 271223,
+          "gzipBytes": 84518
+        },
+        {
+          "file": "assets/gsap-z_sKFz0K.js",
+          "bytes": 157248,
+          "gzipBytes": 50967
+        },
+        {
+          "file": "assets/Markdown-CQ-lvy8q.js",
+          "bytes": 153979,
+          "gzipBytes": 45465
+        },
+        {
+          "file": "assets/link-DSLB6Nwt.js",
+          "bytes": 27350,
+          "gzipBytes": 9966
+        },
+        {
+          "file": "assets/_app-DGLImW8k.js",
+          "bytes": 21103,
+          "gzipBytes": 7297
+        },
+        {
+          "file": "assets/_app.th._threadId-egyctsGO.js",
+          "bytes": 13144,
+          "gzipBytes": 4898
+        },
+        {
+          "file": "assets/spaces-CJ-SWQrP.js",
+          "bytes": 12624,
+          "gzipBytes": 4216
+        },
+        {
+          "file": "assets/_app-U_u6Pyz2.css",
+          "bytes": 16174,
+          "gzipBytes": 3542
+        },
+        {
+          "file": "assets/_app.artifacts-C9qeA9OV.js",
+          "bytes": 6253,
+          "gzipBytes": 2345
+        },
+        {
+          "file": "assets/_app.th-C0CySqSG.css",
+          "bytes": 7904,
+          "gzipBytes": 2188
+        },
+        {
+          "file": "assets/AuthKit-CDAVPZz5.js",
+          "bytes": 3472,
+          "gzipBytes": 1640
+        },
+        {
+          "file": "assets/invite._token-BBe7qUPZ.js",
+          "bytes": 3310,
+          "gzipBytes": 1455
+        }
+      ]
+    },
+    "withCompiler": {
+      "label": "with-react-compiler",
+      "compilerEnabled": true,
+      "totalBytes": 731421,
+      "totalGzipBytes": 234683,
+      "compilerRuntimeAssets": [
+        {
+          "file": "assets/compiler-runtime--XPNi5ZU.js",
+          "bytes": 8702,
+          "gzipBytes": 3288
+        }
+      ],
+      "topAssets": [
+        {
+          "file": "assets/index-CCMHpGm0.js",
+          "bytes": 422114,
+          "gzipBytes": 133247
+        },
+        {
+          "file": "assets/Markdown-BlasdGJn.js",
+          "bytes": 154148,
+          "gzipBytes": 45553
+        },
+        {
+          "file": "assets/link-BnNgEW5M.js",
+          "bytes": 27318,
+          "gzipBytes": 9950
+        },
+        {
+          "file": "assets/_app-C0oBAjv1.js",
+          "bytes": 26759,
+          "gzipBytes": 9678
+        },
+        {
+          "file": "assets/_app.th._threadId-DnkAElVK.js",
+          "bytes": 13435,
+          "gzipBytes": 5080
+        },
+        {
+          "file": "assets/spaces-DTbIJq1u.js",
+          "bytes": 13968,
+          "gzipBytes": 4558
+        },
+        {
+          "file": "assets/_app-U_u6Pyz2.css",
+          "bytes": 16174,
+          "gzipBytes": 3542
+        },
+        {
+          "file": "assets/compiler-runtime--XPNi5ZU.js",
+          "bytes": 8702,
+          "gzipBytes": 3288
+        },
+        {
+          "file": "assets/_app.artifacts-CsEZJ3CC.js",
+          "bytes": 6231,
+          "gzipBytes": 2335
+        },
+        {
+          "file": "assets/_app.th-C0CySqSG.css",
+          "bytes": 7904,
+          "gzipBytes": 2188
+        },
+        {
+          "file": "assets/AuthKit-CyqkN-_1.js",
+          "bytes": 4547,
+          "gzipBytes": 2114
+        },
+        {
+          "file": "assets/_app.t._topicId-Bvq14cNE.js",
+          "bytes": 4175,
+          "gzipBytes": 2080
+        }
+      ]
+    },
+    "delta": {
+      "bytes": 12265,
+      "gzipBytes": 4828,
+      "gzipPercent": 2.1
+    }
+  },
+  "judgment": "React Compiler transform is active; compare gzip delta with interaction profiling before calling it a net win."
+}

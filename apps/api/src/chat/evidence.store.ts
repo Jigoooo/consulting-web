@@ -48,6 +48,8 @@ export class EvidenceStore {
         ref: u.tool.slice(0, 200),
         excerpt: (u.preview ?? '').slice(0, 4000) || u.tool,
         url: extractUrl(u.preview),
+        qualityScore: null,
+        qualitySignals: [],
       }));
     if (rows.length === 0) return;
     await this.db.insert(schema.evidenceItems).values(rows);
@@ -62,6 +64,8 @@ export class EvidenceStore {
     excerpt: string;
     url: string | null;
     addedByUserId: string;
+    qualityScore?: number | null;
+    qualitySignals?: string[];
   }): Promise<string> {
     const [row] = await this.db
       .insert(schema.evidenceItems)
@@ -73,6 +77,8 @@ export class EvidenceStore {
         ref: input.ref,
         excerpt: input.excerpt,
         url: input.url,
+        qualityScore: input.qualityScore ?? null,
+        qualitySignals: input.qualitySignals ?? [],
         addedByUserId: input.addedByUserId,
       })
       .returning({ id: schema.evidenceItems.id });
@@ -89,6 +95,8 @@ export class EvidenceStore {
         ref: schema.evidenceItems.ref,
         excerpt: schema.evidenceItems.excerpt,
         url: schema.evidenceItems.url,
+        qualityScore: schema.evidenceItems.qualityScore,
+        qualitySignals: schema.evidenceItems.qualitySignals,
         addedByUserId: schema.evidenceItems.addedByUserId,
         createdAt: schema.evidenceItems.createdAt,
       })
@@ -105,6 +113,8 @@ export class EvidenceStore {
         ref: r.ref,
         excerpt: r.excerpt,
         url: r.url,
+        qualityScore: r.qualityScore,
+        qualitySignals: r.qualitySignals,
         addedByUserId: r.addedByUserId,
         createdAt: r.createdAt.toISOString(),
       })),

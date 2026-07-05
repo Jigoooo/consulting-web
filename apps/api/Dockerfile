@@ -17,7 +17,7 @@ RUN pnpm --filter @consulting/api --prod deploy --legacy /out
 FROM node:22-alpine AS runtime
 RUN apk add --no-cache \
     pandoc typst weasyprint chromium font-noto-cjk \
-    poppler-utils tesseract-ocr tesseract-ocr-data-kor tesseract-ocr-data-eng \
+    poppler-utils tesseract-ocr tesseract-ocr-data-kor tesseract-ocr-data-eng unzip \
   && addgroup -S app && adduser -S app -G app
 ENV CHROME_BIN=/usr/bin/chromium-browser
 ENV TESSDATA_PREFIX=/usr/share/tessdata

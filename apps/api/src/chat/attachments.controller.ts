@@ -24,9 +24,17 @@ import {
 import { AccessTokenGuard, requireAuthUserId, type AuthenticatedRequest } from '../auth/access-token.guard.js';
 import { parseBody, parseResponse } from '../http/contract-adapter.js';
 import { ChatStreamUseCase } from './chat-stream.usecase.js';
+import { DocumentExtractionService } from './document-extraction.service.js';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 
-const ALLOWED_MIME_PREFIXES = ['image/', 'application/pdf', 'text/'];
+const ALLOWED_MIME_PREFIXES = ['image/', 'text/'];
+const ALLOWED_MIME_TYPES = new Set([
+  'application/pdf',
+  'application/haansofthwp',
+  'application/x-hwp',
+  'application/vnd.hancom.hwpx',
+  'application/hwp+zip',
+]);
 
 /** Phase 2-D G-3 — chat attachments (base64 in pg; 10MB cap; mime allowlist). */
 @Controller('attachments')
@@ -35,6 +43,7 @@ export class AttachmentsController {
   constructor(
     @Inject(DRIZZLE) private readonly db: Db,
     @Inject(ChatStreamUseCase) private readonly chatAccess: ChatStreamUseCase,
+    @Inject(DocumentExtractionService) private readonly documentExtraction: DocumentExtractionService,
   ) {}
 
   @Post()
@@ -43,8 +52,8 @@ export class AttachmentsController {
     const userId = requireAuthUserId(req);
     const access = await this.requireThread(userId, cmd.threadId);
 
-    if (!ALLOWED_MIME_PREFIXES.some((p) => cmd.mimeType.startsWith(p))) {
-      throw new BadRequestException({ code: 'UNSUPPORTED_TYPE', message: '이미지, PDF, 텍스트 파일만 첨부할 수 있어요.' });
+    if (!ALLOWED_MIME_PREFIXES.some((p) => cmd.mimeType.startsWith(p)) && !ALLOWED_MIME_TYPES.has(cmd.mimeType)) {
+      throw new BadRequestException({ code: 'UNSUPPORTED_TYPE', message: '이미지, PDF, 텍스트, HWP/HWPX 파일만 첨부할 수 있어요.' });
     }
     // Validate base64 and enforce the BINARY size cap (schema caps the string).
     let sizeBytes: number;
@@ -69,7 +78,17 @@ export class AttachmentsController {
         dataBase64: cmd.dataBase64,
       })
       .returning({ id: schema.fileAttachments.id });
-    return parseResponse(UploadAttachmentResponseSchema, { id: row!.id });
+    const id = row!.id;
+    await this.documentExtraction.indexAttachment({
+      workspaceId: access.workspaceId,
+      threadId: cmd.threadId,
+      attachmentId: id,
+      fileName: cmd.fileName,
+      mimeType: cmd.mimeType,
+      data: Buffer.from(cmd.dataBase64, 'base64'),
+      uploaderUserId: userId,
+    });
+    return parseResponse(UploadAttachmentResponseSchema, { id });
   }
 
   @Get('threads/:threadId')
@@ -84,8 +103,14 @@ export class AttachmentsController {
         sizeBytes: schema.fileAttachments.sizeBytes,
         uploaderUserId: schema.fileAttachments.uploaderUserId,
         createdAt: schema.fileAttachments.createdAt,
+        extractionStatus: schema.documentExtractions.status,
+        extractionExtractor: schema.documentExtractions.extractor,
+        extractionTextChars: schema.documentExtractions.textChars,
+        extractionQualityScore: schema.documentExtractions.qualityScore,
+        extractionWarnings: schema.documentExtractions.warnings,
       })
       .from(schema.fileAttachments)
+      .leftJoin(schema.documentExtractions, eq(schema.documentExtractions.attachmentId, schema.fileAttachments.id))
       .where(and(eq(schema.fileAttachments.threadId, threadId), isNull(schema.fileAttachments.deletedAt)))
       .orderBy(asc(schema.fileAttachments.createdAt));
     return parseResponse(ListAttachmentsResponseSchema, {
@@ -94,6 +119,15 @@ export class AttachmentsController {
         fileName: r.fileName,
         mimeType: r.mimeType,
         sizeBytes: r.sizeBytes,
+        extraction: r.extractionStatus
+          ? {
+              status: r.extractionStatus as 'indexed' | 'skipped' | 'failed',
+              extractor: r.extractionExtractor,
+              textChars: r.extractionTextChars ?? 0,
+              qualityScore: r.extractionQualityScore ?? 0,
+              warnings: r.extractionWarnings ?? [],
+            }
+          : null,
         uploaderUserId: r.uploaderUserId,
         createdAt: r.createdAt.toISOString(),
       })),

@@ -3,6 +3,8 @@ import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import babel from '@rolldown/plugin-babel';
 import { tanstackRouter } from '@tanstack/router-plugin/vite';
 
+const enableReactCompiler = process.env.DISABLE_REACT_COMPILER !== '1';
+
 // NOTE (2026-07-05, per TanStack docs): the router plugin MUST come before
 // @vitejs/plugin-react. Defaults: routesDirectory ./src/routes,
 // generatedRouteTree ./src/routeTree.gen.ts.
@@ -10,7 +12,7 @@ export default defineConfig({
   plugins: [
     tanstackRouter({ target: 'react', autoCodeSplitting: true }),
     react(),
-    babel({ presets: [reactCompilerPreset()] }),
+    enableReactCompiler ? babel({ presets: [reactCompilerPreset()] }) : undefined,
   ],
   server: {
     port: 5273,

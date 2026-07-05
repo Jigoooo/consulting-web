@@ -1,4 +1,4 @@
-import { pgTable, text, uuid, integer, index, unique, timestamp } from 'drizzle-orm/pg-core';
+import { pgTable, text, uuid, integer, index, unique, timestamp, jsonb } from 'drizzle-orm/pg-core';
 import { evidenceSource, notificationType } from './enums';
 import { workspaces } from './organization';
 import { users } from './identity';
@@ -31,6 +31,10 @@ export const evidenceItems = pgTable(
     excerpt: text('excerpt').notNull(),
     /** Optional URL for web sources. */
     url: text('url'),
+    /** Evidence reliability score (0-100), nullable for legacy/tool rows. */
+    qualityScore: integer('quality_score'),
+    /** Short machine-readable quality reasons. */
+    qualitySignals: jsonb('quality_signals').$type<string[]>().notNull().default([]),
     addedByUserId: uuid('added_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     ...timestamps,
     ...softDelete,
@@ -155,5 +159,37 @@ export const fileAttachments = pgTable(
   (t) => [
     index('file_attachments_thread_idx').on(t.threadId, t.createdAt),
     index('file_attachments_workspace_idx').on(t.workspaceId),
+  ],
+);
+/**
+ * Extracted text index for uploaded documents (Phase 2-E). One row per
+ * attachment. Failed/skipped attempts are recorded so low-quality documents are
+ * visible instead of silently disappearing.
+ */
+export const documentExtractions = pgTable(
+  'document_extractions',
+  {
+    id: primaryId,
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    threadId: uuid('thread_id')
+      .notNull()
+      .references(() => threads.id, { onDelete: 'cascade' }),
+    attachmentId: uuid('attachment_id')
+      .notNull()
+      .references(() => fileAttachments.id, { onDelete: 'cascade' }),
+    status: text('status').notNull(),
+    extractor: text('extractor'),
+    textContent: text('text_content').notNull().default(''),
+    textChars: integer('text_chars').notNull().default(0),
+    qualityScore: integer('quality_score').notNull().default(0),
+    warnings: jsonb('warnings').$type<string[]>().notNull().default([]),
+    ...timestamps,
+  },
+  (t) => [
+    unique('document_extractions_attachment_unique').on(t.attachmentId),
+    index('document_extractions_thread_idx').on(t.threadId, t.createdAt),
+    index('document_extractions_workspace_idx').on(t.workspaceId),
   ],
 );

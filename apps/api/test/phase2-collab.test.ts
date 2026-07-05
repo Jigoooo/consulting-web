@@ -333,7 +333,7 @@ d('Phase 2 — evidence, artifacts, notifications', () => {
     const outsider = await makeUser('att-out');
     const { thread } = await makeSpaces(owner.bearer, owner.personalWorkspaceId);
 
-    const payload = Buffer.from('창원시 예산서 텍스트 본문 — 근거자료').toString('base64');
+    const payload = Buffer.from('창원시 예산서 텍스트 본문 — 공공시설 운영비 근거자료').toString('base64');
     const uploaded = UploadAttachmentResponseSchema.parse(
       (await request(app.getHttpServer())
         .post('/attachments')
@@ -358,6 +358,22 @@ d('Phase 2 — evidence, artifacts, notifications', () => {
     expect(list.attachments.length).toBe(1);
     expect(list.attachments[0]!.fileName).toBe('예산서.txt');
     expect(list.attachments[0]!.sizeBytes).toBeGreaterThan(0);
+    expect(list.attachments[0]!.extraction?.status).toBe('indexed');
+    expect(list.attachments[0]!.extraction?.extractor).toBe('text/plain');
+    expect(list.attachments[0]!.extraction?.textChars).toBeGreaterThan(10);
+    expect(list.attachments[0]!.extraction?.qualityScore).toBeGreaterThanOrEqual(60);
+
+    const evidence = ListEvidenceResponseSchema.parse(
+      (await request(app.getHttpServer())
+        .get(`/chat/threads/${thread.id}/evidence`)
+        .set('authorization', owner.bearer)
+        .expect(200)).body,
+    );
+    const fileEvidence = evidence.evidence.find((e) => e.sourceType === 'file' && e.ref === '예산서.txt');
+    expect(fileEvidence).toBeDefined();
+    expect(fileEvidence!.excerpt).toContain('공공시설');
+    expect(fileEvidence!.qualityScore).toBeGreaterThanOrEqual(60);
+    expect(fileEvidence!.qualitySignals.length).toBeGreaterThan(0);
 
     const dl = await request(app.getHttpServer())
       .get(`/attachments/${uploaded.id}/content`)

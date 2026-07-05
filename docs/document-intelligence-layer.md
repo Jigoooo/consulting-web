@@ -76,7 +76,11 @@
 
 - PDF export: Typst → WeasyPrint → Chromium fallback
 - DOCX export: Pandoc
+- Upload indexing: 첨부 업로드 직후 document_extractions에 텍스트/상태/품질점수 저장
+- Evidence candidate: indexed 문서는 같은 thread에 file evidence 후보 자동 생성
 - OCR helper: scripts/extract-document-text.sh
+- HWPX extraction: unzip XML text
+- HWP extraction: hwp5txt가 설치된 런타임에서 지원, 없으면 실패 사유 기록
 - Docker runtime 포함 도구:
   - pandoc
   - typst
@@ -87,11 +91,10 @@
   - tesseract-ocr
   - tesseract-ocr-data-kor
   - tesseract-ocr-data-eng
+  - unzip
 
 ## 5. 다음 고도화 후보
 
-- 업로드 첨부파일별 자동 텍스트 인덱싱
-- OCR confidence/텍스트 길이/페이지 수 기반 품질 점수
+- OCR confidence/페이지 수 기반 품질 점수 고도화
 - 저품질 문서만 marker-pdf 또는 Cloud Vision으로 승격
-- 추출 결과를 Evidence 후보로 자동 연결
-- HWP/HWPX 추출 rail 추가
+- 구형 HWP용 hwp5txt 런타임 패키징 여부 결정

@@ -29,6 +29,13 @@
       "when": 1783239474980,
       "tag": "0005_file_attachments",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1783252767516,
+      "tag": "0006_document_extractions",
+      "breakpoints": true
     }
   ]
 }

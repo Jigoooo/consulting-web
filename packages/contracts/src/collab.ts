@@ -19,6 +19,8 @@ export const EvidenceItemSchema = z
     ref: z.string(),
     excerpt: z.string(),
     url: z.string().nullable(),
+    qualityScore: z.number().int().min(0).max(100).nullable(),
+    qualitySignals: z.array(z.string()).max(20),
     addedByUserId: UuidSchema.nullable(),
     createdAt: z.string().datetime({ offset: true }),
   })
@@ -183,6 +185,16 @@ export const AttachmentSummarySchema = z
     fileName: z.string(),
     mimeType: z.string(),
     sizeBytes: z.number().int().nonnegative(),
+    extraction: z
+      .object({
+        status: z.enum(['indexed', 'skipped', 'failed']),
+        extractor: z.string().nullable(),
+        textChars: z.number().int().nonnegative(),
+        qualityScore: z.number().int().min(0).max(100),
+        warnings: z.array(z.string()).max(20),
+      })
+      .strict()
+      .nullable(),
     uploaderUserId: UuidSchema.nullable(),
     createdAt: z.string().datetime({ offset: true }),
   })
