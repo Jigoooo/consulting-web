@@ -26,6 +26,12 @@ import {
   type CreateThreadResponse,
   type ChatStreamRequest,
   type ChatStreamEvent,
+  ListWorkspacesResponseSchema,
+  WorkspaceTreeResponseSchema,
+  ListThreadsResponseSchema,
+  type ListWorkspacesResponse,
+  type WorkspaceTreeResponse,
+  type ListThreadsResponse,
 } from '@consulting/contracts';
 import { HttpCore, type ApiClientOptions } from './http-core.js';
 import { readChatSseStream } from './sse.js';
@@ -73,6 +79,25 @@ export class ConsultingApiClient {
   acceptInvitation(token: string): Promise<AcceptInvitationResponse> {
     return this.http.request('/invitations/accept', { method: 'POST', body: { token } }, (d) =>
       AcceptInvitationResponseSchema.parse(d),
+    );
+  }
+
+  // --- spaces (read) ---
+  listWorkspaces(): Promise<ListWorkspacesResponse> {
+    return this.http.request('/spaces/workspaces', { method: 'GET' }, (d) =>
+      ListWorkspacesResponseSchema.parse(d),
+    );
+  }
+
+  workspaceTree(workspaceId: string): Promise<WorkspaceTreeResponse> {
+    return this.http.request(`/spaces/workspaces/${workspaceId}/tree`, { method: 'GET' }, (d) =>
+      WorkspaceTreeResponseSchema.parse(d),
+    );
+  }
+
+  listThreads(topicId: string): Promise<ListThreadsResponse> {
+    return this.http.request(`/spaces/topics/${topicId}/threads`, { method: 'GET' }, (d) =>
+      ListThreadsResponseSchema.parse(d),
     );
   }
 

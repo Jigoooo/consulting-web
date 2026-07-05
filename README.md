@@ -96,7 +96,7 @@ curl -s localhost:3000/health/ready
 - 접근권은 membership/invitation 으로만 발생 (ADR-0009)
 - 봇 invoke ≠ capability (ADR-0004)
 
-Hermes SSE proxy 연결 + 타입안전 api-client + 초대 발행 하드닝이 완료됐다. Phase 1-K 스캐폴딩 완료: apps/web(TanStack Router 파일기반 라우팅 + Vite + React 19 + CSS 토큰 + GSAP + TanStack Query), 4분할 앱 셸/ThreadView 셸 렌더 검증(typecheck/build/dev). 다음은 Phase 1-L 인증/초대 UI다. UI 세부 방침은 plans/consulting-web-phase1j-ui-direction.md §8(파일기반 라우팅, 최신 docs 준수, 반응형, reactbits/magicui/21st.dev 모션 패턴 적용).
+Hermes SSE proxy 연결 + 타입안전 api-client + 초대 발행 하드닝이 완료됐다. Phase 1-K~M 완료: apps/web(TanStack Router 파일기반 + Vite + React 19 + CSS 토큰 + GSAP + TanStack Query), 인증/초대 UI, read API 3종(workspaces/tree/threads), 사이드바 실데이터 + 인라인 생성, 실시간 채팅(ChatThread SSE — 실제 Hermes 응답 스트리밍 E2E 검증). 다음은 Phase 1-N 메시지 영속화다. 전체 로드맵 = plans/consulting-web-roadmap.md, UI 방침 = plans/consulting-web-phase1j-ui-direction.md §8.
 
 ### apps/web 로컬 실행
 

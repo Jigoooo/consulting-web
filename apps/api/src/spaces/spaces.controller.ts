@@ -1,4 +1,4 @@
-import { Body, Controller, ForbiddenException, Inject, NotFoundException, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Inject, NotFoundException, Param, Post, Req, UseGuards } from '@nestjs/common';
 import {
   CreateProjectRequestSchema,
   CreateProjectResponseSchema,
@@ -8,6 +8,9 @@ import {
   CreateTopicResponseSchema,
   CreateThreadRequestSchema,
   CreateThreadResponseSchema,
+  ListWorkspacesResponseSchema,
+  WorkspaceTreeResponseSchema,
+  ListThreadsResponseSchema,
 } from '@consulting/contracts';
 import { AccessTokenGuard, requireAuthUserId, type AuthenticatedRequest } from '../auth/access-token.guard.js';
 import { parseBody, parseResponse, throwDomainError } from '../http/contract-adapter.js';
@@ -16,17 +19,39 @@ import { CreateChannelUseCase } from './create-channel.usecase.js';
 import { CreateTopicUseCase } from './create-topic.usecase.js';
 import { CreateThreadUseCase } from './create-thread.usecase.js';
 import { SpaceAccessService, type SpaceAccess } from './space-access.service.js';
+import { SpaceReadService } from './space-read.service.js';
 
 @Controller('spaces')
 @UseGuards(AccessTokenGuard)
 export class SpacesController {
   constructor(
     @Inject(SpaceAccessService) private readonly access: SpaceAccessService,
+    @Inject(SpaceReadService) private readonly reads: SpaceReadService,
     @Inject(CreateProjectUseCase) private readonly createProject: CreateProjectUseCase,
     @Inject(CreateChannelUseCase) private readonly createChannel: CreateChannelUseCase,
     @Inject(CreateTopicUseCase) private readonly createTopic: CreateTopicUseCase,
     @Inject(CreateThreadUseCase) private readonly createThread: CreateThreadUseCase,
   ) {}
+
+  @Get('workspaces')
+  async workspaces(@Req() req: AuthenticatedRequest) {
+    const userId = requireAuthUserId(req);
+    return parseResponse(ListWorkspacesResponseSchema, await this.reads.listWorkspaces(userId));
+  }
+
+  @Get('workspaces/:workspaceId/tree')
+  async tree(@Param('workspaceId') workspaceId: string, @Req() req: AuthenticatedRequest) {
+    const userId = requireAuthUserId(req);
+    this.throwIfDenied(await this.access.workspaceMember(userId, workspaceId));
+    return parseResponse(WorkspaceTreeResponseSchema, await this.reads.workspaceTree(workspaceId));
+  }
+
+  @Get('topics/:topicId/threads')
+  async threads(@Param('topicId') topicId: string, @Req() req: AuthenticatedRequest) {
+    const userId = requireAuthUserId(req);
+    this.throwIfDenied(await this.access.topicMember(userId, topicId));
+    return parseResponse(ListThreadsResponseSchema, await this.reads.listThreads(topicId));
+  }
 
   @Post('projects')
   async project(@Body() body: unknown, @Req() req: AuthenticatedRequest) {

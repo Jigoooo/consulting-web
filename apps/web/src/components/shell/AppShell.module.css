@@ -249,6 +249,22 @@
   border-color: var(--accent);
   color: var(--accent);
 }
+.skel {
+  height: 13px;
+  border-radius: 6px;
+  margin: 8px 0;
+  background: linear-gradient(90deg, var(--bg-warm) 25%, #efeeeb 37%, var(--bg-warm) 63%);
+  background-size: 400% 100%;
+  animation: shimmer 1.4s ease infinite;
+}
+@keyframes shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: 0 0;
+  }
+}
 
 /* CONTEXT */
 .context {

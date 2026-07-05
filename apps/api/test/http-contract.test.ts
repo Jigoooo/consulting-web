@@ -18,6 +18,9 @@ import {
   CreateInvitationResponseSchema,
   InvitationPreviewResponseSchema,
   SignUpBootstrapResponseSchema,
+  ListWorkspacesResponseSchema,
+  WorkspaceTreeResponseSchema,
+  ListThreadsResponseSchema,
 } from '@consulting/contracts';
 import { AppModule } from '../src/app.module.js';
 
@@ -425,5 +428,122 @@ d('HTTP API contract adapters', () => {
       .expect('content-type', /text\/event-stream/);
     const events = sseEvents(stream.text);
     expect(events.map((e) => (e as { type: string }).type)).toEqual(['start', 'delta', 'done']);
+  });
+
+  it('space read endpoints list workspaces, tree, and threads with membership isolation', async () => {
+    const password = 'supersecret1';
+    const email = `read-owner-${Date.now()}@example.com`;
+    const outsiderEmail = `read-outsider-${Date.now()}@example.com`;
+
+    const ownerSignup = await request(app.getHttpServer())
+      .post('/auth/signup')
+      .send({ email, password, displayName: 'Read Owner' })
+      .expect(201);
+    const ownerBody = SignUpBootstrapResponseSchema.parse(ownerSignup.body);
+    createdUsers.push(ownerBody.userId);
+    createdWorkspaces.push(ownerBody.personalWorkspaceId);
+    const ownerLogin = await request(app.getHttpServer()).post('/auth/login').send({ email, password }).expect(200);
+    const ownerSession = AuthSessionResponseSchema.parse(ownerLogin.body);
+    const bearer = `Bearer ${ownerSession.tokens.accessToken}`;
+
+    const outsiderSignup = await request(app.getHttpServer())
+      .post('/auth/signup')
+      .send({ email: outsiderEmail, password, displayName: 'Read Outsider' })
+      .expect(201);
+    const outsiderBody = SignUpBootstrapResponseSchema.parse(outsiderSignup.body);
+    createdUsers.push(outsiderBody.userId);
+    createdWorkspaces.push(outsiderBody.personalWorkspaceId);
+    const outsiderLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: outsiderEmail, password })
+      .expect(200);
+    const outsiderSession = AuthSessionResponseSchema.parse(outsiderLogin.body);
+
+    // unauthenticated → 401
+    await request(app.getHttpServer()).get('/spaces/workspaces').expect(401);
+
+    // owner sees own personal workspace with role
+    const wsList = await request(app.getHttpServer()).get('/spaces/workspaces').set('authorization', bearer).expect(200);
+    const wsBody = ListWorkspacesResponseSchema.parse(wsList.body);
+    const mine = wsBody.workspaces.find((w) => w.id === ownerBody.personalWorkspaceId);
+    expect(mine).toBeTruthy();
+    expect(mine!.isPersonal).toBe(true);
+    expect(mine!.role).toBe('owner');
+    // outsider's workspace must not appear
+    expect(wsBody.workspaces.some((w) => w.id === outsiderBody.personalWorkspaceId)).toBe(false);
+
+    // build a small tree via the creation endpoints
+    const stamp = Date.now();
+    const project = CreateProjectResponseSchema.parse(
+      (
+        await request(app.getHttpServer())
+          .post('/spaces/projects')
+          .set('authorization', bearer)
+          .send({ workspaceId: ownerBody.personalWorkspaceId, name: '읽기 프로젝트', slug: `read-project-${stamp}` })
+          .expect(201)
+      ).body,
+    );
+    const channel = CreateChannelResponseSchema.parse(
+      (
+        await request(app.getHttpServer())
+          .post('/spaces/channels')
+          .set('authorization', bearer)
+          .send({ projectId: project.id, name: '읽기 채널', slug: `read-channel-${stamp}` })
+          .expect(201)
+      ).body,
+    );
+    const topic = CreateTopicResponseSchema.parse(
+      (
+        await request(app.getHttpServer())
+          .post('/spaces/topics')
+          .set('authorization', bearer)
+          .send({ channelId: channel.id, name: '읽기 토픽', slug: `read-topic-${stamp}` })
+          .expect(201)
+      ).body,
+    );
+    const thread = CreateThreadResponseSchema.parse(
+      (
+        await request(app.getHttpServer())
+          .post('/spaces/threads')
+          .set('authorization', bearer)
+          .send({ topicId: topic.id, title: '읽기 스레드' })
+          .expect(201)
+      ).body,
+    );
+
+    // tree: nested projects → channels → topics
+    const tree = await request(app.getHttpServer())
+      .get(`/spaces/workspaces/${ownerBody.personalWorkspaceId}/tree`)
+      .set('authorization', bearer)
+      .expect(200);
+    const treeBody = WorkspaceTreeResponseSchema.parse(tree.body);
+    expect(treeBody.workspaceId).toBe(ownerBody.personalWorkspaceId);
+    const projectNode = treeBody.projects.find((p) => p.id === project.id);
+    expect(projectNode).toBeTruthy();
+    const channelNode = projectNode!.channels.find((c) => c.id === channel.id);
+    expect(channelNode).toBeTruthy();
+    expect(channelNode!.topics.some((t) => t.id === topic.id)).toBe(true);
+    // no internal linkage fields leak
+    expect(JSON.stringify(tree.body)).not.toContain('memoryTopicId');
+
+    // outsider cannot read the owner's tree
+    await request(app.getHttpServer())
+      .get(`/spaces/workspaces/${ownerBody.personalWorkspaceId}/tree`)
+      .set('authorization', `Bearer ${outsiderSession.tokens.accessToken}`)
+      .expect(403);
+
+    // threads under a topic
+    const threads = await request(app.getHttpServer())
+      .get(`/spaces/topics/${topic.id}/threads`)
+      .set('authorization', bearer)
+      .expect(200);
+    const threadsBody = ListThreadsResponseSchema.parse(threads.body);
+    expect(threadsBody.threads.some((t) => t.id === thread.id && t.title === '읽기 스레드')).toBe(true);
+
+    // outsider cannot list threads either
+    await request(app.getHttpServer())
+      .get(`/spaces/topics/${topic.id}/threads`)
+      .set('authorization', `Bearer ${outsiderSession.tokens.accessToken}`)
+      .expect(403);
   });
 });

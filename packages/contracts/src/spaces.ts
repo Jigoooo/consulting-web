@@ -41,3 +41,72 @@ export const CreateTopicResponseSchema = IdResponseSchema;
 export type CreateTopicResponse = z.infer<typeof CreateTopicResponseSchema>;
 export const CreateThreadResponseSchema = IdResponseSchema;
 export type CreateThreadResponse = z.infer<typeof CreateThreadResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// Read contracts (Phase 1-M). Strict responses; no secrets, no internal fields
+// (memoryTopicId, tokenHash, version counters stay server-side).
+// ---------------------------------------------------------------------------
+
+export const WorkspaceSummarySchema = z
+  .object({
+    id: UuidSchema,
+    name: NameSchema,
+    slug: z.string(),
+    isPersonal: z.boolean(),
+    /** Caller's highest role in this workspace (from membership). */
+    role: z.enum(['owner', 'admin', 'editor', 'commenter', 'viewer']),
+  })
+  .strict();
+export type WorkspaceSummary = z.infer<typeof WorkspaceSummarySchema>;
+
+export const ListWorkspacesResponseSchema = z
+  .object({ workspaces: z.array(WorkspaceSummarySchema) })
+  .strict();
+export type ListWorkspacesResponse = z.infer<typeof ListWorkspacesResponseSchema>;
+
+export const TopicNodeSchema = z
+  .object({ id: UuidSchema, name: NameSchema, slug: z.string() })
+  .strict();
+export type TopicNode = z.infer<typeof TopicNodeSchema>;
+
+export const ChannelNodeSchema = z
+  .object({
+    id: UuidSchema,
+    name: NameSchema,
+    slug: z.string(),
+    topics: z.array(TopicNodeSchema),
+  })
+  .strict();
+export type ChannelNode = z.infer<typeof ChannelNodeSchema>;
+
+export const ProjectNodeSchema = z
+  .object({
+    id: UuidSchema,
+    name: NameSchema,
+    slug: z.string(),
+    channels: z.array(ChannelNodeSchema),
+  })
+  .strict();
+export type ProjectNode = z.infer<typeof ProjectNodeSchema>;
+
+export const WorkspaceTreeResponseSchema = z
+  .object({
+    workspaceId: UuidSchema,
+    projects: z.array(ProjectNodeSchema),
+  })
+  .strict();
+export type WorkspaceTreeResponse = z.infer<typeof WorkspaceTreeResponseSchema>;
+
+export const ThreadSummarySchema = z
+  .object({
+    id: UuidSchema,
+    title: TitleSchema,
+    createdAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+export type ThreadSummary = z.infer<typeof ThreadSummarySchema>;
+
+export const ListThreadsResponseSchema = z
+  .object({ threads: z.array(ThreadSummarySchema) })
+  .strict();
+export type ListThreadsResponse = z.infer<typeof ListThreadsResponseSchema>;
