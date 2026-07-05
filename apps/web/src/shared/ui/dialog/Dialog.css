@@ -1,0 +1,72 @@
+.cwDialogOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(15, 16, 17, 0.35);
+  backdrop-filter: blur(4px);
+}
+.cwDialogOverlay[data-state='open'] { animation: cwOverlayIn var(--dur-fast) var(--ease-standard); }
+.cwDialogOverlay[data-state='closed'] { animation: cwOverlayOut var(--dur-fast) var(--ease-standard); }
+.cwDialogContent,
+.cwSheetContent {
+  position: fixed;
+  z-index: 901;
+  background: var(--surface-card);
+  border: 1px solid var(--border-whisper);
+  box-shadow: var(--shadow-pop);
+  color: var(--text-primary);
+}
+.cwDialogContent {
+  top: 50%;
+  left: 50%;
+  width: min(520px, calc(100vw - 32px));
+  max-height: min(720px, calc(100vh - 32px));
+  overflow: auto;
+  transform: translate(-50%, -50%);
+  border-radius: 18px;
+  padding: 20px;
+}
+.cwDialogContent[data-state='open'] { animation: cwDialogIn var(--dur-base) var(--ease-emphasized); }
+.cwDialogContent[data-state='closed'] { animation: cwDialogOut var(--dur-fast) var(--ease-standard); }
+.cwSheetContent {
+  top: 0;
+  bottom: 0;
+  width: min(420px, calc(100vw - 24px));
+  padding: 20px;
+}
+.cwSheetContent--right { right: 0; border-radius: 18px 0 0 18px; }
+.cwSheetContent--left { left: 0; border-radius: 0 18px 18px 0; }
+.cwSheetContent--right[data-state='open'] { animation: cwSheetRightIn var(--dur-base) var(--ease-standard); }
+.cwSheetContent--left[data-state='open'] { animation: cwSheetLeftIn var(--dur-base) var(--ease-standard); }
+.cwDialogHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.cwDialogTitle { font-size: 17px; font-weight: 750; letter-spacing: -0.02em; }
+.cwDialogDesc { color: var(--text-secondary); font-size: 13px; line-height: 1.5; margin-top: 4px; }
+.cwDialogClose {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+}
+.cwDialogClose:hover { background: var(--surface-hover); color: var(--text-primary); }
+@keyframes cwOverlayIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes cwOverlayOut { from { opacity: 1; } to { opacity: 0; } }
+@keyframes cwDialogIn { from { opacity: 0; transform: translate(-50%, calc(-50% + 10px)) scale(0.98); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+@keyframes cwDialogOut { from { opacity: 1; transform: translate(-50%, -50%) scale(1); } to { opacity: 0; transform: translate(-50%, calc(-50% + 6px)) scale(0.98); } }
+@keyframes cwSheetRightIn { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes cwSheetLeftIn { from { opacity: 0; transform: translateX(-24px); } to { opacity: 1; transform: translateX(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .cwDialogOverlay,
+  .cwDialogContent,
+  .cwSheetContent { animation: none !important; }
+}

@@ -8,6 +8,11 @@
   --bg-rail: #0f1011;
   --bg-rail-2: #191a1b;
   --bg-warm: #f7f6f4;
+  --surface-app: var(--bg-canvas);
+  --surface-sidebar: var(--bg-sidebar);
+  --surface-panel: var(--bg-warm);
+  --surface-card: #ffffff;
+  --surface-hover: rgba(15, 16, 17, 0.045);
 
   /* text */
   --text-primary: #1a1a19;
@@ -17,12 +22,21 @@
   /* borders */
   --border-whisper: rgba(15, 16, 17, 0.08);
   --border-hair: rgba(15, 16, 17, 0.05);
+  --ring: var(--accent);
 
   /* accent (Linear indigo) */
   --accent: #5e6ad2;
   --accent-hi: #7170ff;
   --accent-soft: rgba(94, 106, 210, 0.1);
   --accent-glow: rgba(94, 106, 210, 0.28);
+  --primary: var(--accent);
+  --primary-foreground: #ffffff;
+  --muted: var(--bg-warm);
+  --muted-foreground: var(--text-secondary);
+  --background: var(--bg-canvas);
+  --foreground: var(--text-primary);
+  --border: var(--border-whisper);
+  --input: var(--border-whisper);
 
   /* semantic */
   --link: #0075de;
@@ -36,7 +50,7 @@
   --radius-pill: 9999px;
 
   /* type */
-  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-sans: 'Wanted Sans Variable', 'Wanted Sans', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
   /* spacing (8px grid) */
@@ -57,7 +71,9 @@
   --shadow-pop: rgba(15, 16, 17, 0.1) 0 8px 30px -6px, rgba(15, 16, 17, 0.06) 0 2px 6px;
 
   /* motion — reactbits/magicui/21st.dev inspired easing curves, driven via GSAP/CSS */
-  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-emphasized: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out: var(--ease-standard);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --dur-fast: 0.16s;
   --dur-base: 0.24s;
@@ -71,6 +87,11 @@
   --bg-rail: #0b0c0d;
   --bg-rail-2: #131415;
   --bg-warm: #222327;
+  --surface-app: var(--bg-canvas);
+  --surface-sidebar: var(--bg-sidebar);
+  --surface-panel: var(--bg-warm);
+  --surface-card: #1e2023;
+  --surface-hover: rgba(232, 232, 230, 0.06);
 
   --text-primary: #e8e8e6;
   --text-secondary: #9d9a93;

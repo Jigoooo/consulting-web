@@ -1,0 +1,15 @@
+.cwIcon {
+  display: inline-block;
+  flex: 0 0 auto;
+  vertical-align: -0.15em;
+}
+.cwIcon--xs { width: 13px; height: 13px; }
+.cwIcon--sm { width: 16px; height: 16px; }
+.cwIcon--md { width: 18px; height: 18px; }
+.cwIcon--lg { width: 28px; height: 28px; }
+.cwIcon--default { color: currentColor; }
+.cwIcon--muted { color: var(--text-muted); }
+.cwIcon--accent { color: var(--accent); }
+.cwIcon--danger { color: var(--red); }
+.cwIcon--success { color: var(--green); }
+.cwIcon--inverse { color: #fff; }

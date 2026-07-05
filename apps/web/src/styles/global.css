@@ -1,3 +1,4 @@
+@import '../shared/config/fonts.css';
 @import './tokens.css';
 
 * {
@@ -13,6 +14,8 @@ body,
 body {
   font-family: var(--font-sans);
   font-feature-settings: 'cv01', 'ss03', 'cv11';
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
   color: var(--text-primary);
   background: var(--bg-canvas);
   -webkit-font-smoothing: antialiased;
