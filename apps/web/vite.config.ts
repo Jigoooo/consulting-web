@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import babel from '@rolldown/plugin-babel';
+import tailwindcss from '@tailwindcss/vite';
 import { tanstackRouter } from '@tanstack/router-plugin/vite';
 
 const enableReactCompiler = process.env.DISABLE_REACT_COMPILER !== '1';
@@ -11,6 +12,7 @@ const enableReactCompiler = process.env.DISABLE_REACT_COMPILER !== '1';
 export default defineConfig({
   plugins: [
     tanstackRouter({ target: 'react', autoCodeSplitting: true }),
+    tailwindcss(),
     react(),
     enableReactCompiler ? babel({ presets: [reactCompilerPreset()] }) : undefined,
   ],
@@ -20,9 +22,8 @@ export default defineConfig({
       // Dev-only: forward API calls to the NestJS backend so the browser
       // only ever talks to same-origin; no secrets or Hermes exposure.
       '/api': {
-        target: 'http://127.0.0.1:3000',
+        target: process.env.VITE_DEV_API_TARGET ?? 'http://127.0.0.1:8088',
         changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/api/, ''),
       },
     },
   },

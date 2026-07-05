@@ -15,6 +15,7 @@
     "clean": "turbo run clean"
   },
   "devDependencies": {
+    "@consulting/eslint-config": "workspace:*",
     "prettier": "^3.9.4",
     "turbo": "^2.10.3",
     "typescript": "^6.0.3"
