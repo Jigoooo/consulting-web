@@ -1,0 +1,42 @@
+# Graphify corpus exclusions — consulting-web
+# 대형/생성물/자주 바뀌는 것들 (그래프 노이즈 + 비용)
+node_modules/
+dist/
+.turbo/
+.git/
+graphify-out/
+pnpm-lock.yaml
+
+# DB 덤프·백업·로그 (자주 바뀌고 의미 없음)
+backups/
+logs/
+*.log
+*.dump
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.sha256
+
+# 시크릿 (절대 포함 금지)
+.env
+.env.*
+*.key
+*.secret
+*.pem
+
+# 바이너리/에셋 (그래프 가치 없음)
+*.woff
+*.woff2
+*.ttf
+*.png
+*.jpg
+*.jpeg
+*.ico
+*.map
+
+# 세션/캐시 잡동사니
+.hermes/
+reports/*.json
+*.gen.ts

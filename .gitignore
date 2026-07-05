@@ -29,3 +29,6 @@ coverage/
 
 # drizzle
 packages/db-schema/drizzle/**/*.sql.bak
+
+# graphify artifacts (hook가 커밋마다 재생성)
+graphify-out/
