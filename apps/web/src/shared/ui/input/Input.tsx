@@ -2,7 +2,7 @@ import type { InputHTMLAttributes, TextareaHTMLAttributes, SelectHTMLAttributes,
 import { cn } from '../../lib/cn';
 import '../shared-ui.css';
 
-type InvalidProp = { invalid?: boolean };
+type InvalidProp = { invalid?: boolean | undefined };
 
 export function Input({ className, invalid, ...props }: InputHTMLAttributes<HTMLInputElement> & InvalidProp) {
   return <input className={cn('cwInput', invalid && 'cwInput--invalid', className)} aria-invalid={invalid || undefined} {...props} />;

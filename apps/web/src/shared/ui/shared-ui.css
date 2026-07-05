@@ -30,7 +30,26 @@
   transform: none;
   pointer-events: none;
 }
+/* Disabled primary/secondary lose their brand fill so "inactive" reads clearly. */
+.cwButton--primary:disabled,
+.cwButton--primary[data-disabled='true'] {
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  box-shadow: none;
+  opacity: 1;
+  border-color: var(--border-whisper);
+}
+.cwButton--primary:disabled::before,
+.cwButton--primary[data-disabled='true']::before {
+  content: none;
+}
 .cwButton[aria-busy='true'] { cursor: progress; }
+/* Loading keeps the brand fill (it's an active in-flight action, not disabled). */
+.cwButton--primary[aria-busy='true'] {
+  background: linear-gradient(135deg, var(--accent), var(--accent-hi));
+  color: var(--primary-foreground);
+  opacity: 0.9;
+}
 
 .cwButton--primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-hi));
