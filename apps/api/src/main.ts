@@ -12,6 +12,8 @@ async function bootstrap(): Promise<void> {
   // raised limit via the platform adapter — no direct express import needed.
   app.useBodyParser('json', { limit: '15mb' });
   app.useBodyParser('urlencoded', { extended: true, limit: '1mb' });
+  // Phase 3 C-3: do not leak the Express implementation detail on public API responses.
+  app.disable('x-powered-by');
   const env = app.get<Env>(ENV_TOKEN);
   await app.listen(env.PORT);
   // eslint-disable-next-line no-console

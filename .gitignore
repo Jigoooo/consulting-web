@@ -17,6 +17,9 @@ build/
 *.log
 logs/
 
+# local backup artifacts
+backups/
+
 # os
 .DS_Store
 Thumbs.db
