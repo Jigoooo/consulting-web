@@ -10,6 +10,17 @@ Phase 3 Cloudflare/외부 노출: ░░░░░░░░░░ 0%
 
 ## 이번 완료 묶음
 
+- UI 현대화/FSD 패스
+  - 텍스트·이모지 아이콘 금지 회귀 테스트 추가 및 GREEN
+  - lucide-react 기반 shared icon registry 추가
+  - shadcn 호환 `components.json`, shared UI primitives(Button/Input/Textarea/EmptyState 등), Tailwind v4 bridge 추가
+  - 주요 `components/*` 구현 파일을 `widgets/features/shared`로 물리 이동하고 compatibility shim만 유지
+  - Toast를 Radix Toast 기반으로 교체, Dialog/Sheet를 Radix Dialog 기반 shared UI로 추가
+  - Wanted Sans self-host 적용 후 complete 1.29MB 단일 파일에서 unicode-range split 로딩으로 최적화
+  - Windows/Mac fallback font stack 지정
+  - dev proxy를 현재 prod stack nginx(`127.0.0.1:8088`) 기준으로 수정
+  - signup→login→AppShell 브라우저 E2E, console error 0, emoji 0 확인
+
 - React Compiler 공식 적용
   - `@vitejs/plugin-react` + `reactCompilerPreset` + `@rolldown/plugin-babel`
   - on/off 빌드 비교 스크립트 추가: `pnpm --filter @consulting/web profile:react-compiler`
