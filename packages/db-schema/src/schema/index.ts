@@ -6,3 +6,4 @@ export * from './context-graph';
 export * from './permission';
 export * from './bot';
 export * from './events';
+export * from './collab';

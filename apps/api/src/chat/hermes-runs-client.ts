@@ -14,6 +14,8 @@ interface HermesRunSseEvent {
   readonly delta?: unknown;
   readonly output?: unknown;
   readonly error?: unknown;
+  readonly tool?: unknown;
+  readonly preview?: unknown;
 }
 
 @Injectable()
@@ -31,6 +33,20 @@ export class HermesRunsClient {
         if (eventType === 'message.delta') {
           const text = typeof upstream.delta === 'string' ? upstream.delta : '';
           if (text) yield { type: 'delta', runId, text };
+          continue;
+        }
+        if (eventType === 'tool.started' || eventType === 'tool.completed') {
+          const tool = typeof upstream.tool === 'string' ? upstream.tool : '';
+          if (tool) {
+            const preview = typeof upstream.preview === 'string' ? upstream.preview.slice(0, 500) : undefined;
+            yield {
+              type: 'tool',
+              runId,
+              phase: eventType === 'tool.started' ? 'started' : 'completed',
+              tool,
+              ...(preview ? { preview } : {}),
+            };
+          }
           continue;
         }
         if (eventType === 'run.completed') {

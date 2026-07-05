@@ -7,6 +7,17 @@
     <meta name="theme-color" content="#5e6ad2" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Consulting Web · 지구 워크스페이스</title>
+    <script>
+      // G-1 FOUC guard: apply stored theme before first paint.
+      (function () {
+        try {
+          var t = localStorage.getItem('consulting.theme.v1');
+          if (t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches && t === 'system')) {
+            document.documentElement.setAttribute('data-theme', 'dark');
+          }
+        } catch (e) {}
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

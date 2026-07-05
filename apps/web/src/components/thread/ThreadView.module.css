@@ -240,10 +240,60 @@
 .composer {
   padding: 12px 22px 20px;
 }
+/* 2-D G-3: attachment strip + attach button */
+.fileStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.fileChip {
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 560;
+  color: var(--text-secondary);
+  background: var(--bg-warm);
+  border: 1px solid var(--border-whisper);
+  border-radius: 9999px;
+  padding: 4px 11px;
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.fileChip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.fileSize {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-left: 3px;
+}
+.attachBtn {
+  font: inherit;
+  font-size: 14px;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border-whisper);
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+.attachBtn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.attachBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .box {
   border: 1px solid var(--border-whisper);
   border-radius: var(--radius-card);
-  background: #fff;
+  background: var(--bg-canvas);
   box-shadow: var(--shadow-card);
   transition: box-shadow var(--dur-base), border-color var(--dur-base);
 }

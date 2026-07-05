@@ -100,3 +100,20 @@ export const authProvider = pgEnum('auth_provider', [
 
 /** Chat message author kind (Phase 1.5 persistence). */
 export const chatRole = pgEnum('chat_role', ['user', 'assistant']);
+
+/** Evidence provenance (Phase 2-A). */
+export const evidenceSource = pgEnum('evidence_source', [
+  'gbrain',
+  'web',
+  'file',
+  'tool',
+  'manual',
+]);
+
+/** Notification kinds (Phase 2-C). */
+export const notificationType = pgEnum('notification_type', [
+  'invite_accepted',
+  'assistant_reply',
+  'artifact_version',
+  'member_joined',
+]);

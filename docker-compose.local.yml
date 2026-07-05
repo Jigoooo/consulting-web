@@ -1,8 +1,11 @@
 # Consulting Web — local infra (Phase 0)
 # Dedicated PostgreSQL 5434 + Redis 6380 (6379 is taken by Honcho).
 # Passwords come from .env.local (gitignored). Never hardcode secrets here.
+# NOTE: project name MUST differ from docker-compose.prod.yml — sharing a
+# compose project makes `up` on one file tear down/recreate the other's
+# services (root-caused 2026-07-05: local `up` recreated prod redis).
 
-name: consulting-web
+name: consulting-local
 
 services:
   postgres:

@@ -12,18 +12,32 @@ import {
   useMembers,
 } from '../../lib/spaces';
 import { useSelectedWorkspace, wsStore } from '../../lib/wsStore';
+import { useActiveThread } from '../../lib/threadCtx';
+import { useTheme, themeStore } from '../../lib/themeStore';
 import { api } from '../../lib/api';
 import { useToast } from '../ui/Toast';
 import { RowMenu, useTextPrompt } from '../ui/Menu';
+import { NotificationBell } from '../ui/NotificationBell';
+import { EvidencePanel } from '../evidence/EvidencePanel';
 import s from './AppShell.module.css';
 
 /** Persistent 4-pane frame: rail / sidebar(tree) / center(Outlet) / context. */
 export function AppShell({ children }: { children: ReactNode }) {
+  const [drawerOpen, setDrawerOpen] = useState(false);
   return (
     <div className={s.app}>
       <Rail />
-      <Sidebar />
+      <Sidebar className={drawerOpen ? s.drawerOpen ?? '' : ''} onNavigate={() => setDrawerOpen(false)} />
+      {drawerOpen ? <div className={s.scrim} onClick={() => setDrawerOpen(false)} /> : null}
       <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg-canvas)' }}>
+        <button
+          type="button"
+          className={s.drawerBtn}
+          aria-label="메뉴 열기"
+          onClick={() => setDrawerOpen(true)}
+        >
+          ☰
+        </button>
         {children}
       </div>
       <ContextPanel />
@@ -36,6 +50,7 @@ function Rail() {
   const { logout } = useAuth();
   const { data } = useWorkspaces();
   const selected = useSelectedWorkspace();
+  const theme = useTheme();
 
   useEffect(() => {
     if (!data) return;
@@ -45,6 +60,7 @@ function Rail() {
 
   const personal = data?.workspaces.filter((w) => w.isPersonal) ?? [];
   const shared = data?.workspaces.filter((w) => !w.isPersonal) ?? [];
+  const themeIcon = theme === 'dark' ? '🌙' : theme === 'light' ? '☀️' : '🖥';
 
   return (
     <div className={s.rail}>
@@ -56,6 +72,12 @@ function Rail() {
         <RailItem key={w.id} id={w.id} name={w.name} active={w.id === selected} />
       ))}
       <div className={s.spacer} />
+      <Link to="/artifacts" className={s.rbtn} title="산출물 라이브러리" activeProps={{ className: `${s.rbtn} ${s.rbtnOn}` }}>
+        📄
+      </Link>
+      <div className={s.rbtn} title={`테마: ${theme === 'dark' ? '다크' : theme === 'light' ? '라이트' : '시스템'} (클릭하여 변경)`} onClick={() => themeStore.cycle()}>
+        {themeIcon}
+      </div>
       <div
         className={s.rbtn}
         title="로그아웃"
@@ -125,7 +147,7 @@ function InlineCreate({ placeholder, onSubmit, busy }: { placeholder: string; on
   );
 }
 
-function Sidebar() {
+function Sidebar({ className = '', onNavigate }: { className?: string | undefined; onNavigate?: (() => void) | undefined }) {
   const { user } = useAuth();
   const toast = useToast();
   const selected = useSelectedWorkspace();
@@ -163,7 +185,7 @@ function Sidebar() {
   }
 
   return (
-    <div className={s.sidebar}>
+    <div className={`${s.sidebar} ${className}`}>
       {dialog}
       <div className={s.wsHead}>
         <div className={s.wsIco}>{wsName.slice(0, 1)}</div>
@@ -171,6 +193,7 @@ function Sidebar() {
           <div className={s.wsName}>{wsName}</div>
           <div className={s.wsSub}>{ws ? `${ws.role}${ws.isPersonal ? ' · 개인' : ''}` : ''}</div>
         </div>
+        <NotificationBell />
       </div>
       <div className={s.tree}>
         <div className={s.secLabel}>프로젝트</div>
@@ -211,6 +234,7 @@ function Sidebar() {
                       className={s.topic}
                       style={{ flex: 1 }}
                       activeProps={{ className: `${s.topic} ${s.active}` }}
+                      onClick={() => onNavigate?.()}
                     >
                       <span className={s.hash}>#</span> {t.name}
                     </Link>
@@ -258,9 +282,17 @@ function ContextPanel() {
   const selected = useSelectedWorkspace();
   const { data: members } = useMembers(selected ?? undefined);
   const toast = useToast();
+  const activeThread = useActiveThread();
+  const [tab, setTab] = useState<'evidence' | 'members'>('members');
   const [inviteRole, setInviteRole] = useState<'editor' | 'viewer' | 'admin'>('editor');
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
+
+  // Auto-switch to evidence when a thread opens (2-A E-4).
+  useEffect(() => {
+    if (activeThread) setTab('evidence');
+    else setTab('members');
+  }, [activeThread]);
 
   async function createInvite() {
     if (!selected || inviteBusy) return;
@@ -290,19 +322,45 @@ function ContextPanel() {
 
   return (
     <div className={s.context}>
-      <div className={s.ctxSection}>
-        <div className={s.ctxTitle}>멤버</div>
-        {members?.members.map((m) => (
-          <div key={m.userId} className={s.member}>
-            <div className={s.memberAv}>{m.displayName.slice(0, 1)}</div>
-            <div className={s.memberName}>{m.displayName}</div>
-            <div className={s.memberRole}>{roleLabel[m.role] ?? m.role}</div>
-          </div>
-        ))}
-      </div>
+      {activeThread ? (
+        <div className={s.ctxTabs}>
+          <button
+            type="button"
+            className={`${s.ctxTab} ${tab === 'evidence' ? s.ctxTabOn : ''}`}
+            onClick={() => setTab('evidence')}
+          >
+            근거
+          </button>
+          <button
+            type="button"
+            className={`${s.ctxTab} ${tab === 'members' ? s.ctxTabOn : ''}`}
+            onClick={() => setTab('members')}
+          >
+            멤버
+          </button>
+        </div>
+      ) : null}
 
-      <div className={s.ctxSection}>
-        <div className={s.ctxTitle}>초대</div>
+      {tab === 'evidence' && activeThread ? (
+        <div className={s.ctxSection}>
+          <div className={s.ctxTitle}>근거 자료</div>
+          <EvidencePanel threadId={activeThread} />
+        </div>
+      ) : (
+        <>
+          <div className={s.ctxSection}>
+            <div className={s.ctxTitle}>멤버</div>
+            {members?.members.map((m) => (
+              <div key={m.userId} className={s.member}>
+                <div className={s.memberAv}>{m.displayName.slice(0, 1)}</div>
+                <div className={s.memberName}>{m.displayName}</div>
+                <div className={s.memberRole}>{roleLabel[m.role] ?? m.role}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className={s.ctxSection}>
+            <div className={s.ctxTitle}>초대</div>
         <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
           {(['editor', 'viewer', 'admin'] as const).map((r) => (
             <button
@@ -330,7 +388,9 @@ function ContextPanel() {
           </div>
         ) : null}
         <div className={s.ctxHint}>링크를 받은 사람은 가입/로그인 후 이 워크스페이스에 참여합니다. 7일 후 만료.</div>
-      </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

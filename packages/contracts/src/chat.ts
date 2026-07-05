@@ -23,6 +23,15 @@ export const ChatStreamDeltaEventSchema = z.object({
   text: z.string(),
 }).strict();
 
+/** Tool activity surfaced mid-stream (Phase 2-A) — feeds ThinkingRibbon + evidence. */
+export const ChatStreamToolEventSchema = z.object({
+  type: z.literal('tool'),
+  runId: RunIdSchema,
+  phase: z.enum(['started', 'completed']),
+  tool: z.string().min(1).max(120),
+  preview: z.string().max(500).optional(),
+}).strict();
+
 export const ChatStreamDoneEventSchema = z.object({
   type: z.literal('done'),
   runId: RunIdSchema,
@@ -38,13 +47,14 @@ export const ChatStreamErrorEventSchema = z.object({
 export const ChatStreamEventSchema = z.discriminatedUnion('type', [
   ChatStreamStartEventSchema,
   ChatStreamDeltaEventSchema,
+  ChatStreamToolEventSchema,
   ChatStreamDoneEventSchema,
   ChatStreamErrorEventSchema,
 ]);
 export type ChatStreamEvent = z.infer<typeof ChatStreamEventSchema>;
 
 export const ChatStreamSseFrameSchema = z.object({
-  event: z.enum(['start', 'delta', 'done', 'error']),
+  event: z.enum(['start', 'delta', 'tool', 'done', 'error']),
   data: ChatStreamEventSchema,
 }).strict();
 export type ChatStreamSseFrame = z.infer<typeof ChatStreamSseFrameSchema>;

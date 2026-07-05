@@ -11,9 +11,30 @@ import s from './ThinkingRibbon.module.css';
  */
 const PHASES = ['생각을 정리하고 있어요', '맥락을 확인하고 있어요', '답변을 구성하고 있어요'];
 
-export function ThinkingRibbon() {
+const TOOL_LABELS: Record<string, string> = {
+  web_search: '웹을 검색하고 있어요',
+  web_extract: '웹 문서를 읽고 있어요',
+  gbrain_query: '지식그래프를 조회하고 있어요',
+  gbrain_search: '지식그래프를 검색하고 있어요',
+  read_file: '문서를 읽고 있어요',
+  search_files: '자료를 찾고 있어요',
+  terminal: '분석을 실행하고 있어요',
+};
+
+export function ThinkingRibbon({ tool }: { tool?: string | null }) {
   const dotsRef = useRef<HTMLDivElement | null>(null);
   const textRef = useRef<HTMLSpanElement | null>(null);
+  const toolLabel = tool ? TOOL_LABELS[tool] ?? `${tool} 실행 중` : null;
+
+  // Live tool phase overrides the generic cycle (Phase 2-A: real tool events).
+  useEffect(() => {
+    if (!textRef.current || !toolLabel) return;
+    textRef.current.textContent = toolLabel;
+  }, [toolLabel]);
+
+  // Keep the latest tool label visible to the cycle closure.
+  const toolRef = useRef<string | null>(null);
+  toolRef.current = toolLabel;
 
   useEffect(() => {
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -27,9 +48,11 @@ export function ThinkingRibbon() {
           stagger: { each: 0.12, yoyo: true, repeat: -1 },
         });
       }
-      // Cycle phases every 2.4s with a soft cross-fade.
+      // Cycle phases every 2.4s with a soft cross-fade (paused while a real
+      // tool label is showing).
       let idx = 0;
       const cycle = () => {
+        if (toolRef.current) return;
         idx = (idx + 1) % PHASES.length;
         if (!textRef.current) return;
         if (reduce) {

@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app.index'
 import { Route as InviteTokenRouteImport } from './routes/invite.$token'
+import { Route as AppArtifactsRouteImport } from './routes/_app.artifacts'
 import { Route as AppThThreadIdRouteImport } from './routes/_app.th.$threadId'
 import { Route as AppTTopicIdRouteImport } from './routes/_app.t.$topicId'
 
@@ -41,6 +42,11 @@ const InviteTokenRoute = InviteTokenRouteImport.update({
   path: '/invite/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppArtifactsRoute = AppArtifactsRouteImport.update({
+  id: '/artifacts',
+  path: '/artifacts',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppThThreadIdRoute = AppThThreadIdRouteImport.update({
   id: '/th/$threadId',
   path: '/th/$threadId',
@@ -56,6 +62,7 @@ export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/artifacts': typeof AppArtifactsRoute
   '/invite/$token': typeof InviteTokenRoute
   '/t/$topicId': typeof AppTTopicIdRoute
   '/th/$threadId': typeof AppThThreadIdRoute
@@ -63,6 +70,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/artifacts': typeof AppArtifactsRoute
   '/invite/$token': typeof InviteTokenRoute
   '/': typeof AppIndexRoute
   '/t/$topicId': typeof AppTTopicIdRoute
@@ -73,6 +81,7 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/_app/artifacts': typeof AppArtifactsRoute
   '/invite/$token': typeof InviteTokenRoute
   '/_app/': typeof AppIndexRoute
   '/_app/t/$topicId': typeof AppTTopicIdRoute
@@ -84,6 +93,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/signup'
+    | '/artifacts'
     | '/invite/$token'
     | '/t/$topicId'
     | '/th/$threadId'
@@ -91,6 +101,7 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/signup'
+    | '/artifacts'
     | '/invite/$token'
     | '/'
     | '/t/$topicId'
@@ -100,6 +111,7 @@ export interface FileRouteTypes {
     | '/_app'
     | '/login'
     | '/signup'
+    | '/_app/artifacts'
     | '/invite/$token'
     | '/_app/'
     | '/_app/t/$topicId'
@@ -150,6 +162,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof InviteTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_app/artifacts': {
+      id: '/_app/artifacts'
+      path: '/artifacts'
+      fullPath: '/artifacts'
+      preLoaderRoute: typeof AppArtifactsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/th/$threadId': {
       id: '/_app/th/$threadId'
       path: '/th/$threadId'
@@ -168,12 +187,14 @@ declare module '@tanstack/react-router' {
 }
 
 interface AppRouteChildren {
+  AppArtifactsRoute: typeof AppArtifactsRoute
   AppIndexRoute: typeof AppIndexRoute
   AppTTopicIdRoute: typeof AppTTopicIdRoute
   AppThThreadIdRoute: typeof AppThThreadIdRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppArtifactsRoute: AppArtifactsRoute,
   AppIndexRoute: AppIndexRoute,
   AppTTopicIdRoute: AppTTopicIdRoute,
   AppThThreadIdRoute: AppThThreadIdRoute,

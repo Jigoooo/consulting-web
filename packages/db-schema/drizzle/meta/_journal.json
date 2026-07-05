@@ -15,6 +15,20 @@
       "when": 1783224715753,
       "tag": "0003_chat_messages",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783238558896,
+      "tag": "0004_collab_phase2",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1783239474980,
+      "tag": "0005_file_attachments",
+      "breakpoints": true
     }
   ]
 }

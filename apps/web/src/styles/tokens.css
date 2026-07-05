@@ -62,3 +62,33 @@
   --dur-fast: 0.16s;
   --dur-base: 0.24s;
 }
+
+/* Phase 2-D G-1 — dark layer. Toggled via [data-theme] on <html>; an inline
+   pre-hydration script applies the stored choice to prevent FOUC. */
+[data-theme='dark'] {
+  --bg-canvas: #17181a;
+  --bg-sidebar: #1c1d20;
+  --bg-rail: #0b0c0d;
+  --bg-rail-2: #131415;
+  --bg-warm: #222327;
+
+  --text-primary: #e8e8e6;
+  --text-secondary: #9d9a93;
+  --text-muted: #6d6a64;
+
+  --border-whisper: rgba(232, 232, 230, 0.1);
+  --border-hair: rgba(232, 232, 230, 0.06);
+
+  --accent: #7b86e8;
+  --accent-hi: #8f8eff;
+  --accent-soft: rgba(123, 134, 232, 0.16);
+  --accent-glow: rgba(123, 134, 232, 0.32);
+
+  --link: #4da3ff;
+  --green: #34c759;
+  --amber: #ffb020;
+  --red: #ff6b4a;
+
+  --shadow-card: rgba(0, 0, 0, 0.3) 0 1px 2px, rgba(0, 0, 0, 0.3) 0 6px 20px -8px;
+  --shadow-pop: rgba(0, 0, 0, 0.5) 0 8px 30px -6px, rgba(0, 0, 0, 0.35) 0 2px 6px;
+}

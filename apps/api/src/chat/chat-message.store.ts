@@ -37,10 +37,10 @@ export class ChatMessageStore {
     content: string;
     runId: string | null;
     finishState: FinishState;
-  }): Promise<void> {
+  }): Promise<string> {
     // Persist even partial/cancelled output — an empty error row still tells
     // the user "this turn failed" after a refresh.
-    await this.db.insert(schema.chatMessages).values({
+    const [row] = await this.db.insert(schema.chatMessages).values({
       workspaceId: input.workspaceId,
       threadId: input.threadId,
       role: 'assistant',
@@ -48,7 +48,8 @@ export class ChatMessageStore {
       content: input.content,
       runId: input.runId,
       finishState: input.finishState,
-    });
+    }).returning({ id: schema.chatMessages.id });
+    return row!.id;
   }
 
   async listMessages(threadId: string): Promise<ListMessagesResponse> {

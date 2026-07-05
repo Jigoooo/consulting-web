@@ -1,0 +1,159 @@
+import { pgTable, text, uuid, integer, index, unique, timestamp } from 'drizzle-orm/pg-core';
+import { evidenceSource, notificationType } from './enums';
+import { workspaces } from './organization';
+import { users } from './identity';
+import { threads, chatMessages, projects } from './space';
+import { primaryId, timestamps, softDelete } from './_shared';
+
+/**
+ * Evidence items (Phase 2-A). Captured automatically from Hermes tool events
+ * during a run (source auto) or attached manually. Linked to the assistant
+ * message they support. Every row carries workspace_id (ADR-0001).
+ */
+export const evidenceItems = pgTable(
+  'evidence_items',
+  {
+    id: primaryId,
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    threadId: uuid('thread_id')
+      .notNull()
+      .references(() => threads.id, { onDelete: 'cascade' }),
+    /** Assistant message this evidence supports. Null only while in-flight. */
+    messageId: uuid('message_id').references(() => chatMessages.id, { onDelete: 'cascade' }),
+    /** Hermes run that produced it (auto evidence). */
+    runId: text('run_id'),
+    sourceType: evidenceSource('source_type').notNull(),
+    /** Tool name (web_search, gbrain_query, …) or manual label. */
+    ref: text('ref').notNull(),
+    /** Query/preview excerpt shown to the user. Never secrets. */
+    excerpt: text('excerpt').notNull(),
+    /** Optional URL for web sources. */
+    url: text('url'),
+    addedByUserId: uuid('added_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    ...timestamps,
+    ...softDelete,
+  },
+  (t) => [
+    index('evidence_thread_idx').on(t.threadId, t.createdAt),
+    index('evidence_message_idx').on(t.messageId),
+    index('evidence_workspace_idx').on(t.workspaceId),
+  ],
+);
+
+/**
+ * Artifacts (Phase 2-B): versioned deliverables (reports, tables) owned by a
+ * project. Content lives in immutable artifact_versions rows.
+ */
+export const artifacts = pgTable(
+  'artifacts',
+  {
+    id: primaryId,
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    /** Denormalized head version number for cheap listing. */
+    headVersion: integer('head_version').notNull().default(1),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    ...timestamps,
+    ...softDelete,
+  },
+  (t) => [
+    index('artifacts_workspace_idx').on(t.workspaceId),
+    index('artifacts_project_idx').on(t.projectId),
+  ],
+);
+
+/** Immutable version chain. (artifact_id, version_no) unique. */
+export const artifactVersions = pgTable(
+  'artifact_versions',
+  {
+    id: primaryId,
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    artifactId: uuid('artifact_id')
+      .notNull()
+      .references(() => artifacts.id, { onDelete: 'cascade' }),
+    versionNo: integer('version_no').notNull(),
+    /** Markdown body. Immutable once written. */
+    content: text('content').notNull(),
+    /** Change note ("초안", "수치 보강" …). */
+    note: text('note').notNull().default(''),
+    authorUserId: uuid('author_user_id').references(() => users.id, { onDelete: 'set null' }),
+    /** Origin thread/message when saved from chat. */
+    sourceThreadId: uuid('source_thread_id').references(() => threads.id, { onDelete: 'set null' }),
+    sourceMessageId: uuid('source_message_id').references(() => chatMessages.id, { onDelete: 'set null' }),
+    ...timestamps,
+  },
+  (t) => [
+    unique('artifact_versions_no_unique').on(t.artifactId, t.versionNo),
+    index('artifact_versions_artifact_idx').on(t.artifactId),
+    index('artifact_versions_workspace_idx').on(t.workspaceId),
+  ],
+);
+
+/**
+ * Per-user notification feed (Phase 2-C). Written by domain services
+ * (invitation accepted / assistant reply settled / artifact version added).
+ * Read via polling; read_at marks acknowledgement.
+ */
+export const notifications = pgTable(
+  'notifications',
+  {
+    id: primaryId,
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    /** Recipient. */
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    type: notificationType('type').notNull(),
+    title: text('title').notNull(),
+    body: text('body').notNull().default(''),
+    /** Deep-link target: 'thread' | 'artifact' | 'workspace'. */
+    refType: text('ref_type').notNull(),
+    refId: uuid('ref_id').notNull(),
+    readAt: timestamp('read_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [
+    index('notifications_user_idx').on(t.userId, t.createdAt),
+    index('notifications_workspace_idx').on(t.workspaceId),
+  ],
+);
+
+/**
+ * Chat file attachments (Phase 2-D G-3). Content stored inline as base64 —
+ * survives container rebuilds via the pg volume, no extra object store.
+ * Size capped at the contract layer (10MB binary ≈ 13.7MB base64).
+ */
+export const fileAttachments = pgTable(
+  'file_attachments',
+  {
+    id: primaryId,
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    threadId: uuid('thread_id')
+      .notNull()
+      .references(() => threads.id, { onDelete: 'cascade' }),
+    uploaderUserId: uuid('uploader_user_id').references(() => users.id, { onDelete: 'set null' }),
+    fileName: text('file_name').notNull(),
+    mimeType: text('mime_type').notNull(),
+    sizeBytes: integer('size_bytes').notNull(),
+    dataBase64: text('data_base64').notNull(),
+    ...timestamps,
+    ...softDelete,
+  },
+  (t) => [
+    index('file_attachments_thread_idx').on(t.threadId, t.createdAt),
+    index('file_attachments_workspace_idx').on(t.workspaceId),
+  ],
+);

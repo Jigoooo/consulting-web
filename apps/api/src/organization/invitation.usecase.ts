@@ -104,7 +104,7 @@ export class InvitationUseCase {
   }
 
   /** Accept an invitation: create membership. Rejects reuse/expired (ADR-0009/0020). */
-  async accept(cmd: AcceptInvitationCommand): Promise<Result<{ membershipId: string }>> {
+  async accept(cmd: AcceptInvitationCommand): Promise<Result<{ membershipId: string; workspaceId: string }>> {
     const tokenHash = hashToken(cmd.token);
 
     return this.db.transaction(async (tx) => {
@@ -157,11 +157,11 @@ export class InvitationUseCase {
             ),
           )
           .limit(1);
-        return ok({ membershipId: existing?.id ?? 'existing' });
+        return ok({ membershipId: existing?.id ?? 'existing', workspaceId: inv.workspaceId });
       }
 
-      return ok({ membershipId: membership.id });
-    }).catch((e): Result<{ membershipId: string }> => {
+      return ok({ membershipId: membership.id, workspaceId: inv.workspaceId });
+    }).catch((e): Result<{ membershipId: string; workspaceId: string }> => {
       if (e instanceof InvitationExpiredError) {
         return err(domainError('PRECONDITION', 'invitation expired'));
       }

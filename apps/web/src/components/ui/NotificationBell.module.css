@@ -1,0 +1,136 @@
+.wrap {
+  position: relative;
+  margin-left: auto;
+}
+.bell {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border-whisper);
+  border-radius: 9px;
+  background: var(--bg-canvas);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.bell:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.badge {
+  position: absolute;
+  top: -5px;
+  right: -6px;
+  min-width: 16px;
+  padding: 0 4px;
+  height: 16px;
+  border-radius: 9999px;
+  background: var(--red);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 2px var(--bg-sidebar);
+}
+.pop {
+  position: absolute;
+  top: 38px;
+  right: 0;
+  width: 320px;
+  max-height: 420px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-whisper);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-pop);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 60;
+}
+.popHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-hair);
+}
+.readAll {
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.list {
+  overflow-y: auto;
+}
+.empty {
+  padding: 28px 0;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-hair);
+}
+.item:hover {
+  background: var(--bg-warm);
+}
+.unreadItem {
+  background: var(--accent-soft);
+}
+.icon {
+  font-size: 15px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.preview {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.time {
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+.dot {
+  margin-left: auto;
+  margin-top: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}

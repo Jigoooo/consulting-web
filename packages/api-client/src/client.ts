@@ -40,6 +40,24 @@ import {
   type ListMessagesResponse,
   type ListMembersResponse,
   type OkResponse,
+  ListEvidenceResponseSchema,
+  ListArtifactsResponseSchema,
+  ArtifactDetailResponseSchema,
+  CreateArtifactResponseSchema,
+  ListNotificationsResponseSchema,
+  type AddEvidenceRequest,
+  type ListEvidenceResponse,
+  type CreateArtifactRequest,
+  type AddArtifactVersionRequest,
+  type CreateArtifactResponse,
+  type ListArtifactsResponse,
+  type ArtifactDetailResponse,
+  type ListNotificationsResponse,
+  UploadAttachmentResponseSchema,
+  ListAttachmentsResponseSchema,
+  type UploadAttachmentRequest,
+  type UploadAttachmentResponse,
+  type ListAttachmentsResponse,
 } from '@consulting/contracts';
 import { HttpCore, type ApiClientOptions } from './http-core.js';
 import { readChatSseStream } from './sse.js';
@@ -188,5 +206,77 @@ export class ConsultingApiClient {
       ...(signal ? { signal } : {}),
     });
     yield* readChatSseStream(response);
+  }
+
+  // --- evidence (Phase 2-A) ---
+  listEvidence(threadId: string): Promise<ListEvidenceResponse> {
+    return this.http.request(`/chat/threads/${threadId}/evidence`, { method: 'GET' }, (d) =>
+      ListEvidenceResponseSchema.parse(d),
+    );
+  }
+
+  addEvidence(body: AddEvidenceRequest): Promise<OkResponse> {
+    return this.http.request('/chat/evidence', { method: 'POST', body }, (d) => OkResponseSchema.parse(d));
+  }
+
+  // --- artifacts (Phase 2-B) ---
+  listArtifacts(workspaceId: string): Promise<ListArtifactsResponse> {
+    return this.http.request(`/artifacts/workspaces/${workspaceId}`, { method: 'GET' }, (d) =>
+      ListArtifactsResponseSchema.parse(d),
+    );
+  }
+
+  artifactDetail(id: string): Promise<ArtifactDetailResponse> {
+    return this.http.request(`/artifacts/${id}`, { method: 'GET' }, (d) =>
+      ArtifactDetailResponseSchema.parse(d),
+    );
+  }
+
+  createArtifact(body: CreateArtifactRequest): Promise<CreateArtifactResponse> {
+    return this.http.request('/artifacts', { method: 'POST', body }, (d) =>
+      CreateArtifactResponseSchema.parse(d),
+    );
+  }
+
+  addArtifactVersion(id: string, body: AddArtifactVersionRequest): Promise<CreateArtifactResponse> {
+    return this.http.request(`/artifacts/${id}/versions`, { method: 'POST', body }, (d) =>
+      CreateArtifactResponseSchema.parse(d),
+    );
+  }
+
+  deleteArtifact(id: string): Promise<OkResponse> {
+    return this.http.request(`/artifacts/${id}`, { method: 'DELETE' }, (d) => OkResponseSchema.parse(d));
+  }
+
+  // --- notifications (Phase 2-C) ---
+  listNotifications(): Promise<ListNotificationsResponse> {
+    return this.http.request('/notifications', { method: 'GET' }, (d) =>
+      ListNotificationsResponseSchema.parse(d),
+    );
+  }
+
+  markNotificationsRead(ids?: string[]): Promise<OkResponse> {
+    return this.http.request('/notifications/read', { method: 'POST', body: ids ? { ids } : {} }, (d) =>
+      OkResponseSchema.parse(d),
+    );
+  }
+
+  // --- attachments (Phase 2-D G-3) ---
+  uploadAttachment(body: UploadAttachmentRequest): Promise<UploadAttachmentResponse> {
+    return this.http.request('/attachments', { method: 'POST', body }, (d) =>
+      UploadAttachmentResponseSchema.parse(d),
+    );
+  }
+
+  listAttachments(threadId: string): Promise<ListAttachmentsResponse> {
+    return this.http.request(`/attachments/threads/${threadId}`, { method: 'GET' }, (d) =>
+      ListAttachmentsResponseSchema.parse(d),
+    );
+  }
+
+  /** Authenticated binary download — returns a blob URL the caller must revoke. */
+  async downloadAttachment(id: string): Promise<Blob> {
+    const response = await this.http.raw(`/attachments/${id}/content`, { method: 'GET' });
+    return response.blob();
   }
 }
