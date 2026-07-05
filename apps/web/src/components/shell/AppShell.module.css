@@ -371,7 +371,7 @@
 }
 
 /* responsive: collapse context then sidebar */
-@media (max-width: 1280px) {
+@media (max-width: 1120px) {
   .app {
     grid-template-columns: var(--w-rail) var(--w-sidebar) minmax(480px, 1fr);
   }

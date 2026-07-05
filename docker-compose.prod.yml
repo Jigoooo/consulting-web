@@ -1,0 +1,109 @@
+# Docker internal deployment (Phase 1.9). Ports chosen to avoid existing
+# dev services (pg 5434 / redis 6380 host stack stays untouched).
+# Web entry: http://127.0.0.1:8088  (nginx → api → docker pg/redis + host Hermes)
+
+name: consulting-web
+
+services:
+  pg:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: consulting
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?set in .env.docker}
+      POSTGRES_DB: consulting
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U consulting -d consulting']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  hermes-proxy:
+    image: alpine:3.20
+    # Bridges Docker network -> WSL-local Hermes gateway bound on 127.0.0.1:8642.
+    # It listens only on the host network; web exposure still remains 127.0.0.1:8088.
+    network_mode: host
+    command: >
+      sh -c "apk add --no-cache socat >/dev/null &&
+      socat TCP-LISTEN:38642,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:8642"
+    healthcheck:
+      test: ['CMD-SHELL', 'nc -z 127.0.0.1 38642']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      DATABASE_URL: postgres://consulting:${PG_PASSWORD}@pg:5432/consulting
+    entrypoint: ['node', 'docker-migrate.mjs']
+    working_dir: /app
+    depends_on:
+      pg:
+        condition: service_healthy
+    restart: 'no'
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      APP_ENV: production
+      APP_PUBLIC_URL: http://127.0.0.1:8088
+      PORT: '3000'
+      DATABASE_URL: postgres://consulting:${PG_PASSWORD}@pg:5432/consulting
+      REDIS_URL: redis://redis:6379
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?set in .env.docker}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set in .env.docker}
+      HERMES_API_BASE_URL: http://host.docker.internal:38642
+      HERMES_API_KEY: ${HERMES_API_KEY:?set in .env.docker}
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    depends_on:
+      pg:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      hermes-proxy:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:3000/health/live || exit 1']
+      interval: 10s
+      timeout: 4s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - '127.0.0.1:8088:80'
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pg-data:
+  redis-data:
