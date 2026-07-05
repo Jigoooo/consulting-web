@@ -204,6 +204,7 @@ export class ConsultingApiClient {
       method: 'POST',
       body,
       ...(signal ? { signal } : {}),
+      timeoutMs: false,
     });
     yield* readChatSseStream(response);
   }
