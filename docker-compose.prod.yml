@@ -104,6 +104,24 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Phase 3 C-1 — Cloudflare Tunnel (outbound-only; no inbound ports opened).
+  # Remotely-managed tunnel: routing/hostname lives in the Zero Trust dashboard.
+  # Enable with:  docker compose --profile tunnel ... up -d
+  # Requires CLOUDFLARE_TUNNEL_TOKEN in .env.docker (never commit it).
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ['tunnel']
+    # cloudflared natively reads TUNNEL_TOKEN from env (image has no shell).
+    # Default-empty so the base stack configs cleanly without the token;
+    # with the profile on and no token, cloudflared exits with its own error.
+    command: ['tunnel', '--no-autoupdate', 'run']
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      web:
+        condition: service_started
+    restart: unless-stopped
+
 volumes:
   pg-data:
   redis-data:
