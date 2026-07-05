@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { schema } from '@consulting/db-schema';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 
 export type SpaceAccess = { allowed: true; workspaceId: string } | { allowed: false; reason: 'not_found' | 'forbidden' };
@@ -10,25 +10,25 @@ export class SpaceAccessService {
   constructor(@Inject(DRIZZLE) private readonly db: Db) {}
 
   async workspaceMember(userId: string, workspaceId: string): Promise<SpaceAccess> {
-    const [workspace] = await this.db.select({ id: schema.workspaces.id }).from(schema.workspaces).where(eq(schema.workspaces.id, workspaceId)).limit(1);
+    const [workspace] = await this.db.select({ id: schema.workspaces.id }).from(schema.workspaces).where(and(eq(schema.workspaces.id, workspaceId), isNull(schema.workspaces.deletedAt))).limit(1);
     if (!workspace) return { allowed: false, reason: 'not_found' };
     return (await this.hasMembership(userId, workspaceId)) ? { allowed: true, workspaceId } : { allowed: false, reason: 'forbidden' };
   }
 
   async projectMember(userId: string, projectId: string): Promise<SpaceAccess> {
-    const [project] = await this.db.select({ workspaceId: schema.projects.workspaceId }).from(schema.projects).where(eq(schema.projects.id, projectId)).limit(1);
+    const [project] = await this.db.select({ workspaceId: schema.projects.workspaceId }).from(schema.projects).where(and(eq(schema.projects.id, projectId), isNull(schema.projects.deletedAt))).limit(1);
     if (!project) return { allowed: false, reason: 'not_found' };
     return (await this.hasMembership(userId, project.workspaceId)) ? { allowed: true, workspaceId: project.workspaceId } : { allowed: false, reason: 'forbidden' };
   }
 
   async channelMember(userId: string, channelId: string): Promise<SpaceAccess> {
-    const [channel] = await this.db.select({ workspaceId: schema.channels.workspaceId }).from(schema.channels).where(eq(schema.channels.id, channelId)).limit(1);
+    const [channel] = await this.db.select({ workspaceId: schema.channels.workspaceId }).from(schema.channels).where(and(eq(schema.channels.id, channelId), isNull(schema.channels.deletedAt))).limit(1);
     if (!channel) return { allowed: false, reason: 'not_found' };
     return (await this.hasMembership(userId, channel.workspaceId)) ? { allowed: true, workspaceId: channel.workspaceId } : { allowed: false, reason: 'forbidden' };
   }
 
   async topicMember(userId: string, topicId: string): Promise<SpaceAccess> {
-    const [topic] = await this.db.select({ workspaceId: schema.topics.workspaceId }).from(schema.topics).where(eq(schema.topics.id, topicId)).limit(1);
+    const [topic] = await this.db.select({ workspaceId: schema.topics.workspaceId }).from(schema.topics).where(and(eq(schema.topics.id, topicId), isNull(schema.topics.deletedAt))).limit(1);
     if (!topic) return { allowed: false, reason: 'not_found' };
     return (await this.hasMembership(userId, topic.workspaceId)) ? { allowed: true, workspaceId: topic.workspaceId } : { allowed: false, reason: 'forbidden' };
   }

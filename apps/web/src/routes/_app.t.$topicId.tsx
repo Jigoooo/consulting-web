@@ -21,7 +21,7 @@ function TopicPage() {
     if (!trimmed) return;
     const created = await createThread.mutateAsync(trimmed);
     setTitle('');
-    void router.navigate({ to: '/th/$threadId', params: { threadId: created.id }, search: { title: trimmed } });
+    void router.navigate({ to: '/th/$threadId', params: { threadId: created.id } });
   }
 
   return (
@@ -76,7 +76,6 @@ function TopicPage() {
               key={t.id}
               to="/th/$threadId"
               params={{ threadId: t.id }}
-              search={{ title: t.title }}
               style={{
                 display: 'flex',
                 justifyContent: 'space-between',

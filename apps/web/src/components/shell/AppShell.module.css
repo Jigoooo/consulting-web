@@ -274,6 +274,101 @@
   flex-direction: column;
   overflow-y: auto;
 }
+.ctxSection {
+  padding: 16px;
+  border-bottom: 1px solid var(--border-hair);
+}
+.ctxTitle {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 11px;
+}
+.member {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+}
+.memberAv {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #8b8f98, #6b6f78);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.memberName {
+  font-size: 13px;
+  font-weight: 510;
+}
+.memberRole {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  background: var(--bg-warm);
+  border-radius: 9999px;
+  padding: 2px 8px;
+}
+.rolePick {
+  flex: 1;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 560;
+  padding: 6px 0;
+  border: 1px solid var(--border-whisper);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.rolePickOn {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.inviteBtn {
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 9px 0;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent), #6b74e0);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 3px 10px -3px var(--accent-glow);
+}
+.inviteBtn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.inviteLink {
+  margin-top: 10px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid rgba(94, 106, 210, 0.25);
+  border-radius: 8px;
+  padding: 8px 10px;
+  word-break: break-all;
+  cursor: pointer;
+}
+.ctxHint {
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
 
 /* responsive: collapse context then sidebar */
 @media (max-width: 1280px) {

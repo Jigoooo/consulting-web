@@ -1,6 +1,7 @@
 import { pgTable, text, uuid, index, unique } from 'drizzle-orm/pg-core';
-import { entityStatus } from './enums';
+import { entityStatus, chatRole } from './enums';
 import { workspaces } from './organization';
+import { users } from './identity';
 import { primaryId, timestamps, softDelete, optimisticVersion } from './_shared';
 
 /**
@@ -96,5 +97,35 @@ export const threads = pgTable(
   (t) => [
     index('threads_workspace_idx').on(t.workspaceId),
     index('threads_topic_idx').on(t.topicId),
+  ],
+);
+
+/**
+ * Chat messages persisted per thread (Phase 1.5 N-1). Every row carries
+ * workspace_id for tenant filtering (ADR-0001). assistant rows keep the
+ * Hermes run id for traceability; author_user_id is null for assistant rows.
+ */
+export const chatMessages = pgTable(
+  'chat_messages',
+  {
+    id: primaryId,
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    threadId: uuid('thread_id')
+      .notNull()
+      .references(() => threads.id, { onDelete: 'cascade' }),
+    role: chatRole('role').notNull(),
+    authorUserId: uuid('author_user_id').references(() => users.id, { onDelete: 'set null' }),
+    content: text('content').notNull(),
+    runId: text('run_id'),
+    /** 'complete' | 'cancelled' | 'error' — assistant rows only, user rows always complete. */
+    finishState: text('finish_state').notNull().default('complete'),
+    ...timestamps,
+    ...softDelete,
+  },
+  (t) => [
+    index('chat_messages_thread_idx').on(t.threadId, t.createdAt),
+    index('chat_messages_workspace_idx').on(t.workspaceId),
   ],
 );

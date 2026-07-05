@@ -1,4 +1,4 @@
-import { Body, Controller, ForbiddenException, Get, Inject, NotFoundException, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, Inject, NotFoundException, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import {
   CreateProjectRequestSchema,
   CreateProjectResponseSchema,
@@ -11,6 +11,11 @@ import {
   ListWorkspacesResponseSchema,
   WorkspaceTreeResponseSchema,
   ListThreadsResponseSchema,
+  ThreadDetailResponseSchema,
+  ListMembersResponseSchema,
+  RenameRequestSchema,
+  RenameThreadRequestSchema,
+  OkResponseSchema,
 } from '@consulting/contracts';
 import { AccessTokenGuard, requireAuthUserId, type AuthenticatedRequest } from '../auth/access-token.guard.js';
 import { parseBody, parseResponse, throwDomainError } from '../http/contract-adapter.js';
@@ -20,6 +25,7 @@ import { CreateTopicUseCase } from './create-topic.usecase.js';
 import { CreateThreadUseCase } from './create-thread.usecase.js';
 import { SpaceAccessService, type SpaceAccess } from './space-access.service.js';
 import { SpaceReadService } from './space-read.service.js';
+import { SpaceMutateService } from './space-mutate.service.js';
 
 @Controller('spaces')
 @UseGuards(AccessTokenGuard)
@@ -27,6 +33,7 @@ export class SpacesController {
   constructor(
     @Inject(SpaceAccessService) private readonly access: SpaceAccessService,
     @Inject(SpaceReadService) private readonly reads: SpaceReadService,
+    @Inject(SpaceMutateService) private readonly mutate: SpaceMutateService,
     @Inject(CreateProjectUseCase) private readonly createProject: CreateProjectUseCase,
     @Inject(CreateChannelUseCase) private readonly createChannel: CreateChannelUseCase,
     @Inject(CreateTopicUseCase) private readonly createTopic: CreateTopicUseCase,
@@ -46,11 +53,101 @@ export class SpacesController {
     return parseResponse(WorkspaceTreeResponseSchema, await this.reads.workspaceTree(workspaceId));
   }
 
+  @Get('workspaces/:workspaceId/members')
+  async members(@Param('workspaceId') workspaceId: string, @Req() req: AuthenticatedRequest) {
+    const userId = requireAuthUserId(req);
+    this.throwIfDenied(await this.access.workspaceMember(userId, workspaceId));
+    return parseResponse(ListMembersResponseSchema, await this.mutate.listMembers(workspaceId));
+  }
+
   @Get('topics/:topicId/threads')
   async threads(@Param('topicId') topicId: string, @Req() req: AuthenticatedRequest) {
     const userId = requireAuthUserId(req);
     this.throwIfDenied(await this.access.topicMember(userId, topicId));
     return parseResponse(ListThreadsResponseSchema, await this.reads.listThreads(topicId));
+  }
+
+  @Get('threads/:threadId')
+  async threadDetail(@Param('threadId') threadId: string, @Req() req: AuthenticatedRequest) {
+    const userId = requireAuthUserId(req);
+    await this.requireThreadMember(userId, threadId);
+    const detail = await this.mutate.threadDetail(threadId);
+    if (!detail) throw new NotFoundException({ code: 'NOT_FOUND', message: 'thread not found' });
+    return parseResponse(ThreadDetailResponseSchema, detail);
+  }
+
+  // --- rename (N-4) ---
+  @Patch('projects/:id')
+  async renameProject(@Param('id') id: string, @Body() body: unknown, @Req() req: AuthenticatedRequest) {
+    const { name } = parseBody(RenameRequestSchema, body);
+    await this.requireNodeMember(requireAuthUserId(req), 'project', id);
+    await this.mutate.renameNode('project', id, name);
+    return parseResponse(OkResponseSchema, { ok: true });
+  }
+
+  @Patch('channels/:id')
+  async renameChannel(@Param('id') id: string, @Body() body: unknown, @Req() req: AuthenticatedRequest) {
+    const { name } = parseBody(RenameRequestSchema, body);
+    await this.requireNodeMember(requireAuthUserId(req), 'channel', id);
+    await this.mutate.renameNode('channel', id, name);
+    return parseResponse(OkResponseSchema, { ok: true });
+  }
+
+  @Patch('topics/:id')
+  async renameTopic(@Param('id') id: string, @Body() body: unknown, @Req() req: AuthenticatedRequest) {
+    const { name } = parseBody(RenameRequestSchema, body);
+    await this.requireNodeMember(requireAuthUserId(req), 'topic', id);
+    await this.mutate.renameNode('topic', id, name);
+    return parseResponse(OkResponseSchema, { ok: true });
+  }
+
+  @Patch('threads/:id')
+  async renameThread(@Param('id') id: string, @Body() body: unknown, @Req() req: AuthenticatedRequest) {
+    const { title } = parseBody(RenameThreadRequestSchema, body);
+    await this.requireThreadMember(requireAuthUserId(req), id);
+    await this.mutate.renameThread(id, title);
+    return parseResponse(OkResponseSchema, { ok: true });
+  }
+
+  // --- soft delete (N-4) ---
+  @Delete('projects/:id')
+  async deleteProject(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    await this.requireNodeMember(requireAuthUserId(req), 'project', id);
+    await this.mutate.softDeleteNode('project', id);
+    return parseResponse(OkResponseSchema, { ok: true });
+  }
+
+  @Delete('channels/:id')
+  async deleteChannel(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    await this.requireNodeMember(requireAuthUserId(req), 'channel', id);
+    await this.mutate.softDeleteNode('channel', id);
+    return parseResponse(OkResponseSchema, { ok: true });
+  }
+
+  @Delete('topics/:id')
+  async deleteTopic(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    await this.requireNodeMember(requireAuthUserId(req), 'topic', id);
+    await this.mutate.softDeleteNode('topic', id);
+    return parseResponse(OkResponseSchema, { ok: true });
+  }
+
+  @Delete('threads/:id')
+  async deleteThread(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    await this.requireThreadMember(requireAuthUserId(req), id);
+    await this.mutate.softDeleteThread(id);
+    return parseResponse(OkResponseSchema, { ok: true });
+  }
+
+  private async requireNodeMember(userId: string, kind: 'project' | 'channel' | 'topic', id: string): Promise<void> {
+    const workspaceId = await this.mutate.nodeWorkspace(kind, id);
+    if (!workspaceId) throw new NotFoundException({ code: 'NOT_FOUND', message: `${kind} not found` });
+    this.throwIfDenied(await this.access.workspaceMember(userId, workspaceId));
+  }
+
+  private async requireThreadMember(userId: string, id: string): Promise<void> {
+    const workspaceId = await this.mutate.threadWorkspace(id);
+    if (!workspaceId) throw new NotFoundException({ code: 'NOT_FOUND', message: 'thread not found' });
+    this.throwIfDenied(await this.access.workspaceMember(userId, workspaceId));
   }
 
   @Post('projects')

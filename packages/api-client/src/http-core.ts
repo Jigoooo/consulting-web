@@ -22,6 +22,12 @@ export interface ApiClientOptions {
   readonly baseUrl: string;
   /** Access token getter; called per-request so token refresh is transparent. */
   readonly getAccessToken?: () => string | null | undefined;
+  /**
+   * Refresh hook (N-3). Called ONCE when a request gets 401 with a token
+   * attached. Return true if a new access token is now available via
+   * getAccessToken (the request is retried once), false to give up.
+   */
+  readonly onUnauthorized?: () => Promise<boolean>;
   /** Injectable fetch (defaults to global fetch) — lets tests stub the transport. */
   readonly fetch?: typeof fetch;
 }
@@ -61,16 +67,33 @@ export class HttpCore {
     return headers;
   }
 
+  /** One 401→refresh→retry pass shared by request() and raw(). */
+  private async fetchWithRefresh(path: string, buildInit: () => RequestInit, authed: boolean): Promise<Response> {
+    let response = await this.fetchImpl(`${this.baseUrl}${path}`, buildInit());
+    if (response.status === 401 && authed && this.options.onUnauthorized) {
+      const refreshed = await this.options.onUnauthorized();
+      if (refreshed) {
+        // Rebuild init so the new access token is picked up.
+        response = await this.fetchImpl(`${this.baseUrl}${path}`, buildInit());
+      }
+    }
+    return response;
+  }
+
   async request<T>(path: string, opts: RequestOptions, parse: (data: unknown) => T): Promise<T> {
     const method = opts.method ?? 'GET';
     const hasBody = opts.body !== undefined;
-    const init: RequestInit = {
-      method,
-      headers: this.headers(hasBody ? { 'content-type': 'application/json' } : {}, opts.auth ?? true),
+    const authed = opts.auth ?? true;
+    const buildInit = (): RequestInit => {
+      const init: RequestInit = {
+        method,
+        headers: this.headers(hasBody ? { 'content-type': 'application/json' } : {}, authed),
+      };
+      if (hasBody) init.body = JSON.stringify(opts.body);
+      if (opts.signal) init.signal = opts.signal;
+      return init;
     };
-    if (hasBody) init.body = JSON.stringify(opts.body);
-    if (opts.signal) init.signal = opts.signal;
-    const response = await this.fetchImpl(`${this.baseUrl}${path}`, init);
+    const response = await this.fetchWithRefresh(path, buildInit, authed);
 
     if (!response.ok) {
       throw await this.toError(response);
@@ -87,16 +110,20 @@ export class HttpCore {
   async raw(path: string, opts: RequestOptions): Promise<Response> {
     const method = opts.method ?? 'GET';
     const hasBody = opts.body !== undefined;
-    const init: RequestInit = {
-      method,
-      headers: this.headers(
-        hasBody ? { 'content-type': 'application/json', accept: 'text/event-stream' } : { accept: 'text/event-stream' },
-        opts.auth ?? true,
-      ),
+    const authed = opts.auth ?? true;
+    const buildInit = (): RequestInit => {
+      const init: RequestInit = {
+        method,
+        headers: this.headers(
+          hasBody ? { 'content-type': 'application/json', accept: 'text/event-stream' } : { accept: 'text/event-stream' },
+          authed,
+        ),
+      };
+      if (hasBody) init.body = JSON.stringify(opts.body);
+      if (opts.signal) init.signal = opts.signal;
+      return init;
     };
-    if (hasBody) init.body = JSON.stringify(opts.body);
-    if (opts.signal) init.signal = opts.signal;
-    const response = await this.fetchImpl(`${this.baseUrl}${path}`, init);
+    const response = await this.fetchWithRefresh(path, buildInit, authed);
     if (!response.ok) {
       throw await this.toError(response);
     }

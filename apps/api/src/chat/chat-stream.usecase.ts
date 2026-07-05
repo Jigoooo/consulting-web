@@ -3,7 +3,10 @@ import { schema } from '@consulting/db-schema';
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 
-export type ChatStreamAccess = 'allowed' | 'not_found' | 'forbidden';
+export type ChatStreamAccess =
+  | { status: 'allowed'; workspaceId: string }
+  | { status: 'not_found' }
+  | { status: 'forbidden' };
 
 @Injectable()
 export class ChatStreamUseCase {
@@ -15,7 +18,7 @@ export class ChatStreamUseCase {
       .from(schema.threads)
       .where(and(eq(schema.threads.id, threadId), eq(schema.threads.status, 'active')))
       .limit(1);
-    if (!thread) return 'not_found';
+    if (!thread) return { status: 'not_found' };
 
     const [membership] = await this.db
       .select({ id: schema.memberships.id })
@@ -27,7 +30,7 @@ export class ChatStreamUseCase {
         ),
       )
       .limit(1);
-    return membership ? 'allowed' : 'forbidden';
+    return membership ? { status: 'allowed', workspaceId: thread.workspaceId } : { status: 'forbidden' };
   }
 
 }

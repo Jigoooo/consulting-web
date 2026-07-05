@@ -1,9 +1,12 @@
-import { useRef, useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { useAuth } from '../../lib/useAuth';
+import { useToast } from '../ui/Toast';
+import { Markdown } from './Markdown';
 import s from '../thread/ThreadView.module.css';
 
-interface Turn {
+interface LiveTurn {
   id: number;
   role: 'user' | 'ai';
   text: string;
@@ -13,13 +16,20 @@ interface Turn {
 }
 
 /**
- * Live chat for a thread. Each send opens /chat/stream (server-side Hermes
- * proxy) and appends deltas to the AI turn in real time. Cancel aborts the SSE.
- * Transcript is session-local for Phase 1-M (message persistence = Phase 2).
+ * Live chat for a thread (N-1 persistent). History loads from
+ * GET /chat/threads/:id/messages; new sends stream via SSE and are persisted
+ * server-side, so a refresh reproduces the full dialogue.
  */
 export function ChatThread({ threadId, title }: { threadId: string; title: string }) {
   const { user } = useAuth();
-  const [turns, setTurns] = useState<Turn[]>([]);
+  const toast = useToast();
+  const qc = useQueryClient();
+  const history = useQuery({
+    queryKey: ['messages', threadId],
+    queryFn: () => api.listMessages(threadId),
+  });
+
+  const [live, setLive] = useState<LiveTurn[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -28,17 +38,17 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [turns]);
+  }, [live, history.data]);
 
-  // Reset transcript when switching threads.
+  // Reset the live tail when switching threads.
   useEffect(() => {
-    setTurns([]);
+    setLive([]);
     abortRef.current?.abort();
     setBusy(false);
   }, [threadId]);
 
-  function patchTurn(id: number, patch: Partial<Turn>) {
-    setTurns((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  function patchTurn(id: number, patch: Partial<LiveTurn>) {
+    setLive((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   }
 
   async function send() {
@@ -47,9 +57,9 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
     setInput('');
     setBusy(true);
 
-    const userTurn: Turn = { id: nextId.current++, role: 'user', text: message };
-    const aiTurn: Turn = { id: nextId.current++, role: 'ai', text: '', streaming: true };
-    setTurns((prev) => [...prev, userTurn, aiTurn]);
+    const userTurn: LiveTurn = { id: nextId.current++, role: 'user', text: message };
+    const aiTurn: LiveTurn = { id: nextId.current++, role: 'ai', text: '', streaming: true };
+    setLive((prev) => [...prev, userTurn, aiTurn]);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -65,18 +75,23 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
           patchTurn(aiTurn.id, { streaming: false });
         } else if (event.type === 'error') {
           patchTurn(aiTurn.id, { streaming: false, error: event.message });
+          toast('error', '지구 응답 중 문제가 발생했어요.');
         }
       }
       patchTurn(aiTurn.id, { streaming: false });
-    } catch (err) {
+    } catch {
       if (controller.signal.aborted) {
         patchTurn(aiTurn.id, { streaming: false, error: '중단됨' });
       } else {
         patchTurn(aiTurn.id, { streaming: false, error: '응답을 가져오지 못했어요. 다시 시도해주세요.' });
+        toast('error', '연결에 문제가 있어요. 잠시 후 다시 시도해주세요.');
       }
     } finally {
       setBusy(false);
       abortRef.current = null;
+      // Keep the live tail on screen; refresh history in background so a
+      // remount shows the persisted copy.
+      void qc.invalidateQueries({ queryKey: ['messages', threadId], refetchType: 'none' });
     }
   }
 
@@ -84,7 +99,8 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
     abortRef.current?.abort();
   }
 
-  const userInitial = (user?.displayName ?? '나').slice(0, 1);
+  const userName = user?.displayName ?? '나';
+  const persisted = history.data?.messages ?? [];
 
   return (
     <>
@@ -102,29 +118,68 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
       </div>
 
       <div className={s.stream}>
-        {turns.length === 0 ? (
+        {history.isLoading ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {[0.9, 0.6, 0.75].map((w, i) => (
+              <div key={i} className={s.skelMsg} style={{ width: `${w * 100}%` }} />
+            ))}
+          </div>
+        ) : null}
+
+        {!history.isLoading && persisted.length === 0 && live.length === 0 ? (
           <div style={{ margin: 'auto', textAlign: 'center', color: 'var(--text-muted)' }}>
             <div style={{ fontSize: 34, marginBottom: 10 }}>🌍</div>
             <div style={{ fontSize: 14 }}>지구에게 무엇이든 물어보세요</div>
           </div>
         ) : null}
-        {turns.map((t) => (
-          <div key={t.id} className={s.msg}>
-            <div className={`${s.avatar} ${t.role === 'user' ? s.avatarUser : s.avatarAi}`}>
-              {t.role === 'user' ? userInitial : '🌍'}
+
+        {persisted.map((m) => (
+          <div key={m.id} className={s.msg}>
+            <div className={`${s.avatar} ${m.role === 'user' ? s.avatarUser : s.avatarAi}`}>
+              {m.role === 'user' ? (m.authorName ?? userName).slice(0, 1) : '🌍'}
             </div>
             <div className={s.body}>
               <div className={s.meta}>
-                <span className={s.who}>{t.role === 'user' ? (user?.displayName ?? '나') : '지구'}</span>
+                <span className={s.who}>{m.role === 'user' ? (m.authorName ?? userName) : '지구'}</span>
+                <span className={s.time}>
+                  {new Date(m.createdAt).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' })}
+                </span>
+                {m.runId ? <span className={s.runid}>{m.runId.slice(0, 12)}…</span> : null}
+              </div>
+              {m.role === 'assistant' ? (
+                <Markdown text={m.content} />
+              ) : (
+                <div className={s.text}>{m.content}</div>
+              )}
+              {m.finishState === 'error' ? (
+                <div style={{ marginTop: 6, fontSize: 12.5, color: 'var(--red)' }}>이 응답은 오류로 중단되었어요.</div>
+              ) : null}
+              {m.finishState === 'cancelled' ? (
+                <div style={{ marginTop: 6, fontSize: 12.5, color: 'var(--text-muted)' }}>중단된 응답</div>
+              ) : null}
+            </div>
+          </div>
+        ))}
+
+        {live.map((t) => (
+          <div key={`live-${t.id}`} className={s.msg}>
+            <div className={`${s.avatar} ${t.role === 'user' ? s.avatarUser : s.avatarAi}`}>
+              {t.role === 'user' ? userName.slice(0, 1) : '🌍'}
+            </div>
+            <div className={s.body}>
+              <div className={s.meta}>
+                <span className={s.who}>{t.role === 'user' ? userName : '지구'}</span>
                 {t.runId ? <span className={s.runid}>{t.runId.slice(0, 12)}…</span> : null}
               </div>
-              <div className={s.text}>
-                {t.text}
-                {t.streaming ? <span className={s.cursor} /> : null}
-              </div>
-              {t.error ? (
-                <div style={{ marginTop: 6, fontSize: 12.5, color: 'var(--red)' }}>{t.error}</div>
-              ) : null}
+              {t.role === 'ai' ? (
+                <div>
+                  <Markdown text={t.text} />
+                  {t.streaming ? <span className={s.cursor} /> : null}
+                </div>
+              ) : (
+                <div className={s.text}>{t.text}</div>
+              )}
+              {t.error ? <div style={{ marginTop: 6, fontSize: 12.5, color: 'var(--red)' }}>{t.error}</div> : null}
             </div>
           </div>
         ))}
@@ -156,7 +211,12 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
                   ■ 중단
                 </button>
               ) : null}
-              <button className={`${s.btn} ${s.btnPrimary}`} type="button" disabled={busy || !input.trim()} onClick={() => void send()}>
+              <button
+                className={`${s.btn} ${s.btnPrimary}`}
+                type="button"
+                disabled={busy || !input.trim()}
+                onClick={() => void send()}
+              >
                 전송 ↵
               </button>
             </div>

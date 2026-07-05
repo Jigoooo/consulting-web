@@ -54,3 +54,9 @@ export const LoginRequestSchema = z.object({
   password: PasswordSchema,
 }).strict();
 export type LoginRequest = z.infer<typeof LoginRequestSchema>;
+
+/** Refresh rotation (N-3): old refresh token is invalidated, a new pair returns. */
+export const RefreshRequestSchema = z.object({
+  refreshToken: z.string().min(10),
+}).strict();
+export type RefreshRequest = z.infer<typeof RefreshRequestSchema>;

@@ -97,3 +97,6 @@ export const authProvider = pgEnum('auth_provider', [
   'microsoft',
   'cloudflare',
 ]);
+
+/** Chat message author kind (Phase 1.5 persistence). */
+export const chatRole = pgEnum('chat_role', ['user', 'assistant']);

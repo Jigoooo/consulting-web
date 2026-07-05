@@ -77,3 +77,49 @@ export function useCreateThread(topicId: string | undefined) {
     onSuccess: () => void qc.invalidateQueries({ queryKey: spaceKeys.threads(topicId ?? '') }),
   });
 }
+
+/** Rename/delete mutations (N-4) — invalidate the tree (or threads) on success. */
+export function useRenameNode(workspaceId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { kind: 'projects' | 'channels' | 'topics'; id: string; name: string }) =>
+      api.renameNode(input.kind, input.id, input.name),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: spaceKeys.tree(workspaceId ?? '') }),
+  });
+}
+
+export function useDeleteNode(workspaceId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { kind: 'projects' | 'channels' | 'topics'; id: string }) =>
+      api.deleteNode(input.kind, input.id),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: spaceKeys.tree(workspaceId ?? '') }),
+  });
+}
+
+export function useRenameThread(topicId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { id: string; title: string }) => api.renameThread(input.id, input.title),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: spaceKeys.threads(topicId ?? '') });
+      void qc.invalidateQueries({ queryKey: ['thread', v.id] });
+    },
+  });
+}
+
+export function useDeleteThread(topicId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteNode('threads', id),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: spaceKeys.threads(topicId ?? '') }),
+  });
+}
+
+export function useMembers(workspaceId: string | undefined) {
+  return useQuery({
+    queryKey: ['members', workspaceId ?? ''],
+    queryFn: () => api.listMembers(workspaceId!),
+    enabled: Boolean(workspaceId),
+  });
+}

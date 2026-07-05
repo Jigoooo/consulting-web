@@ -1,15 +1,23 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useRouter } from '@tanstack/react-router';
 import { useAuth } from '../../lib/useAuth';
-import { useWorkspaces, useWorkspaceTree, useCreateProject, useCreateChannel, useCreateTopic } from '../../lib/spaces';
+import {
+  useWorkspaces,
+  useWorkspaceTree,
+  useCreateProject,
+  useCreateChannel,
+  useCreateTopic,
+  useRenameNode,
+  useDeleteNode,
+  useMembers,
+} from '../../lib/spaces';
 import { useSelectedWorkspace, wsStore } from '../../lib/wsStore';
+import { api } from '../../lib/api';
+import { useToast } from '../ui/Toast';
+import { RowMenu, useTextPrompt } from '../ui/Menu';
 import s from './AppShell.module.css';
 
-/**
- * AppShell — persistent 4-pane frame, now backed by real data:
- * rail = workspaces (listWorkspaces), sidebar = tree (workspaceTree),
- * center = routed Outlet (topic/thread views).
- */
+/** Persistent 4-pane frame: rail / sidebar(tree) / center(Outlet) / context. */
 export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className={s.app}>
@@ -29,7 +37,6 @@ function Rail() {
   const { data } = useWorkspaces();
   const selected = useSelectedWorkspace();
 
-  // Auto-select: stored id if still a member, else first workspace.
   useEffect(() => {
     if (!data) return;
     const ok = data.workspaces.some((w) => w.id === selected);
@@ -74,7 +81,6 @@ function RailItem({ id, name, active }: { id: string; name: string; active: bool
   );
 }
 
-/** Inline "+ name" creator row used for project/channel/topic creation. */
 function InlineCreate({ placeholder, onSubmit, busy }: { placeholder: string; onSubmit: (name: string) => void; busy: boolean }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
@@ -121,18 +127,44 @@ function InlineCreate({ placeholder, onSubmit, busy }: { placeholder: string; on
 
 function Sidebar() {
   const { user } = useAuth();
+  const toast = useToast();
   const selected = useSelectedWorkspace();
   const { data: wsData } = useWorkspaces();
   const { data: tree, isLoading } = useWorkspaceTree(selected ?? undefined);
   const createProject = useCreateProject(selected ?? undefined);
   const createChannel = useCreateChannel(selected ?? undefined);
   const createTopic = useCreateTopic(selected ?? undefined);
+  const renameNode = useRenameNode(selected ?? undefined);
+  const deleteNode = useDeleteNode(selected ?? undefined);
+  const { prompt, dialog } = useTextPrompt();
 
   const ws = wsData?.workspaces.find((w) => w.id === selected);
   const wsName = ws?.name ?? user?.displayName ?? '…';
 
+  async function onRename(kind: 'projects' | 'channels' | 'topics', id: string, current: string) {
+    const name = await prompt('새 이름을 입력하세요', current);
+    if (!name || name === current) return;
+    try {
+      await renameNode.mutateAsync({ kind, id, name });
+      toast('success', '이름을 변경했어요.');
+    } catch {
+      toast('error', '이름 변경에 실패했어요.');
+    }
+  }
+
+  async function onDelete(kind: 'projects' | 'channels' | 'topics', id: string, label: string) {
+    if (!window.confirm(`"${label}"을(를) 삭제할까요? 하위 항목도 함께 숨겨집니다.`)) return;
+    try {
+      await deleteNode.mutateAsync({ kind, id });
+      toast('success', '삭제했어요.');
+    } catch {
+      toast('error', '삭제에 실패했어요.');
+    }
+  }
+
   return (
     <div className={s.sidebar}>
+      {dialog}
       <div className={s.wsHead}>
         <div className={s.wsIco}>{wsName.slice(0, 1)}</div>
         <div>
@@ -153,20 +185,42 @@ function Sidebar() {
           <div key={p.id}>
             <div className={s.projRow}>
               <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>▾</span> {p.name}
+              <RowMenu
+                actions={[
+                  { label: '이름 변경', onSelect: () => void onRename('projects', p.id, p.name) },
+                  { label: '삭제', danger: true, onSelect: () => void onDelete('projects', p.id, p.name) },
+                ]}
+              />
             </div>
             {p.channels.map((c) => (
               <div key={c.id}>
-                <div className={s.chanRow}># {c.name}</div>
+                <div className={s.chanRow}>
+                  # {c.name}
+                  <RowMenu
+                    actions={[
+                      { label: '이름 변경', onSelect: () => void onRename('channels', c.id, c.name) },
+                      { label: '삭제', danger: true, onSelect: () => void onDelete('channels', c.id, c.name) },
+                    ]}
+                  />
+                </div>
                 {c.topics.map((t) => (
-                  <Link
-                    key={t.id}
-                    to="/t/$topicId"
-                    params={{ topicId: t.id }}
-                    className={s.topic}
-                    activeProps={{ className: `${s.topic} ${s.active}` }}
-                  >
-                    <span className={s.hash}>#</span> {t.name}
-                  </Link>
+                  <div key={t.id} style={{ display: 'flex', alignItems: 'center' }}>
+                    <Link
+                      to="/t/$topicId"
+                      params={{ topicId: t.id }}
+                      className={s.topic}
+                      style={{ flex: 1 }}
+                      activeProps={{ className: `${s.topic} ${s.active}` }}
+                    >
+                      <span className={s.hash}>#</span> {t.name}
+                    </Link>
+                    <RowMenu
+                      actions={[
+                        { label: '이름 변경', onSelect: () => void onRename('topics', t.id, t.name) },
+                        { label: '삭제', danger: true, onSelect: () => void onDelete('topics', t.id, t.name) },
+                      ]}
+                    />
+                  </div>
                 ))}
                 <InlineCreate
                   placeholder="새 토픽"
@@ -192,12 +246,90 @@ function Sidebar() {
   );
 }
 
+const roleLabel: Record<string, string> = {
+  owner: '소유자',
+  admin: '관리자',
+  editor: '편집자',
+  commenter: '댓글',
+  viewer: '뷰어',
+};
+
 function ContextPanel() {
+  const selected = useSelectedWorkspace();
+  const { data: members } = useMembers(selected ?? undefined);
+  const toast = useToast();
+  const [inviteRole, setInviteRole] = useState<'editor' | 'viewer' | 'admin'>('editor');
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+
+  async function createInvite() {
+    if (!selected || inviteBusy) return;
+    setInviteBusy(true);
+    setInviteLink(null);
+    try {
+      const res = await api.createInvitation({
+        workspaceId: selected,
+        scopeType: 'workspace',
+        scopeId: selected,
+        role: inviteRole,
+      });
+      const link = `${window.location.origin}/invite/${res.token}`;
+      setInviteLink(link);
+      try {
+        await navigator.clipboard.writeText(link);
+        toast('success', '초대 링크를 복사했어요.');
+      } catch {
+        toast('info', '아래 링크를 직접 복사해주세요.');
+      }
+    } catch {
+      toast('error', '초대 링크 생성에 실패했어요.');
+    } finally {
+      setInviteBusy(false);
+    }
+  }
+
   return (
     <div className={s.context}>
-      <div style={{ padding: '14px 16px', fontSize: 13, fontWeight: 600 }}>🧭 맥락 패널</div>
-      <div style={{ padding: '0 16px', fontSize: 12.5, color: 'var(--text-muted)' }}>
-        근거·산출물·활동은 Phase 2에서 연결됩니다.
+      <div className={s.ctxSection}>
+        <div className={s.ctxTitle}>멤버</div>
+        {members?.members.map((m) => (
+          <div key={m.userId} className={s.member}>
+            <div className={s.memberAv}>{m.displayName.slice(0, 1)}</div>
+            <div className={s.memberName}>{m.displayName}</div>
+            <div className={s.memberRole}>{roleLabel[m.role] ?? m.role}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className={s.ctxSection}>
+        <div className={s.ctxTitle}>초대</div>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+          {(['editor', 'viewer', 'admin'] as const).map((r) => (
+            <button
+              key={r}
+              type="button"
+              className={`${s.rolePick} ${inviteRole === r ? s.rolePickOn : ''}`}
+              onClick={() => setInviteRole(r)}
+            >
+              {roleLabel[r]}
+            </button>
+          ))}
+        </div>
+        <button type="button" className={s.inviteBtn} disabled={inviteBusy || !selected} onClick={() => void createInvite()}>
+          {inviteBusy ? '생성 중…' : '초대 링크 만들기'}
+        </button>
+        {inviteLink ? (
+          <div
+            className={s.inviteLink}
+            title="클릭하여 복사"
+            onClick={() => {
+              void navigator.clipboard.writeText(inviteLink).then(() => toast('success', '복사했어요.'));
+            }}
+          >
+            {inviteLink}
+          </div>
+        ) : null}
+        <div className={s.ctxHint}>링크를 받은 사람은 가입/로그인 후 이 워크스페이스에 참여합니다. 7일 후 만료.</div>
       </div>
     </div>
   );

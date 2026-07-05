@@ -1,10 +1,14 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 
 export interface JwtClaims {
   sub: string;
   typ: 'access' | 'refresh';
   iat: number;
   exp: number;
+  /** Unique token id — guarantees every issued token differs even within the
+   * same second (iat is second-resolution), so refresh rotation always
+   * produces a distinct token/hash. Optional for backward compat. */
+  jti?: string;
 }
 
 function b64url(input: Buffer | string): string {
@@ -16,7 +20,8 @@ function signInput(header: object, payload: object): string {
 }
 
 export function signJwt(claims: JwtClaims, secret: string): string {
-  const input = signInput({ alg: 'HS256', typ: 'JWT' }, claims);
+  const withId: JwtClaims = { ...claims, jti: claims.jti ?? randomUUID() };
+  const input = signInput({ alg: 'HS256', typ: 'JWT' }, withId);
   const sig = createHmac('sha256', secret).update(input).digest('base64url');
   return `${input}.${sig}`;
 }

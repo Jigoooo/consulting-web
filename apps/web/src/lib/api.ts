@@ -58,8 +58,36 @@ export type AuthStore = typeof authStore;
 /**
  * Single API client. Dev: browser → Vite proxy /api → NestJS. Prod: same-origin.
  * Secrets (Hermes key, JWT secret) never reach the browser.
+ * 401 → one refresh-rotation attempt (single-flight) → retry; failure logs out.
  */
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function tryRefresh(): Promise<boolean> {
+  const current = authStore.get();
+  if (!current) return false;
+  try {
+    const session = await api.refresh(current.refreshToken);
+    authStore.setSession({
+      accessToken: session.tokens.accessToken,
+      refreshToken: session.tokens.refreshToken,
+      user: session.user,
+    });
+    return true;
+  } catch {
+    authStore.clear(); // rotation failed → session is dead; route guard sends to /login
+    return false;
+  }
+}
+
 export const api = new ConsultingApiClient({
   baseUrl: import.meta.env.VITE_API_BASE_URL ?? '/api',
   getAccessToken: () => authStore.getAccessToken(),
+  onUnauthorized: () => {
+    // Single-flight: concurrent 401s share one rotation (rotation invalidates
+    // the old token, so parallel refreshes would kill each other).
+    refreshInFlight ??= tryRefresh().finally(() => {
+      refreshInFlight = null;
+    });
+    return refreshInFlight;
+  },
 });

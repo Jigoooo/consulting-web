@@ -8,6 +8,13 @@
       "when": 1783179393906,
       "tag": "0000_boring_human_torch",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1783224715753,
+      "tag": "0003_chat_messages",
+      "breakpoints": true
     }
   ]
 }

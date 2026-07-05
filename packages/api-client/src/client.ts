@@ -29,9 +29,17 @@ import {
   ListWorkspacesResponseSchema,
   WorkspaceTreeResponseSchema,
   ListThreadsResponseSchema,
+  ThreadDetailResponseSchema,
+  ListMessagesResponseSchema,
+  ListMembersResponseSchema,
+  OkResponseSchema,
   type ListWorkspacesResponse,
   type WorkspaceTreeResponse,
   type ListThreadsResponse,
+  type ThreadDetailResponse,
+  type ListMessagesResponse,
+  type ListMembersResponse,
+  type OkResponse,
 } from '@consulting/contracts';
 import { HttpCore, type ApiClientOptions } from './http-core.js';
 import { readChatSseStream } from './sse.js';
@@ -58,6 +66,13 @@ export class ConsultingApiClient {
 
   login(body: LoginRequest): Promise<AuthSessionResponse> {
     return this.http.request('/auth/login', { method: 'POST', body, auth: false }, (d) =>
+      AuthSessionResponseSchema.parse(d),
+    );
+  }
+
+  /** Rotate a refresh token for a fresh access+refresh pair (N-3). */
+  refresh(refreshToken: string): Promise<AuthSessionResponse> {
+    return this.http.request('/auth/refresh', { method: 'POST', body: { refreshToken }, auth: false }, (d) =>
       AuthSessionResponseSchema.parse(d),
     );
   }
@@ -99,6 +114,41 @@ export class ConsultingApiClient {
     return this.http.request(`/spaces/topics/${topicId}/threads`, { method: 'GET' }, (d) =>
       ListThreadsResponseSchema.parse(d),
     );
+  }
+
+  threadDetail(threadId: string): Promise<ThreadDetailResponse> {
+    return this.http.request(`/spaces/threads/${threadId}`, { method: 'GET' }, (d) =>
+      ThreadDetailResponseSchema.parse(d),
+    );
+  }
+
+  listMessages(threadId: string): Promise<ListMessagesResponse> {
+    return this.http.request(`/chat/threads/${threadId}/messages`, { method: 'GET' }, (d) =>
+      ListMessagesResponseSchema.parse(d),
+    );
+  }
+
+  listMembers(workspaceId: string): Promise<ListMembersResponse> {
+    return this.http.request(`/spaces/workspaces/${workspaceId}/members`, { method: 'GET' }, (d) =>
+      ListMembersResponseSchema.parse(d),
+    );
+  }
+
+  // --- spaces (mutate, N-4) ---
+  renameNode(kind: 'projects' | 'channels' | 'topics', id: string, name: string): Promise<OkResponse> {
+    return this.http.request(`/spaces/${kind}/${id}`, { method: 'PATCH', body: { name } }, (d) =>
+      OkResponseSchema.parse(d),
+    );
+  }
+
+  renameThread(id: string, title: string): Promise<OkResponse> {
+    return this.http.request(`/spaces/threads/${id}`, { method: 'PATCH', body: { title } }, (d) =>
+      OkResponseSchema.parse(d),
+    );
+  }
+
+  deleteNode(kind: 'projects' | 'channels' | 'topics' | 'threads', id: string): Promise<OkResponse> {
+    return this.http.request(`/spaces/${kind}/${id}`, { method: 'DELETE' }, (d) => OkResponseSchema.parse(d));
   }
 
   // --- spaces ---

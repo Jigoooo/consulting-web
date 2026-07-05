@@ -1,18 +1,21 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { z } from 'zod';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../lib/api';
 import { ChatThread } from '../components/chat/ChatThread';
 
-const searchSchema = z.object({
-  title: z.string().default('스레드'),
-});
-
+/**
+ * Thread page (N-6): title comes from GET /spaces/threads/:id — no more
+ * search-param title that vanished on refresh.
+ */
 export const Route = createFileRoute('/_app/th/$threadId')({
-  validateSearch: searchSchema,
   component: ThreadPage,
 });
 
 function ThreadPage() {
   const { threadId } = Route.useParams();
-  const { title } = Route.useSearch();
-  return <ChatThread threadId={threadId} title={title} />;
+  const detail = useQuery({
+    queryKey: ['thread', threadId],
+    queryFn: () => api.threadDetail(threadId),
+  });
+  return <ChatThread threadId={threadId} title={detail.data?.title ?? '…'} />;
 }
