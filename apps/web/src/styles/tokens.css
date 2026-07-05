@@ -51,7 +51,7 @@
 
   /* type */
   --font-sans: 'Wanted Sans Variable', 'Wanted Sans', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Segoe UI', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 
   /* spacing (8px grid) */
   --sp-1: 4px;
