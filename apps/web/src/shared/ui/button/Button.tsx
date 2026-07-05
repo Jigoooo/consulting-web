@@ -35,16 +35,45 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> &
     asChild?: boolean;
     leadingIcon?: IconName;
     trailingIcon?: IconName;
+    /** Shows a spinner and blocks interaction. Native buttons auto-disable. */
+    loading?: boolean;
     children?: ReactNode;
   };
 
-export function Button({ className, variant, size, asChild, leadingIcon, trailingIcon, children, ...props }: ButtonProps) {
+export function Button({
+  className,
+  variant,
+  size,
+  asChild,
+  leadingIcon,
+  trailingIcon,
+  loading = false,
+  disabled,
+  type,
+  children,
+  ...props
+}: ButtonProps) {
   const Comp = asChild ? Slot : 'button';
+  const isDisabled = Boolean(disabled) || loading;
+
+  // asChild renders arbitrary elements (e.g. <a>): never pass native `disabled`
+  // or `type` to them — express state via aria/data attributes so CSS still
+  // applies and pointer-events can be blocked.
+  const stateProps = asChild
+    ? { 'aria-disabled': isDisabled || undefined, 'data-disabled': isDisabled || undefined }
+    : { disabled: isDisabled, type: type ?? 'button' };
+
   return (
-    <Comp className={cn(buttonVariants({ variant, size }), className)} {...props}>
-      {leadingIcon ? <Icon name={leadingIcon} size="sm" decorative /> : null}
+    <Comp
+      className={cn(buttonVariants({ variant, size }), loading && 'cwButton--loading', className)}
+      data-loading={loading || undefined}
+      aria-busy={loading || undefined}
+      {...stateProps}
+      {...props}
+    >
+      {loading ? <Icon name="loader" size="sm" className="cwSpin" decorative /> : leadingIcon ? <Icon name={leadingIcon} size="sm" decorative /> : null}
       {children}
-      {trailingIcon ? <Icon name={trailingIcon} size="sm" decorative /> : null}
+      {!loading && trailingIcon ? <Icon name={trailingIcon} size="sm" decorative /> : null}
     </Comp>
   );
 }

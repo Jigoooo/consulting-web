@@ -87,10 +87,9 @@ export function Field(props: {
   );
 }
 
-export function SubmitButton({ loading, children }: { loading: boolean; children: ReactNode }) {
+export function SubmitButton({ loading, disabled, children }: { loading: boolean; disabled?: boolean; children: ReactNode }) {
   return (
-    <Button className={s.btn} variant="primary" type="submit" disabled={loading} data-stagger>
-      {loading ? <span className={s.spinner} /> : null}
+    <Button className={s.btn} variant="primary" type="submit" loading={loading} disabled={disabled} data-stagger>
       {children}
     </Button>
   );
