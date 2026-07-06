@@ -940,11 +940,12 @@
   display: grid;
   grid-template-rows: 1fr;
   opacity: 1;
-  transform: translateY(0);
+  /* G1-fix: shorter, lighter accordion — 190ms grid+transform felt laggy on
+     large trees. Keep grid-rows (the height animation) but drop the translateY
+     so the browser isn't compositing a transform on every project toggle. */
   transition:
-    grid-template-rows 190ms cubic-bezier(0.16, 1, 0.3, 1),
-    opacity 150ms cubic-bezier(0.16, 1, 0.3, 1),
-    transform 190ms cubic-bezier(0.16, 1, 0.3, 1);
+    grid-template-rows 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 110ms ease-out;
 }
 .channelListInner {
   min-height: 0;
@@ -953,7 +954,6 @@
 .channelListCollapsed {
   grid-template-rows: 0fr;
   opacity: 0;
-  transform: translateY(-4px);
   pointer-events: none;
 }
 .channelListOpen {

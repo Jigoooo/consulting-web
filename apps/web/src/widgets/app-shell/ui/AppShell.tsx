@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useTransition, type CSSProperties, type ReactNode } from 'react';
 import { Link, useLocation, useRouter } from '@tanstack/react-router';
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useAuth } from '../../../lib/useAuth';
 import {
   useWorkspaces,
@@ -12,6 +12,7 @@ import {
   useRenameNode,
   useDeleteNode,
   useMembers,
+  spaceKeys,
 } from '../../../lib/spaces';
 import { useSelectedWorkspace, wsStore } from '../../../lib/wsStore';
 import { tailScrollRequestStore, useActiveThread } from '../../../lib/threadCtx';
@@ -274,6 +275,7 @@ function InlineCreate({
 function Sidebar({ className = '', onNavigate }: { className?: string | undefined; onNavigate?: (() => void) | undefined }) {
   const router = useRouter();
   const location = useLocation();
+  const qc = useQueryClient();
   const { user } = useAuth();
   const toast = useToast();
   const selected = useSelectedWorkspace();
@@ -358,11 +360,36 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
       // feedback is never blocked by rendering the new thread.
       setPendingTopicId(topicId);
       onNavigate?.();
+      // G1-fix: resolve the channel's default thread ourselves and navigate
+      // straight to /th/:threadId, skipping the /t/:topicId bridge that fetched
+      // threads then redirected (a 2-hop sequence that made fast clicks feel
+      // swallowed). ensureQueryData reuses the react-query cache, so a revisited
+      // channel is instant (0 network); a first visit does one fetch. latest-wins
+      // is keyed on the topic the user last clicked.
       startNav(() => {
-        void router.navigate({ to: '/t/$topicId', params: { topicId } }).then(() => {
-          const latest = lastClickedTopicRef.current;
-          if (latest && latest !== topicId) void router.navigate({ to: '/t/$topicId', params: { topicId: latest } });
-        });
+        void (async () => {
+          try {
+            const threads = await qc.ensureQueryData({
+              queryKey: spaceKeys.threads(topicId),
+              queryFn: () => api.listThreads(topicId),
+            });
+            // A newer click won the race — abandon this navigation.
+            if (lastClickedTopicRef.current !== topicId) return;
+            const firstThreadId = threads.threads[0]?.id;
+            if (firstThreadId) {
+              void router.navigate({ to: '/th/$threadId', params: { threadId: firstThreadId } });
+            } else {
+              // No thread yet (empty channel) — fall back to the bridge route,
+              // which creates the default thread then forwards.
+              void router.navigate({ to: '/t/$topicId', params: { topicId } });
+            }
+          } catch {
+            // Network/parse failure — fall back to the bridge route.
+            if (lastClickedTopicRef.current === topicId) {
+              void router.navigate({ to: '/t/$topicId', params: { topicId } });
+            }
+          }
+        })();
       });
     } catch {
       setPendingTopicId(null);
