@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { gsap } from 'gsap';
 import { Icon } from '../../icons/Icon';
 import { Button } from '../button/Button';
@@ -14,22 +15,37 @@ export interface MenuAction {
 
 export function RowMenu({ actions }: { actions: MenuAction[] }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
   const popRef = useRef<HTMLDivElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
+    const place = () => {
+      const rect = wrapRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setPos({
+        top: Math.min(rect.bottom + 6, window.innerHeight - 12),
+        right: Math.max(8, window.innerWidth - rect.right),
+      });
+    };
     const onDown = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (!wrapRef.current?.contains(target) && !popRef.current?.contains(target)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    place();
     return () => {
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
     };
   }, [open]);
 
@@ -52,8 +68,15 @@ export function RowMenu({ actions }: { actions: MenuAction[] }) {
       >
         <Icon name="more" size="xs" decorative />
       </button>
-      {open ? (
-        <div className={s.pop} ref={popRef} role="menu">
+      {open
+        ? createPortal(
+            <div
+              className={s.pop}
+              ref={popRef}
+              role="menu"
+              style={pos ? { top: pos.top, right: pos.right } : undefined}
+              onClick={(e) => e.stopPropagation()}
+            >
           {actions.map((a) => (
             <button
               key={a.label}
@@ -68,8 +91,10 @@ export function RowMenu({ actions }: { actions: MenuAction[] }) {
               {a.label}
             </button>
           ))}
-        </div>
-      ) : null}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

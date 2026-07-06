@@ -755,7 +755,7 @@
 
 .composer {
   padding: 12px 22px 20px;
-  background: var(--bg-canvas);
+  background: color-mix(in srgb, var(--bg-canvas) 92%, var(--surface-card));
   border-top: 1px solid var(--border-hair);
 }
 /* 2-D G-3: attachment strip + attach button */
@@ -860,13 +860,13 @@
 .box {
   border: 1px solid var(--border-whisper);
   border-radius: var(--radius-card);
-  background: var(--bg-canvas);
-  box-shadow: none;
+  background: var(--surface-card);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.52) inset, 0 18px 42px -34px rgba(15, 23, 42, 0.48);
   transition: box-shadow var(--dur-base), border-color var(--dur-base);
 }
 .box:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: 0 0 0 3px var(--accent-soft), 0 18px 42px -34px rgba(15, 23, 42, 0.48);
 }
 /* B1: inner regions are transparent — .box owns the single surface. */
 .boxTop {
@@ -876,13 +876,17 @@
 }
 .textarea {
   width: 100%;
+  min-height: 1.55em;
+  max-height: calc(1.55em * 10);
   border: none;
   outline: none;
   resize: none;
   font: inherit;
   font-size: 15px;
+  line-height: 1.55;
   color: var(--text-primary);
   background: transparent;
+  overflow-y: hidden;
 }
 .bar {
   display: flex;

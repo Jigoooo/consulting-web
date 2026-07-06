@@ -11,9 +11,16 @@ export function Input({ className, invalid, ref, ...props }: InputHTMLAttributes
   return <input ref={ref} className={cn('cwInput', invalid && 'cwInput--invalid', className)} aria-invalid={invalid || undefined} {...props} />;
 }
 
-export function Textarea({ className, invalid, unstyled, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement> & InvalidProp & BareProp) {
+export function Textarea({
+  className,
+  invalid,
+  unstyled,
+  ref,
+  ...props
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & InvalidProp & BareProp & { ref?: Ref<HTMLTextAreaElement> }) {
   return (
     <textarea
+      ref={ref}
       className={cn(unstyled ? 'cwInputBare' : 'cwInput cwTextarea', !unstyled && invalid && 'cwInput--invalid', className)}
       aria-invalid={invalid || undefined}
       {...props}

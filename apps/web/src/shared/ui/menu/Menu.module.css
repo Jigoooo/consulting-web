@@ -26,10 +26,8 @@
   color: var(--text-primary);
 }
 .pop {
-  position: absolute;
-  top: 24px;
-  right: 0;
-  z-index: 60;
+  position: fixed;
+  z-index: 1000;
   min-width: 140px;
   background: var(--surface-card);
   border: 1px solid var(--border-whisper);

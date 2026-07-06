@@ -105,6 +105,24 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
   const rafId = useRef(0);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // G9: paste/newline auto-grow. Height changes are batched in rAF so typing
+  // does one layout read/write pair, capped at 10 readable rows.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const id = window.requestAnimationFrame(() => {
+      const style = window.getComputedStyle(el);
+      const lineHeight = Number.parseFloat(style.lineHeight) || 24;
+      const maxHeight = lineHeight * 10;
+      el.style.height = 'auto';
+      const nextHeight = Math.min(el.scrollHeight, maxHeight);
+      el.style.height = `${nextHeight}px`;
+      el.style.overflowY = el.scrollHeight > maxHeight + 1 ? 'auto' : 'hidden';
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [input]);
 
   // Register this thread as the active context (evidence panel target).
   useEffect(() => {
@@ -609,6 +627,7 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
         <div className={s.box}>
           <div className={s.boxTop}>
             <Textarea
+              ref={textareaRef}
               unstyled
               className={s.textarea}
               rows={1}
