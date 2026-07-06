@@ -40,6 +40,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  font: inherit;
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
@@ -54,7 +55,7 @@
   transform: translateY(-1px);
 }
 .wsWrap.active .ws {
-  background: linear-gradient(135deg, var(--accent), var(--accent-hi));
+  background: var(--accent);
   border-color: transparent;
   border-radius: 15px;
   box-shadow: 0 0 0 3px var(--accent-glow), 0 4px 14px -4px var(--accent-glow);
@@ -87,8 +88,57 @@
   color: #fff;
   background: rgba(255, 255, 255, 0.12);
 }
+/* rail 하단 액션 — 아이콘+마이크로 라벨로 목적을 즉시 인지 (tooltip 의존 제거) */
+.railAction {
+  width: 48px;
+  padding: 6px 0 5px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  font: inherit;
+  color: rgba(255, 255, 255, 0.55);
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.railAction:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+.railAction:focus-visible {
+  outline: 2px solid var(--accent-hi);
+  outline-offset: 2px;
+}
+.railActionLabel {
+  font-size: 9px;
+  font-weight: var(--fw-ui);
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
 
 /* SIDEBAR */
+.center {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-canvas);
+}
+.inlineCreate {
+  margin: 6px 8px;
+}
+.inlineCreateInput {
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 9px;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
 .sidebar {
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border-whisper);
@@ -107,11 +157,11 @@
   width: 30px;
   height: 30px;
   border-radius: 9px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-hi));
+  background: var(--accent);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
+  color: var(--primary-foreground);
   font-weight: 600;
   font-size: 14px;
 }
@@ -129,7 +179,7 @@
 .search {
   margin: 12px 12px 6px;
   padding: 8px 11px;
-  background: #fff;
+  background: var(--surface-card);
   border: 1px solid var(--border-whisper);
   border-radius: var(--radius-btn);
   font-size: 13px;
@@ -352,7 +402,7 @@
   padding: 6px 0;
   border: 1px solid var(--border-whisper);
   border-radius: 7px;
-  background: #fff;
+  background: var(--surface-card);
   color: var(--text-secondary);
   cursor: pointer;
 }
@@ -369,8 +419,8 @@
   padding: 9px 0;
   border: none;
   border-radius: 8px;
-  background: linear-gradient(135deg, var(--accent), #6b74e0);
-  color: #fff;
+  background: var(--accent);
+  color: var(--primary-foreground);
   cursor: pointer;
   box-shadow: 0 3px 10px -3px var(--accent-glow);
 }
@@ -384,10 +434,12 @@
   font-size: 10.5px;
   color: var(--accent);
   background: var(--accent-soft);
-  border: 1px solid rgba(94, 106, 210, 0.25);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
   border-radius: 8px;
   padding: 8px 10px;
-  word-break: break-all;
+  /* URL 전용: 임의 위치 줄바꿈 허용 (한글 keep-all 예외) */
+  word-break: normal;
+  overflow-wrap: anywhere;
   cursor: pointer;
 }
 .ctxHint {
@@ -428,7 +480,7 @@
 }
 .rbtnOn {
   color: #fff;
-  background: linear-gradient(135deg, var(--accent), var(--accent-hi));
+  background: var(--accent);
 }
 @media (max-width: 900px) {
   .app {

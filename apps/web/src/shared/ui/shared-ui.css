@@ -5,7 +5,7 @@
   cursor: pointer;
   display: inline-flex;
   font: inherit;
-  font-weight: 650;
+  font-weight: var(--fw-strong);
   gap: 6px;
   justify-content: center;
   letter-spacing: -0.01em;
@@ -39,40 +39,22 @@
   opacity: 1;
   border-color: var(--border-whisper);
 }
-.cwButton--primary:disabled::before,
-.cwButton--primary[data-disabled='true']::before {
-  content: none;
-}
 .cwButton[aria-busy='true'] { cursor: progress; }
 /* Loading keeps the brand fill (it's an active in-flight action, not disabled). */
 .cwButton--primary[aria-busy='true'] {
-  background: linear-gradient(135deg, var(--accent), var(--accent-hi));
+  background: var(--accent);
   color: var(--primary-foreground);
   opacity: 0.9;
 }
 
 .cwButton--primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-hi));
+  background: var(--accent);
   color: var(--primary-foreground);
-  box-shadow: 0 10px 22px -14px var(--accent-glow);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent), 0 8px 18px -12px var(--accent-glow);
 }
 .cwButton--primary:hover:not(:disabled):not([data-disabled='true']) {
-  box-shadow: 0 14px 30px -12px var(--accent-glow);
-  filter: saturate(1.05) brightness(1.03);
-}
-/* magicui/react-bits-style shine sweep on primary buttons */
-.cwButton--primary::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background: linear-gradient(115deg, transparent 20%, rgba(255, 255, 255, 0.28) 50%, transparent 80%);
-  transform: translateX(-120%);
-  transition: transform 0.6s var(--ease-standard);
-  pointer-events: none;
-}
-.cwButton--primary:hover:not(:disabled):not([data-disabled='true'])::before {
-  transform: translateX(120%);
+  background: var(--accent-hi);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-hi) 55%, transparent), 0 10px 22px -12px var(--accent-glow);
 }
 .cwButton--secondary { background: var(--surface-hover); border-color: var(--border-whisper); color: var(--text-primary); }
 .cwButton--secondary:hover:not(:disabled):not([data-disabled='true']) { background: color-mix(in srgb, var(--surface-hover) 60%, var(--border-whisper)); }
@@ -150,8 +132,6 @@
   .cwButton, .cwInput { transition: none; }
   .cwButton:hover:not(:disabled):not([data-disabled='true']) { transform: none; }
   .cwButton:active:not(:disabled):not([data-disabled='true']) { transform: none; }
-  .cwButton--primary::before { transition: none; }
-  .cwButton--primary:hover:not(:disabled):not([data-disabled='true'])::before { transform: translateX(-120%); }
   .cwInput--invalid, .cwInput[aria-invalid='true'] { animation: none; }
   .cwSpin { animation: none; }
 }

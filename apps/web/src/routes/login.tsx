@@ -35,21 +35,33 @@ function LoginPage() {
   const search = Route.useSearch();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [touched, setTouched] = useState<{ email?: boolean; password?: boolean }>({});
+  // 검증 노출 정책 (NN/g #7 "입력 완료 전 검증 금지"):
+  //  - 필수값 비어있음 → submit 이후에만 표시 (빈 필드 blur만으로 경고하지 않는다)
+  //  - 형식 오류 → 값을 입력한 상태에서 blur 했거나 submit 이후 표시
+  const [blurred, setBlurred] = useState<{ email?: boolean; password?: boolean }>({});
+  const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const emailError = touched.email ? validateEmail(email) : undefined;
-  const passwordError = touched.password ? validatePassword(password) : undefined;
+  const showEmail = submitted || (blurred.email && email.length > 0);
+  const showPassword = submitted || (blurred.password && password.length > 0);
+  const emailError = showEmail ? validateEmail(email) : undefined;
+  const passwordError = showPassword ? validatePassword(password) : undefined;
   const canSubmit = !validateEmail(email) && !validatePassword(password) && !loading;
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setTouched({ email: true, password: true });
+    setSubmitted(true);
     const eErr = validateEmail(email);
     const pErr = validatePassword(password);
     if (eErr || pErr) {
       setError(null);
+      // 첫 번째 오류 필드로 focus 이동 (working-memory 부담 최소화).
+      // aria-invalid는 리렌더 후 반영되므로 rAF로 한 프레임 지연.
+      requestAnimationFrame(() => {
+        const firstInvalid = document.querySelector<HTMLInputElement>('form input[aria-invalid="true"]');
+        firstInvalid?.focus();
+      });
       return;
     }
     if (loading) return; // guard against double-submit (Enter spam)
@@ -81,7 +93,7 @@ function LoginPage() {
           type="email"
           value={email}
           onChange={setEmail}
-          onBlur={() => setTouched((t) => ({ ...t, email: true }))}
+          onBlur={() => setBlurred((t) => ({ ...t, email: true }))}
           placeholder="you@example.com"
           autoComplete="email"
           invalid={Boolean(emailError)}
@@ -94,7 +106,7 @@ function LoginPage() {
           type="password"
           value={password}
           onChange={setPassword}
-          onBlur={() => setTouched((t) => ({ ...t, password: true }))}
+          onBlur={() => setBlurred((t) => ({ ...t, password: true }))}
           placeholder="••••••••"
           autoComplete="current-password"
           invalid={Boolean(passwordError)}

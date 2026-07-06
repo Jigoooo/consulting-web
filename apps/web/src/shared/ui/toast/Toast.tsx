@@ -1,24 +1,10 @@
-import * as ToastPrimitive from '@radix-ui/react-toast';
-import { createContext, useCallback, useContext, useState, type ReactNode } from 'react';
+import { Toaster, toast as sonnerToast } from 'sonner';
+import { createContext, useCallback, useContext, type ReactNode } from 'react';
 import { Icon } from '../../icons/Icon';
 import type { IconName } from '../../icons/registry';
 import s from './Toast.module.css';
 
 export type ToastKind = 'success' | 'error' | 'info' | 'warning';
-
-interface ToastItem {
-  id: number;
-  kind: ToastKind;
-  message: string;
-}
-
-const ToastCtx = createContext<(kind: ToastKind, message: string) => void>(() => {});
-
-export function useToast() {
-  return useContext(ToastCtx);
-}
-
-let seq = 1;
 
 const kindIcon: Record<ToastKind, IconName> = {
   success: 'check',
@@ -27,41 +13,46 @@ const kindIcon: Record<ToastKind, IconName> = {
   warning: 'warning',
 };
 
+const kindClass: Record<ToastKind, string> = {
+  success: s.success ?? '',
+  error: s.error ?? '',
+  info: s.info ?? '',
+  warning: s.warning ?? '',
+};
+
+/** Sonner headless custom toast — 디자인 시스템 토큰만 사용 (style prop 미사용).
+ *  https://sonner.emilkowal.ski/styling : "Headless … recommended approach". */
+function ConsultingToast({ id, kind, message }: { id: string | number; kind: ToastKind; message: string }) {
+  return (
+    <div className={`${s.toast} ${kindClass[kind]}`} role="status">
+      <span className={s.icon} aria-hidden>
+        <Icon name={kindIcon[kind]} size="sm" decorative />
+      </span>
+      <span className={s.msg}>{message}</span>
+      <button type="button" className={s.close} aria-label="닫기" onClick={() => sonnerToast.dismiss(id)}>
+        <Icon name="x" size="xs" decorative />
+      </button>
+    </div>
+  );
+}
+
+const ToastCtx = createContext<(kind: ToastKind, message: string) => void>(() => {});
+
+export function useToast() {
+  return useContext(ToastCtx);
+}
+
 export function ToastProvider({ children }: { children: ReactNode }) {
-  const [items, setItems] = useState<ToastItem[]>([]);
-
-  const dismiss = useCallback((id: number) => {
-    setItems((prev) => prev.filter((item) => item.id !== id));
-  }, []);
-
   const push = useCallback((kind: ToastKind, message: string) => {
-    const id = seq++;
-    setItems((prev) => [...prev.slice(-3), { id, kind, message }]);
+    sonnerToast.custom((id) => <ConsultingToast id={id} kind={kind} message={message} />, {
+      duration: 3600,
+    });
   }, []);
 
   return (
     <ToastCtx.Provider value={push}>
-      <ToastPrimitive.Provider swipeDirection="right" duration={3600}>
-        {children}
-        {items.map((item) => (
-          <ToastPrimitive.Root
-            key={item.id}
-            className={`${s.toast} ${s[item.kind]}`}
-            onOpenChange={(open) => {
-              if (!open) dismiss(item.id);
-            }}
-          >
-            <span className={s.icon} aria-hidden>
-              <Icon name={kindIcon[item.kind]} size="sm" decorative />
-            </span>
-            <ToastPrimitive.Title className={s.msg}>{item.message}</ToastPrimitive.Title>
-            <ToastPrimitive.Close className={s.close} aria-label="닫기">
-              <Icon name="x" size="xs" decorative />
-            </ToastPrimitive.Close>
-          </ToastPrimitive.Root>
-        ))}
-        <ToastPrimitive.Viewport className={s.viewport} />
-      </ToastPrimitive.Provider>
+      {children}
+      <Toaster position="top-right" visibleToasts={4} gap={8} offset={16} />
     </ToastCtx.Provider>
   );
 }

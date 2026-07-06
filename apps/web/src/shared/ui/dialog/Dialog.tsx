@@ -58,6 +58,51 @@ export function TooltipProvider({ children }: { children: ReactNode }) {
   return <TooltipPrimitive.Provider delayDuration={250}>{children}</TooltipPrimitive.Provider>;
 }
 
+/** 확인 다이얼로그 — window.confirm 대체. 파괴적/이탈성 액션 공용. */
+export function ConfirmDialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  confirmLabel = '확인',
+  cancelLabel = '취소',
+  destructive = false,
+  busy = false,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  description?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  destructive?: boolean;
+  busy?: boolean;
+  onConfirm: () => void;
+}) {
+  return (
+    <DialogRoot open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="cwConfirmDialog" title={title} {...(description ? { description } : {})}>
+        <div className="cwConfirmActions">
+          <button type="button" className="cwButton cwButton--secondary cwButton--md" onClick={() => onOpenChange(false)} disabled={busy}>
+            {cancelLabel}
+          </button>
+          <button
+            type="button"
+            className={cn('cwButton cwButton--md', destructive ? 'cwButton--destructive' : 'cwButton--primary')}
+            onClick={onConfirm}
+            disabled={busy}
+            aria-busy={busy || undefined}
+          >
+            {busy ? <Icon name="loader" size="sm" className="cwSpin" decorative /> : null}
+            {confirmLabel}
+          </button>
+        </div>
+      </DialogContent>
+    </DialogRoot>
+  );
+}
+
 export const Tooltip = TooltipPrimitive;
 export const Select = SelectPrimitive;
 export const Dialog = DialogPrimitive;

@@ -55,7 +55,9 @@
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  word-break: break-all;
+  /* 한글 어절 보존 + 긴 URL만 임의 위치 줄바꿈 허용 */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 .link {
   display: inline-block;

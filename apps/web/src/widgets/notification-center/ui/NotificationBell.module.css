@@ -8,7 +8,8 @@
   height: 30px;
   border: 1px solid var(--border-whisper);
   border-radius: 9px;
-  background: var(--bg-canvas);
+  background: var(--surface-card);
+  color: var(--text-secondary);
   font-size: 14px;
   cursor: pointer;
   display: flex;
@@ -18,6 +19,7 @@
 }
 .bell:hover {
   border-color: var(--accent);
+  color: var(--text-primary);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .badge {
@@ -31,49 +33,47 @@
   background: var(--red);
   color: #fff;
   font-size: 10px;
-  font-weight: 700;
+  font-weight: var(--fw-strong);
   display: flex;
   align-items: center;
   justify-content: center;
   box-shadow: 0 0 0 2px var(--bg-sidebar);
 }
-.pop {
-  position: absolute;
-  top: 38px;
-  right: 0;
-  width: 320px;
-  max-height: 420px;
-  background: var(--bg-canvas);
-  border: 1px solid var(--border-whisper);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-pop);
+
+/* 2026-07-06 — 알림은 중앙 modal (Radix Dialog). 사이드바 popover 가림 문제 해결. */
+.modal {
+  width: min(480px, calc(100vw - 32px));
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  z-index: 60;
+  padding-bottom: 12px;
 }
-.popHead {
+.modalTools {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px 10px;
-  font-size: 12.5px;
-  font-weight: 600;
-  border-bottom: 1px solid var(--border-hair);
+  justify-content: flex-end;
+  margin: -6px 0 6px;
 }
 .readAll {
   font: inherit;
-  font-size: 11.5px;
+  font-size: 12px;
+  font-weight: var(--fw-ui);
   color: var(--accent);
   background: none;
   border: none;
   cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+.readAll:hover {
+  background: var(--accent-soft);
 }
 .list {
   overflow-y: auto;
+  max-height: min(480px, calc(100vh - 260px));
+  border: 1px solid var(--border-hair);
+  border-radius: var(--radius-md);
 }
 .empty {
-  padding: 28px 0;
+  padding: 32px 0;
   text-align: center;
   font-size: 12.5px;
   color: var(--text-muted);
@@ -91,6 +91,9 @@
   cursor: pointer;
   border-bottom: 1px solid var(--border-hair);
 }
+.item:last-child {
+  border-bottom: none;
+}
 .item:hover {
   background: var(--bg-warm);
 }
@@ -101,6 +104,7 @@
   font-size: 15px;
   flex-shrink: 0;
   margin-top: 1px;
+  color: var(--text-secondary);
 }
 .body {
   display: flex;
@@ -110,7 +114,7 @@
 }
 .title {
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: var(--fw-strong);
   color: var(--text-primary);
 }
 .preview {
@@ -135,37 +139,39 @@
   flex-shrink: 0;
 }
 
-/* Web Push toggle row (2026-07-06) */
+/* Web Push toggle row — modal footer */
 .pushRow {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 12px 2px 0;
+  margin-top: 10px;
   border-top: 1px solid var(--border-subtle);
 }
 .pushLabel {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--text-secondary);
 }
 .pushToggle {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 3px 10px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: var(--fw-strong);
+  padding: 3px 12px;
   border-radius: 999px;
   border: 1px solid var(--border-subtle);
   background: var(--bg-surface);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .pushToggle[aria-checked='true'] {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--primary-foreground);
 }
 .pushToggle:disabled {
   opacity: 0.6;

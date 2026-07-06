@@ -1,36 +1,42 @@
-/* Design tokens — Phase 1-J C안 (Slack 골격 + Linear 밀도 + Notion 표면).
+/* Design tokens v2 — "절제된 프리미엄 컨설팅" (2026-07-06 redesign).
+   근거: Vercel(achromatic discipline + shadow-as-border), Linear(precise dark rail,
+   기능색 최소화), Superhuman(warm ivory + charcoal + 단 하나의 muted purple gesture),
+   WCAG 2.2 SC 1.4.3 (본문 4.5:1).
    Single source of truth for color / type / spacing / motion.
-   Dark mode is Phase 2 (values will layer under [data-theme='dark']). */
+   원칙: 색은 기능(CTA/focus/상태)에만. 장식용 그라디언트/원색 금지. */
 :root {
-  /* surfaces */
-  --bg-canvas: #ffffff;
-  --bg-sidebar: #fbfbfa;
-  --bg-rail: #0f1011;
-  --bg-rail-2: #191a1b;
-  --bg-warm: #f7f6f4;
+  /* surfaces — warm ivory canvas, 종이 위에서 일하는 느낌 */
+  --bg-canvas: #f7f5f1;
+  --bg-sidebar: #f0eee8;
+  --bg-rail: #111214;
+  --bg-rail-2: #181a1d;
+  --bg-warm: #efece5;
   --surface-app: var(--bg-canvas);
   --surface-sidebar: var(--bg-sidebar);
   --surface-panel: var(--bg-warm);
-  --surface-card: #ffffff;
-  --surface-hover: rgba(15, 16, 17, 0.045);
+  --surface-card: #fffdf8;
+  --surface-hover: rgba(31, 33, 36, 0.055);
+  /* aliases some modules reference */
+  --bg-surface: var(--surface-card);
 
-  /* text */
-  --text-primary: #1a1a19;
-  --text-secondary: #6b6862;
-  --text-muted: #a8a49d;
+  /* text — pure black 금지, warm charcoal ink */
+  --text-primary: #1f211f;
+  --text-secondary: #62605a;
+  --text-muted: #918c82;
 
   /* borders */
-  --border-whisper: rgba(15, 16, 17, 0.08);
-  --border-hair: rgba(15, 16, 17, 0.05);
+  --border-whisper: rgba(31, 33, 36, 0.1);
+  --border-hair: rgba(31, 33, 36, 0.06);
+  --border-subtle: var(--border-whisper);
   --ring: var(--accent);
 
-  /* accent (Linear indigo) */
-  --accent: #5e6ad2;
-  --accent-hi: #7170ff;
-  --accent-soft: rgba(94, 106, 210, 0.1);
-  --accent-glow: rgba(94, 106, 210, 0.28);
+  /* accent — 채도 낮춘 blue-violet 단 1색. CTA/focus/active 전용 */
+  --accent: #565f9f;
+  --accent-hi: #6a72b8;
+  --accent-soft: rgba(86, 95, 159, 0.11);
+  --accent-glow: rgba(86, 95, 159, 0.2);
   --primary: var(--accent);
-  --primary-foreground: #ffffff;
+  --primary-foreground: #f9f7f2;
   --muted: var(--bg-warm);
   --muted-foreground: var(--text-secondary);
   --background: var(--bg-canvas);
@@ -38,20 +44,36 @@
   --border: var(--border-whisper);
   --input: var(--border-whisper);
 
-  /* semantic */
-  --link: #0075de;
-  --green: #1aae39;
-  --amber: #dd8a00;
-  --red: #d4380d;
+  /* CTA ink — 프리미엄 charcoal 버튼 (auth 등 최상위 CTA) */
+  --ink: #1f211f;
+  --ink-hover: #33352f;
+  --ink-foreground: #f6f4ee;
 
-  /* radii */
-  --radius-btn: 7px;
-  --radius-card: 14px;
+  /* semantic — 저채도 기능색 */
+  --link: #3451a3;
+  --green: #287a46;
+  --amber: #a96613;
+  --red: #b43d2f;
+
+  /* radii — 8/12/16 3단 + pill */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-btn: var(--radius-sm);
+  --radius-card: var(--radius-md);
   --radius-pill: 9999px;
 
   /* type */
   --font-sans: 'Wanted Sans Variable', 'Wanted Sans', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Segoe UI', system-ui, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  /* weight scale — 400/510/590/650. 700+는 사용하지 않는다 (절제). */
+  --fw-regular: 400;
+  --fw-ui: 510;
+  --fw-strong: 590;
+  --fw-display: 650;
+  --leading-tight: 1.18;
+  --leading-body: 1.55;
+  --tracking-heading-ko: -0.018em;
 
   /* spacing (8px grid) */
   --sp-1: 4px;
@@ -66,11 +88,12 @@
   --w-sidebar: 268px;
   --w-context: 340px;
 
-  /* elevation */
-  --shadow-card: rgba(15, 16, 17, 0.04) 0 1px 2px, rgba(15, 16, 17, 0.04) 0 6px 20px -8px;
-  --shadow-pop: rgba(15, 16, 17, 0.1) 0 8px 30px -6px, rgba(15, 16, 17, 0.06) 0 2px 6px;
+  /* elevation — Vercel식 shadow-as-border 스택 */
+  --shadow-ring: 0 0 0 1px var(--border-whisper);
+  --shadow-card: 0 0 0 1px rgba(31, 33, 36, 0.08), 0 2px 2px rgba(31, 33, 36, 0.035), 0 12px 28px -22px rgba(31, 33, 36, 0.35);
+  --shadow-pop: 0 0 0 1px rgba(31, 33, 36, 0.1), 0 18px 55px -24px rgba(31, 33, 36, 0.45);
 
-  /* motion — reactbits/magicui/21st.dev inspired easing curves, driven via GSAP/CSS */
+  /* motion */
   --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-emphasized: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-out: var(--ease-standard);
@@ -79,37 +102,45 @@
   --dur-base: 0.24s;
 }
 
-/* Phase 2-D G-1 — dark layer. Toggled via [data-theme] on <html>; an inline
-   pre-hydration script applies the stored choice to prevent FOUC. */
+/* Dark layer. Toggled via [data-theme] on <html>; an inline pre-hydration
+   script applies the stored choice to prevent FOUC. */
 [data-theme='dark'] {
-  --bg-canvas: #17181a;
-  --bg-sidebar: #1c1d20;
+  --bg-canvas: #141516;
+  --bg-sidebar: #191a1c;
   --bg-rail: #0b0c0d;
   --bg-rail-2: #131415;
-  --bg-warm: #222327;
+  --bg-warm: #222428;
   --surface-app: var(--bg-canvas);
   --surface-sidebar: var(--bg-sidebar);
   --surface-panel: var(--bg-warm);
-  --surface-card: #1e2023;
-  --surface-hover: rgba(232, 232, 230, 0.06);
+  --surface-card: #1d1f22;
+  --surface-hover: rgba(235, 231, 222, 0.06);
+  --bg-surface: var(--surface-card);
 
-  --text-primary: #e8e8e6;
-  --text-secondary: #9d9a93;
-  --text-muted: #6d6a64;
+  --text-primary: #ebe7de;
+  --text-secondary: #b2aca2;
+  --text-muted: #7e786f;
 
-  --border-whisper: rgba(232, 232, 230, 0.1);
-  --border-hair: rgba(232, 232, 230, 0.06);
+  --border-whisper: rgba(235, 231, 222, 0.11);
+  --border-hair: rgba(235, 231, 222, 0.06);
+  --border-subtle: var(--border-whisper);
 
-  --accent: #7b86e8;
-  --accent-hi: #8f8eff;
-  --accent-soft: rgba(123, 134, 232, 0.16);
-  --accent-glow: rgba(123, 134, 232, 0.32);
+  --accent: #8a91d6;
+  --accent-hi: #a0a5e6;
+  --accent-soft: rgba(138, 145, 214, 0.15);
+  --accent-glow: rgba(138, 145, 214, 0.28);
+  --primary-foreground: #16171a;
 
-  --link: #4da3ff;
-  --green: #34c759;
-  --amber: #ffb020;
-  --red: #ff6b4a;
+  --ink: #ebe7de;
+  --ink-hover: #d8d3c8;
+  --ink-foreground: #1a1b1e;
 
-  --shadow-card: rgba(0, 0, 0, 0.3) 0 1px 2px, rgba(0, 0, 0, 0.3) 0 6px 20px -8px;
-  --shadow-pop: rgba(0, 0, 0, 0.5) 0 8px 30px -6px, rgba(0, 0, 0, 0.35) 0 2px 6px;
+  --link: #92a8e8;
+  --green: #4fae72;
+  --amber: #cf8c3a;
+  --red: #d3705f;
+
+  --shadow-ring: 0 0 0 1px var(--border-whisper);
+  --shadow-card: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 2px 2px rgba(0, 0, 0, 0.25), 0 12px 28px -20px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 18px 55px -22px rgba(0, 0, 0, 0.7);
 }

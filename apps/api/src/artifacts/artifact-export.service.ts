@@ -142,6 +142,7 @@ function normalizeMarkdown(title: string, versionNo: number, content: string): s
 function safeFileName(input: string): string {
   return input
     .trim()
+    // eslint-disable-next-line no-control-regex -- 파일명에서 제어문자(\u0000-\u001f)를 의도적으로 제거
     .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-')
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')

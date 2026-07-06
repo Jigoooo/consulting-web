@@ -20,6 +20,11 @@ body {
   background: var(--bg-canvas);
   -webkit-font-smoothing: antialiased;
   letter-spacing: -0.01em;
+  /* 한국어 자연 줄바꿈 기본값: 단어(어절) 내부 분리 금지.
+     긴 URL/코드/토큰은 .cwBreakLong 로 개별 opt-out 한다. */
+  word-break: keep-all;
+  line-break: strict;
+  overflow-wrap: break-word;
 }
 a {
   color: var(--link);
@@ -27,6 +32,19 @@ a {
 }
 button {
   font-family: inherit;
+}
+
+/* 줄바꿈 유틸리티 — 한글 keep-all 전역 정책의 예외 처리용.
+   URL·토큰·해시·초대링크처럼 공백 없는 긴 문자열에 사용. */
+.cwBreakLong {
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+code,
+pre,
+kbd {
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 
 /* U-6: visible focus for keyboard users only */

@@ -59,6 +59,14 @@
   place-items: center;
 }
 .cwDialogClose:hover { background: var(--surface-hover); color: var(--text-primary); }
+/* Confirm dialog — compact, footer 액션 우측 정렬 */
+.cwConfirmDialog { width: min(420px, calc(100vw - 32px)); }
+.cwConfirmActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
 @keyframes cwOverlayIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes cwOverlayOut { from { opacity: 1; } to { opacity: 0; } }
 @keyframes cwDialogIn { from { opacity: 0; transform: translate(-50%, calc(-50% + 10px)) scale(0.98); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }

@@ -17,6 +17,7 @@ import { useTheme, themeStore } from '../../../lib/themeStore';
 import { api } from '../../../lib/api';
 import { useToast } from '../../../shared/ui/toast/Toast';
 import { RowMenu, useTextPrompt } from '../../../shared/ui/menu/Menu';
+import { ConfirmDialog } from '../../../shared/ui/dialog/Dialog';
 import { NotificationBell } from '../../notification-center/ui/NotificationBell';
 import { Icon } from '../../../shared/icons/Icon';
 import type { IconName } from '../../../shared/icons/registry';
@@ -35,7 +36,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Rail />
       <Sidebar className={drawerOpen ? s.drawerOpen ?? '' : ''} onNavigate={() => setDrawerOpen(false)} />
       {drawerOpen ? <div className={s.scrim} onClick={() => setDrawerOpen(false)} /> : null}
-      <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg-canvas)' }}>
+      <div className={s.center}>
         <button
           type="button"
           className={s.drawerBtn}
@@ -57,6 +58,7 @@ function Rail() {
   const { data } = useWorkspaces();
   const selected = useSelectedWorkspace();
   const theme = useTheme();
+  const [logoutOpen, setLogoutOpen] = useState(false);
 
   useEffect(() => {
     if (!data) return;
@@ -67,6 +69,7 @@ function Rail() {
   const personal = data?.workspaces.filter((w) => w.isPersonal) ?? [];
   const shared = data?.workspaces.filter((w) => !w.isPersonal) ?? [];
   const themeIcon: IconName = theme === 'dark' ? 'moon' : theme === 'light' ? 'sun' : 'monitor';
+  const themeLabel = theme === 'dark' ? '다크' : theme === 'light' ? '라이트' : '시스템';
 
   return (
     <div className={s.rail}>
@@ -78,33 +81,67 @@ function Rail() {
         <RailItem key={w.id} id={w.id} name={w.name} active={w.id === selected} />
       ))}
       <div className={s.spacer} />
-      <Link to="/artifacts" className={s.rbtn} title="산출물" activeProps={{ className: `${s.rbtn} ${s.rbtnOn}` }}>
+      <Link
+        to="/artifacts"
+        className={s.railAction}
+        title="산출물 보관함"
+        aria-label="산출물 보관함"
+        activeProps={{ className: `${s.railAction} ${s.rbtnOn}` }}
+      >
         <Icon name="file-text" size="sm" decorative />
+        <span className={s.railActionLabel}>산출물</span>
       </Link>
-      <div className={s.rbtn} title={`테마: ${theme === 'dark' ? '다크' : theme === 'light' ? '라이트' : '시스템'} (클릭하여 변경)`} onClick={() => themeStore.cycle()}>
+      <button
+        type="button"
+        className={s.railAction}
+        title={`테마: ${themeLabel} (클릭하여 변경)`}
+        aria-label={`테마 변경 — 현재 ${themeLabel}`}
+        onClick={() => themeStore.cycle()}
+      >
         <Icon name={themeIcon} size="sm" decorative />
-      </div>
-      <div
-        className={s.rbtn}
+        <span className={s.railActionLabel}>테마</span>
+      </button>
+      <button
+        type="button"
+        className={s.railAction}
         title="로그아웃"
-        onClick={() => {
+        aria-label="로그아웃"
+        onClick={() => setLogoutOpen(true)}
+      >
+        <Icon name="logout" size="sm" decorative />
+        <span className={s.railActionLabel}>나가기</span>
+      </button>
+      <ConfirmDialog
+        open={logoutOpen}
+        onOpenChange={setLogoutOpen}
+        title="로그아웃할까요?"
+        description="저장된 작업은 그대로 유지됩니다. 다시 로그인하면 이어서 볼 수 있어요."
+        confirmLabel="로그아웃"
+        destructive
+        onConfirm={() => {
+          setLogoutOpen(false);
           logout();
           void router.navigate({ to: '/login', search: { redirect: '/' } });
         }}
-      >
-        <Icon name="logout" size="sm" decorative />
-      </div>
+      />
     </div>
   );
 }
 
 function RailItem({ id, name, active }: { id: string; name: string; active: boolean }) {
   return (
-    <div className={`${s.wsWrap} ${active ? s.active : ''}`} onClick={() => wsStore.set(id)}>
+    <div className={`${s.wsWrap} ${active ? s.active : ''}`}>
       <span className={s.wsBar} />
-      <div className={s.ws} title={name}>
+      <button
+        type="button"
+        className={s.ws}
+        title={name}
+        aria-label={`워크스페이스: ${name}`}
+        aria-current={active ? 'true' : undefined}
+        onClick={() => wsStore.set(id)}
+      >
         {name.slice(0, 1)}
-      </div>
+      </button>
     </div>
   );
 }
@@ -121,7 +158,7 @@ function InlineCreate({ placeholder, onSubmit, busy }: { placeholder: string; on
   }
   return (
     <form
-      style={{ margin: '6px 8px' }}
+      className={s.inlineCreate}
       onSubmit={(e) => {
         e.preventDefault();
         const trimmed = name.trim();
@@ -138,16 +175,7 @@ function InlineCreate({ placeholder, onSubmit, busy }: { placeholder: string; on
         onChange={(e) => setName(e.target.value)}
         onBlur={() => !name.trim() && setOpen(false)}
         placeholder={placeholder}
-        style={{
-          width: '100%',
-          font: 'inherit',
-          fontSize: 13,
-          padding: '6px 9px',
-          border: '1px solid var(--accent)',
-          borderRadius: 7,
-          outline: 'none',
-          boxShadow: '0 0 0 3px var(--accent-soft)',
-        }}
+        className={s.inlineCreateInput}
       />
     </form>
   );
@@ -165,6 +193,8 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
   const renameNode = useRenameNode(selected ?? undefined);
   const deleteNode = useDeleteNode(selected ?? undefined);
   const { prompt, dialog } = useTextPrompt();
+  const [pendingDelete, setPendingDelete] = useState<{ kind: 'projects' | 'channels' | 'topics'; id: string; label: string } | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const ws = wsData?.workspaces.find((w) => w.id === selected);
   const wsName = ws?.name ?? user?.displayName ?? '…';
@@ -180,19 +210,37 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
     }
   }
 
-  async function onDelete(kind: 'projects' | 'channels' | 'topics', id: string, label: string) {
-    if (!window.confirm(`"${label}"을(를) 삭제할까요? 하위 항목도 함께 숨겨집니다.`)) return;
+  function onDelete(kind: 'projects' | 'channels' | 'topics', id: string, label: string) {
+    setPendingDelete({ kind, id, label });
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete || deleteBusy) return;
+    setDeleteBusy(true);
     try {
-      await deleteNode.mutateAsync({ kind, id });
+      await deleteNode.mutateAsync({ kind: pendingDelete.kind, id: pendingDelete.id });
       toast('success', '삭제했어요.');
+      setPendingDelete(null);
     } catch {
       toast('error', '삭제에 실패했어요.');
+    } finally {
+      setDeleteBusy(false);
     }
   }
 
   return (
     <div className={`${s.sidebar} ${className}`}>
       {dialog}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => !open && !deleteBusy && setPendingDelete(null)}
+        title={`"${pendingDelete?.label ?? ''}" 삭제할까요?`}
+        description="하위 항목도 함께 숨겨집니다. 이 작업은 되돌릴 수 없어요."
+        confirmLabel="삭제"
+        destructive
+        busy={deleteBusy}
+        onConfirm={() => void confirmDelete()}
+      />
       <div className={s.wsHead}>
         <div className={s.wsIco}>{wsName.slice(0, 1)}</div>
         <div>

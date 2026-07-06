@@ -188,6 +188,7 @@ function scoreText(status: DocumentExtractionResult['status'], extractor: string
 }
 
 function normalizeText(text: string): string {
+  // eslint-disable-next-line no-control-regex -- PDF 추출물에서 NUL 문자를 의도적으로 제거
   return text.replace(/\u0000/g, '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 }
 

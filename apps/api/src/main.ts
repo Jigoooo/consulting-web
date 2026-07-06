@@ -16,7 +16,6 @@ async function bootstrap(): Promise<void> {
   app.disable('x-powered-by');
   const env = app.get<Env>(ENV_TOKEN);
   await app.listen(env.PORT);
-  // eslint-disable-next-line no-console
   console.log(`[api] listening on :${env.PORT} (${env.APP_ENV})`);
 }
 

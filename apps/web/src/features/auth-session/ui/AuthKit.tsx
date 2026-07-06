@@ -187,7 +187,7 @@ export function PasswordStrengthMeter({ password }: { password: string }) {
 export function SubmitButton({ loading, disabled, children }: { loading: boolean; disabled?: boolean; children: ReactNode }) {
   return (
     <button
-      className={`${s.btn} cwButton cwButton--primary`}
+      className={`${s.btn} ${s.cwButtonInk} cwButton cwButton--primary`}
       type="submit"
       disabled={loading || disabled}
       aria-busy={loading || undefined}

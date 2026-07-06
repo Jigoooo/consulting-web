@@ -2,7 +2,9 @@
   font-size: 15px;
   line-height: 1.65;
   color: var(--text-primary);
-  word-break: break-word;
+  /* 한글 어절 보존; 긴 URL/토큰은 anywhere 로 오버플로 방지 */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 .md > *:first-child {
   margin-top: 0;

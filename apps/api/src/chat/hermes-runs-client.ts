@@ -111,7 +111,7 @@ export class HermesRunsClient {
     }
 
     let buffer = '';
-    const reader = response.body.getReader();
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
     const decoder = new TextDecoder();
     try {
       while (true) {
@@ -143,7 +143,8 @@ export class HermesRunsClient {
     if (dataLines.length === 0) return null;
     try {
       const parsed = JSON.parse(dataLines.join('\n')) as unknown;
-      return parsed && typeof parsed === 'object' ? parsed as HermesRunSseEvent : null;
+      // 모든 필드가 optional(unknown)인 이벤트 형태 — object면 그대로 수용
+      return parsed && typeof parsed === 'object' ? parsed : null;
     } catch {
       return null;
     }

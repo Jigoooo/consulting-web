@@ -1,46 +1,22 @@
-.viewport {
-  position: fixed;
-  top: 16px;
-  right: 16px;
-  z-index: 1000;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: min(380px, calc(100vw - 32px));
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  outline: none;
-}
+/* Sonner headless custom toast — 토큰 v2 기반 완전 커스텀.
+   Sonner가 enter/exit/swipe 애니메이션과 스택을 담당, 여기서는 표면만 정의. */
 .toast {
   display: grid;
   grid-template-columns: 22px 1fr 24px;
   align-items: center;
   gap: 10px;
+  width: min(380px, calc(100vw - 32px));
   min-height: 46px;
   padding: 11px 12px;
   background: var(--surface-card);
-  border: 1px solid var(--border-whisper);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   box-shadow: var(--shadow-pop);
   font-size: 13.5px;
-  font-weight: 560;
-}
-.toast[data-state='open'] {
-  animation: toastIn var(--dur-base) var(--ease-emphasized);
-}
-.toast[data-state='closed'] {
-  animation: toastOut var(--dur-fast) var(--ease-standard);
-}
-.toast[data-swipe='move'] {
-  transform: translateX(var(--radix-toast-swipe-move-x));
-}
-.toast[data-swipe='cancel'] {
-  transform: translateX(0);
-  transition: transform var(--dur-fast) var(--ease-standard);
-}
-.toast[data-swipe='end'] {
-  animation: swipeOut var(--dur-fast) var(--ease-standard);
+  font-weight: var(--fw-ui);
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  word-break: keep-all;
+  overflow-wrap: break-word;
 }
 .icon {
   width: 22px;
@@ -72,24 +48,4 @@
 .close:hover {
   background: var(--surface-hover);
   color: var(--text-primary);
-}
-@keyframes toastIn {
-  from { opacity: 0; transform: translateX(24px) scale(0.98); }
-  to { opacity: 1; transform: translateX(0) scale(1); }
-}
-@keyframes toastOut {
-  from { opacity: 1; transform: translateX(0) scale(1); }
-  to { opacity: 0; transform: translateX(12px) scale(0.98); }
-}
-@keyframes swipeOut {
-  from { transform: translateX(var(--radix-toast-swipe-end-x)); }
-  to { transform: translateX(110%); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .toast,
-  .toast[data-state='open'],
-  .toast[data-state='closed'],
-  .toast[data-swipe='end'] {
-    animation: none;
-  }
 }

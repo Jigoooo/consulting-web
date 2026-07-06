@@ -39,24 +39,33 @@ function SignupPage() {
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [touched, setTouched] = useState<{ name?: boolean; email?: boolean; password?: boolean }>({});
+  // 검증 노출 정책: 필수값 비어있음 → submit 이후만, 형식/길이 오류 → 값 입력 후 blur 또는 submit 이후.
+  const [blurred, setBlurred] = useState<{ name?: boolean; email?: boolean; password?: boolean }>({});
+  const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const nameError = touched.name ? validateName(displayName) : undefined;
-  const emailError = touched.email ? validateEmail(email) : undefined;
-  const passwordError = touched.password ? validatePassword(password, PASSWORD_MIN) : undefined;
+  const showName = submitted || (blurred.name && displayName.length > 0);
+  const showEmail = submitted || (blurred.email && email.length > 0);
+  const showPassword = submitted || (blurred.password && password.length > 0);
+  const nameError = showName ? validateName(displayName) : undefined;
+  const emailError = showEmail ? validateEmail(email) : undefined;
+  const passwordError = showPassword ? validatePassword(password, PASSWORD_MIN) : undefined;
   const canSubmit =
     !validateName(displayName) && !validateEmail(email) && !validatePassword(password, PASSWORD_MIN) && !loading;
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setTouched({ name: true, email: true, password: true });
+    setSubmitted(true);
     const nErr = validateName(displayName);
     const eErr = validateEmail(email);
     const pErr = validatePassword(password, PASSWORD_MIN);
     if (nErr || eErr || pErr) {
       setError(null);
+      requestAnimationFrame(() => {
+        const firstInvalid = document.querySelector<HTMLInputElement>('form input[aria-invalid="true"]');
+        firstInvalid?.focus();
+      });
       return;
     }
     if (loading) return; // guard against double-submit
@@ -90,7 +99,7 @@ function SignupPage() {
           type="text"
           value={displayName}
           onChange={setDisplayName}
-          onBlur={() => setTouched((t) => ({ ...t, name: true }))}
+          onBlur={() => setBlurred((t) => ({ ...t, name: true }))}
           placeholder="홍길동"
           autoComplete="name"
           invalid={Boolean(nameError)}
@@ -103,7 +112,7 @@ function SignupPage() {
           type="email"
           value={email}
           onChange={setEmail}
-          onBlur={() => setTouched((t) => ({ ...t, email: true }))}
+          onBlur={() => setBlurred((t) => ({ ...t, email: true }))}
           placeholder="you@example.com"
           autoComplete="email"
           invalid={Boolean(emailError)}
@@ -115,7 +124,7 @@ function SignupPage() {
           type="password"
           value={password}
           onChange={setPassword}
-          onBlur={() => setTouched((t) => ({ ...t, password: true }))}
+          onBlur={() => setBlurred((t) => ({ ...t, password: true }))}
           placeholder="10자 이상"
           autoComplete="new-password"
           invalid={Boolean(passwordError)}

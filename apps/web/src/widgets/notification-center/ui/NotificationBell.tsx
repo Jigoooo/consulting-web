@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { gsap } from 'gsap';
 import { useAuth } from '../../../lib/useAuth';
 import { useNotifications, useMarkNotificationsRead } from '../../../lib/collab';
 import { usePushNotifications } from '../../../lib/push';
+import { DialogRoot, DialogContent } from '../../../shared/ui/dialog/Dialog';
 import { Icon } from '../../../shared/icons/Icon';
 import type { IconName } from '../../../shared/icons/registry';
 import s from './NotificationBell.module.css';
@@ -25,7 +25,8 @@ function timeAgo(iso: string): string {
   return `${Math.floor(h / 24)}일 전`;
 }
 
-/** Phase 2-C F-3 — bell + unread badge + dropdown feed (30s poll). */
+/** 알림 센터 — bell + unread badge + 중앙 modal (2026-07-06: 사이드바 popover가
+ *  레일/레이아웃 경계에 가려지는 문제로 Radix Dialog modal 로 전환). */
 export function NotificationBell() {
   const { user } = useAuth();
   const { data } = useNotifications(Boolean(user));
@@ -33,34 +34,8 @@ export function NotificationBell() {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const push = usePushNotifications(open);
-  const popRef = useRef<HTMLDivElement | null>(null);
-  const wrapRef = useRef<HTMLDivElement | null>(null);
 
   const unread = data?.unreadCount ?? 0;
-
-  useEffect(() => {
-    if (!open || !popRef.current) return;
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (!reduce) {
-      gsap.fromTo(
-        popRef.current,
-        { opacity: 0, y: -6, scale: 0.98 },
-        { opacity: 1, y: 0, scale: 1, duration: 0.18, ease: 'power2.out' },
-      );
-    }
-    const onDown = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    window.addEventListener('mousedown', onDown);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('mousedown', onDown);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
 
   function onItemClick(n: { id: string; refType: string; refId: string; readAt: string | null }) {
     if (!n.readAt) markRead.mutate([n.id]);
@@ -69,27 +44,26 @@ export function NotificationBell() {
   }
 
   return (
-    <div className={s.wrap} ref={wrapRef}>
+    <div className={s.wrap}>
       <button
         type="button"
         className={s.bell}
         title="알림"
         aria-label={`알림 ${unread}개 안 읽음`}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen(true)}
       >
         <Icon name="bell" size="sm" decorative />
         {unread > 0 ? <span className={s.badge}>{unread > 99 ? '99+' : unread}</span> : null}
       </button>
-      {open ? (
-        <div className={s.pop} ref={popRef} role="dialog" aria-label="알림 목록">
-          <div className={s.popHead}>
-            <span>알림</span>
-            {unread > 0 ? (
+      <DialogRoot open={open} onOpenChange={setOpen}>
+        <DialogContent className={s.modal} title="알림" description="워크스페이스의 새 소식을 확인하세요.">
+          {unread > 0 ? (
+            <div className={s.modalTools}>
               <button type="button" className={s.readAll} onClick={() => markRead.mutate(undefined)}>
                 모두 읽음
               </button>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
           <div className={s.list}>
             {(data?.notifications ?? []).length === 0 ? (
               <div className={s.empty}>알림이 없어요</div>
@@ -140,8 +114,8 @@ export function NotificationBell() {
               )}
             </div>
           ) : null}
-        </div>
-      ) : null}
+        </DialogContent>
+      </DialogRoot>
     </div>
   );
 }
