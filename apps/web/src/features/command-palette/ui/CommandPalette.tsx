@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { useRouter } from '@tanstack/react-router';
 import { gsap } from 'gsap';
 import { hangulMatch } from '@consulting/contracts';
@@ -63,8 +63,9 @@ export function CommandPalette() {
     }
   }
 
-  const needle = q.trim();
-  // F4: hangul-aware match — 초성/합성/띄어쓰기무시.
+  const needle = useDeferredValue(q.trim());
+  // F4: hangul-aware match — 초성/합성/띄어쓰기무시. Deferred so typing stays
+  // responsive even with a large topic tree (D1).
   const filtered = !needle
     ? items.slice(0, 8)
     : items.filter((it) => hangulMatch(it.label, needle) || (it.hint ? hangulMatch(it.hint, needle) : false)).slice(0, 8);

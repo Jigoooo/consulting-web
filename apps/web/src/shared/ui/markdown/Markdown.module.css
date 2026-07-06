@@ -66,6 +66,9 @@
   background: #141517;
   border-radius: 10px;
   overflow-x: auto;
+  /* D3: skip rendering off-screen code blocks (web.dev content-visibility). */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 200px;
 }
 .md pre code {
   background: transparent;

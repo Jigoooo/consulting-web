@@ -1,5 +1,9 @@
 import type { ChatMessage, ListMessagesPageResponse } from '@consulting/contracts';
 
+/** Hard ceiling on the in-memory message window (D4). Paging past this trims the
+ *  far side and re-opens that edge's cursor so scrolling back re-hydrates it. */
+export const MAX_WINDOW = 400;
+
 export type MessageWindowMode = 'latest' | 'around';
 export type MessagePageDirection = 'latest' | 'older' | 'newer' | 'around';
 
@@ -58,27 +62,74 @@ export function mergeMessagePage(
     .sort(chronological)
     .map((message) => message.id);
 
-  const hasOlder = direction === 'older' || direction === 'around' || direction === 'latest'
+  let hasOlder = direction === 'older' || direction === 'around' || direction === 'latest'
     ? page.hasOlder
     : source.hasOlder;
-  const hasNewer = direction === 'newer' || direction === 'around' || direction === 'latest'
+  let hasNewer = direction === 'newer' || direction === 'around' || direction === 'latest'
     ? page.hasNewer
     : source.hasNewer;
-  const olderCursor = direction === 'older' || direction === 'around' || direction === 'latest'
+  let olderCursor = direction === 'older' || direction === 'around' || direction === 'latest'
     ? page.olderCursor
     : source.olderCursor;
-  const newerCursor = direction === 'newer' || direction === 'around' || direction === 'latest'
+  let newerCursor = direction === 'newer' || direction === 'around' || direction === 'latest'
     ? page.newerCursor
     : source.newerCursor;
+
+  const anchorMessageId = page.anchorMessageId ?? (direction === 'around' ? null : source.anchorMessageId);
+
+  // D4: enforce the memory ceiling. Trim the side OPPOSITE the growth direction
+  // and re-open that edge so the trimmed messages can be paged back in.
+  //
+  // Anchor handling: when the user keeps paging in ONE direction they are moving
+  // away from the jump anchor, so trimming the far (opposite) side is always safe
+  // — we only guarantee we never trim so far that the anchor itself is evicted in
+  // the SAME merge that introduced it (the 'around' seed). Concretely we cap the
+  // cut so at least the anchor and everything past it (in the growth direction)
+  // survives, but we do NOT let the anchor pin the trailing edge forever.
+  let trimmedIds = orderedIds;
+  if (orderedIds.length > MAX_WINDOW) {
+    const overflow = orderedIds.length - MAX_WINDOW;
+    // Newer growth ('newer'/'latest') trims the oldest side; older growth trims
+    // the newest side. 'around' (the seed) defaults to trimming the newest side.
+    const trimFromStart = direction === 'newer' || direction === 'latest';
+    if (trimFromStart) {
+      // Trimming the oldest side (newer/latest growth). The user is scrolling
+      // toward the tail and away from any jump anchor, so no anchor protection.
+      const cut = overflow;
+      if (cut > 0) {
+        const removed = orderedIds.slice(0, cut);
+        trimmedIds = orderedIds.slice(cut);
+        for (const id of removed) messagesById.delete(id);
+        hasOlder = true;
+        olderCursor = trimmedIds[0] ?? olderCursor;
+      }
+    } else {
+      // Trimming the newest side (older growth). Same rule mirrored.
+      let cut = overflow;
+      if (direction === 'around' && anchorMessageId) {
+        const anchorIdx = orderedIds.indexOf(anchorMessageId);
+        const fromEnd = orderedIds.length - 1 - anchorIdx;
+        if (anchorIdx >= 0 && fromEnd < cut) cut = fromEnd;
+      }
+      if (cut > 0) {
+        const keep = orderedIds.length - cut;
+        const removed = orderedIds.slice(keep);
+        trimmedIds = orderedIds.slice(0, keep);
+        for (const id of removed) messagesById.delete(id);
+        hasNewer = true;
+        newerCursor = trimmedIds[trimmedIds.length - 1] ?? newerCursor;
+      }
+    }
+  }
 
   return materialize({
     mode,
     messagesById,
-    orderedIds,
+    orderedIds: trimmedIds,
     hasOlder,
     hasNewer,
     olderCursor,
     newerCursor,
-    anchorMessageId: page.anchorMessageId ?? (direction === 'around' ? null : source.anchorMessageId),
+    anchorMessageId,
   });
 }

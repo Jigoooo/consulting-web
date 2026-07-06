@@ -47,3 +47,47 @@ describe('message window merge', () => {
     expect(around.orderedIds).toEqual([uuid(4), uuid(5), uuid(6)]);
   });
 });
+
+describe('message window trimming (D4 — memory ceiling)', () => {
+  // Build a window past MAX_WINDOW by loading many older pages.
+  function loadManyOlder(total: number): MessageWindow {
+    // newest page first (latest), then page older repeatedly
+    let state = mergeMessagePage(undefined, page([total - 1, total], { hasOlder: true }), 'latest');
+    for (let hi = total - 2; hi >= 1; hi -= 2) {
+      const lo = Math.max(1, hi - 1);
+      const nums = lo === hi ? [hi] : [lo, hi];
+      state = mergeMessagePage(state, page(nums, { hasOlder: lo > 1, hasNewer: false }), 'older');
+    }
+    return state;
+  }
+
+  it('caps the in-memory window at MAX_WINDOW when paging older', () => {
+    const state = loadManyOlder(500);
+    expect(state.orderedIds.length).toBeLessThanOrEqual(400);
+    // Trimming the newest side must re-open the newer edge so the user can page back down.
+    expect(state.hasNewer).toBe(true);
+    expect(state.newerCursor).not.toBeNull();
+    // Oldest retained messages are the earliest loaded (older direction keeps the old side).
+    expect(state.messages[0]?.content).toBe('m1');
+  });
+
+  it('caps the window when paging newer, trimming the oldest side', () => {
+    // Start in an 'around' window near the middle, then page newer many times.
+    // Anchor is uuid(200) (mid-history) so trimming the oldest side is allowed.
+    let state = mergeMessagePage(undefined, page([199, 200], { hasOlder: true, hasNewer: true, anchorMessageId: uuid(200) }), 'around');
+    for (let lo = 201; lo <= 700; lo += 2) {
+      state = mergeMessagePage(state, page([lo, lo + 1], { hasOlder: false, hasNewer: lo + 1 < 700 }), 'newer');
+    }
+    expect(state.orderedIds.length).toBeLessThanOrEqual(400);
+    // Trimming the oldest side must re-open the older edge.
+    expect(state.hasOlder).toBe(true);
+    expect(state.olderCursor).not.toBeNull();
+  });
+
+  it('never evicts the anchor in the around seed merge itself', () => {
+    // A huge 'around' page (seed) must keep its anchor even if it overflows MAX.
+    const nums = Array.from({ length: 500 }, (_, i) => i + 1);
+    const seed = mergeMessagePage(undefined, page(nums, { hasOlder: true, hasNewer: true, anchorMessageId: uuid(250) }), 'around');
+    expect(seed.messagesById.has(uuid(250))).toBe(true);
+  });
+});

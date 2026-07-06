@@ -7,6 +7,7 @@ import { authStore } from './lib/api';
 import { setupServiceWorker, reloadIfUpdateReady } from './lib/sw';
 import { ToastProvider } from './shared/ui/toast/Toast';
 import { ErrorBoundary } from './shared/ui/error-boundary/ErrorBoundary';
+import './lib/motion'; // D5: apply global GSAP tuning (force3D, lagSmoothing) once
 import './styles/global.css';
 
 setupServiceWorker();

@@ -424,6 +424,10 @@
   display: flex;
   flex-direction: column;
   gap: 22px;
+  /* D3: stop the browser's native scroll-anchoring from fighting the virtualizer's
+     own anchor correction, and reserve the scrollbar gutter to avoid layout shift. */
+  overflow-anchor: none;
+  scrollbar-gutter: stable;
 }
 .dayDiv {
   display: flex;
@@ -609,6 +613,10 @@
   width: 100%;
   padding-bottom: 22px;
   box-sizing: border-box;
+  /* D3: isolate each row's layout/paint so intra-row changes (hover actions,
+     highlight) never invalidate the whole list. NOT 'size' — the virtualizer
+     measures row height dynamically. */
+  contain: layout paint style;
 }
 .virtualItemHit {
   border-radius: 16px;

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { api } from '../../../lib/api';
@@ -399,11 +399,13 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
 
   const slashQuery = input.startsWith('/') && !input.includes('\n') ? input.slice(1).trim().toLocaleLowerCase() : '';
   const showSlashMenu = input.startsWith('/') && !input.includes('\n');
+  // D1: defer the filter query so typing the command never janks the menu.
+  const deferredSlashQuery = useDeferredValue(slashQuery);
   const slashItems = !showSlashMenu
     ? []
     : HERMES_SLASH_COMMANDS.filter((item) => {
-        if (!slashQuery) return true;
-        return item.command.slice(1).includes(slashQuery) || item.title.toLocaleLowerCase().includes(slashQuery);
+        if (!deferredSlashQuery) return true;
+        return item.command.slice(1).includes(deferredSlashQuery) || item.title.toLocaleLowerCase().includes(deferredSlashQuery);
       }).slice(0, 7);
 
   useEffect(() => setSlashCursor(0), [slashQuery]);
