@@ -26,6 +26,24 @@ const INDEXABLE_MIME_TYPES = new Set([
 ]);
 const MAX_INDEXED_TEXT_CHARS = 200_000;
 
+// 축6: 다단 파서 파이프라인(파이썬 사이드카). apps/api/extractor/ 에 격리된 venv.
+// NestJS(CommonJS)라 import.meta 불가 → cwd(보통 apps/api) + 후보 경로로 해석.
+function resolveExtractor(): { py: string; script: string } {
+  const candidates = [
+    join(process.cwd(), 'extractor'),
+    join(process.cwd(), 'apps', 'api', 'extractor'),
+  ];
+  for (const dir of candidates) {
+    const py = join(dir, '.venv', 'bin', 'python');
+    const script = join(dir, 'extractor_worker.py');
+    if (existsSync(py) && existsSync(script)) return { py, script };
+  }
+  // 없으면 첫 후보를 반환(존재 체크는 호출측에서 다시 함 → 폴백 유도).
+  return { py: join(candidates[0]!, '.venv', 'bin', 'python'), script: join(candidates[0]!, 'extractor_worker.py') };
+}
+const EXTRACTOR = resolveExtractor();
+const EXTRACTOR_TIMEOUT_MS = 180_000;
+
 @Injectable()
 export class DocumentExtractionService {
   constructor(
@@ -91,6 +109,11 @@ export function extractDocumentText(fileName: string, mimeType: string, data: Bu
   const input = join(dir, safeTempName(lowerName));
   try {
     writeFileSync(input, data);
+    // 축6: 최고급 파이썬 다단 파서(pymupdf4llm 레이아웃/표 + 다중 파서 비교 +
+    // 다중 OCR + HWPX 구조 파서). 워커가 있으면 우선 사용, 없으면 아래 TS 폴백.
+    const viaWorker = runExtractorWorker(input, mimeType);
+    if (viaWorker) return viaWorker;
+
     if (mimeType === 'application/pdf' || lowerName.endsWith('.pdf')) {
       return extractPdf(input, dir);
     }
@@ -106,6 +129,43 @@ export function extractDocumentText(fileName: string, mimeType: string, data: Bu
     return finalize('skipped', null, '', ['unsupported_mime_for_indexing']);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * 축6: 파이썬 다단 파서 워커 호출. 성공하면 최고 품질 후보를 반환, 워커가
+ * 없거나(미배포) 실패하면 null → 호출측이 기존 TS 파이프라인으로 폴백한다.
+ * 동기 spawnSync지만 잡 큐 워커 컨텍스트에서 실행되므로 API 스레드를 막지 않는다.
+ */
+function runExtractorWorker(inputPath: string, mimeType: string): DocumentExtractionResult | null {
+  if (!existsSync(EXTRACTOR.py) || !existsSync(EXTRACTOR.script)) return null;
+  const res = spawnSync(EXTRACTOR.py, [EXTRACTOR.script, inputPath, mimeType], {
+    encoding: 'utf8',
+    maxBuffer: 32 * 1024 * 1024,
+    timeout: EXTRACTOR_TIMEOUT_MS,
+  });
+  if (res.status !== 0 || !res.stdout) return null;
+  // 워커는 마지막 줄에만 JSON을 쓴다(파서 로그는 stderr로 격리됨).
+  const lastLine = res.stdout.trim().split('\n').pop() ?? '';
+  try {
+    const parsed = JSON.parse(lastLine) as {
+      status?: unknown; extractor?: unknown; text?: unknown;
+      textChars?: unknown; qualityScore?: unknown; warnings?: unknown;
+    };
+    const status = parsed.status;
+    if (status !== 'indexed' && status !== 'skipped' && status !== 'failed') return null;
+    const text = typeof parsed.text === 'string' ? parsed.text.slice(0, MAX_INDEXED_TEXT_CHARS) : '';
+    const warnings = Array.isArray(parsed.warnings) ? parsed.warnings.filter((w): w is string => typeof w === 'string') : [];
+    return {
+      status,
+      extractor: typeof parsed.extractor === 'string' ? parsed.extractor : null,
+      text,
+      textChars: typeof parsed.textChars === 'number' ? parsed.textChars : text.trim().length,
+      qualityScore: typeof parsed.qualityScore === 'number' ? parsed.qualityScore : 0,
+      warnings: warnings.slice(0, 20),
+    };
+  } catch {
+    return null;
   }
 }
 

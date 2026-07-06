@@ -144,6 +144,7 @@ function LibraryPage() {
                   <span className={s.itemType}>{TYPE_LABEL[item.sourceType] ?? item.sourceType}</span>
                   {item.channelName ? <span className={s.itemChannel}>{item.channelName}</span> : null}
                   <span className={s.itemDate}>{formatDateLabel(item.createdAt)}</span>
+                  {item.status === 'processing' ? <span className={s.itemProcessing}>분석 중</span> : null}
                   {item.status === 'failed' ? <span className={s.itemFail}>추출 실패</span> : null}
                 </span>
               </span>

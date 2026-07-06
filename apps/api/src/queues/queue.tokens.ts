@@ -1,5 +1,6 @@
 /** Queue DI tokens + names, split out to avoid circular imports (module ↔ service). */
 export const OUTBOX_RELAY_QUEUE = Symbol('OUTBOX_RELAY_QUEUE');
+export const DOCUMENT_EXTRACTION_QUEUE = Symbol('DOCUMENT_EXTRACTION_QUEUE');
 
 export const QUEUE_NAMES = {
   outboxRelay: 'outbox-relay',
@@ -9,4 +10,5 @@ export const QUEUE_NAMES = {
   memoryRegistration: 'memory-registration',
   notification: 'notification',
   searchIndex: 'search-index',
+  documentExtraction: 'document-extraction',
 } as const;

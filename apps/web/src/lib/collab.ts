@@ -108,12 +108,14 @@ export function useUploadAttachment(threadId: string | undefined) {
   });
 }
 
-/** 축3: 추출 텍스트(파일 뷰어 — HWP/HWPX/PDF 원문 표시). */
+/** 축3: 추출 텍스트(파일 뷰어 — HWP/HWPX/PDF 원문 표시). processing이면 폴링. */
 export function useAttachmentExtraction(id: string | undefined, enabled = true) {
   return useQuery({
     queryKey: ['attachment-extraction', id ?? ''],
     queryFn: () => api.getAttachmentExtraction(id!),
     enabled: Boolean(id) && enabled,
+    // 축6: 백그라운드 추출이 진행 중(processing)이면 2초마다 폴링해 완료를 반영.
+    refetchInterval: (query) => (query.state.data?.status === 'processing' ? 2000 : false),
   });
 }
 

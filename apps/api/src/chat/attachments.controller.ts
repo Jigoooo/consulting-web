@@ -25,7 +25,7 @@ import {
 import { AccessTokenGuard, requireAuthUserId, type AuthenticatedRequest } from '../auth/access-token.guard.js';
 import { parseBody, parseResponse } from '../http/contract-adapter.js';
 import { ChatStreamUseCase } from './chat-stream.usecase.js';
-import { DocumentExtractionService } from './document-extraction.service.js';
+import { DocumentExtractionWorker } from './document-extraction.worker.js';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 
 const ALLOWED_MIME_PREFIXES = ['image/', 'text/'];
@@ -44,7 +44,7 @@ export class AttachmentsController {
   constructor(
     @Inject(DRIZZLE) private readonly db: Db,
     @Inject(ChatStreamUseCase) private readonly chatAccess: ChatStreamUseCase,
-    @Inject(DocumentExtractionService) private readonly documentExtraction: DocumentExtractionService,
+    @Inject(DocumentExtractionWorker) private readonly extractionWorker: DocumentExtractionWorker,
   ) {}
 
   @Post()
@@ -80,13 +80,28 @@ export class AttachmentsController {
       })
       .returning({ id: schema.fileAttachments.id });
     const id = row!.id;
-    await this.documentExtraction.indexAttachment({
+    // 축6: 무거운 다단 파서/OCR는 요청 스레드에서 돌리지 않는다. 먼저 pending
+    // extraction row를 만들고(UI "분석 중" 표시), 실제 추출은 잡 워커에 위임.
+    await this.db
+      .insert(schema.documentExtractions)
+      .values({
+        workspaceId: access.workspaceId,
+        threadId: cmd.threadId,
+        attachmentId: id,
+        status: 'processing',
+        extractor: null,
+        textContent: '',
+        textChars: 0,
+        qualityScore: 0,
+        warnings: [],
+      })
+      .onConflictDoNothing({ target: schema.documentExtractions.attachmentId });
+    await this.extractionWorker.enqueue({
+      attachmentId: id,
       workspaceId: access.workspaceId,
       threadId: cmd.threadId,
-      attachmentId: id,
       fileName: cmd.fileName,
       mimeType: cmd.mimeType,
-      data: Buffer.from(cmd.dataBase64, 'base64'),
       uploaderUserId: userId,
     });
     return parseResponse(UploadAttachmentResponseSchema, { id });
@@ -122,7 +137,7 @@ export class AttachmentsController {
         sizeBytes: r.sizeBytes,
         extraction: r.extractionStatus
           ? {
-              status: r.extractionStatus as 'indexed' | 'skipped' | 'failed',
+              status: r.extractionStatus as 'processing' | 'indexed' | 'skipped' | 'failed',
               extractor: r.extractionExtractor,
               textChars: r.extractionTextChars ?? 0,
               qualityScore: r.extractionQualityScore ?? 0,
@@ -161,7 +176,7 @@ export class AttachmentsController {
       attachmentId: id,
       fileName: row.fileName,
       mimeType: row.mimeType,
-      status: (row.status as 'indexed' | 'skipped' | 'failed' | null) ?? null,
+      status: (row.status as 'processing' | 'indexed' | 'skipped' | 'failed' | null) ?? null,
       extractor: row.extractor ?? null,
       textContent: row.textContent ?? '',
       textChars: row.textChars ?? 0,

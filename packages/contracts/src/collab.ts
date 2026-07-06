@@ -219,7 +219,7 @@ export const AttachmentSummarySchema = z
     sizeBytes: z.number().int().nonnegative(),
     extraction: z
       .object({
-        status: z.enum(['indexed', 'skipped', 'failed']),
+        status: z.enum(['processing', 'indexed', 'skipped', 'failed']),
         extractor: z.string().nullable(),
         textChars: z.number().int().nonnegative(),
         qualityScore: z.number().int().min(0).max(100),
@@ -249,7 +249,7 @@ export const AttachmentExtractionResponseSchema = z
     attachmentId: UuidSchema,
     fileName: z.string(),
     mimeType: z.string(),
-    status: z.enum(['indexed', 'skipped', 'failed']).nullable(),
+    status: z.enum(['processing', 'indexed', 'skipped', 'failed']).nullable(),
     extractor: z.string().nullable(),
     textContent: z.string(),
     textChars: z.number().int().nonnegative(),

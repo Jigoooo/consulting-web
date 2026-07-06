@@ -102,7 +102,7 @@ export class LibraryStore {
       kind: 'evidence' as const,
       id: r.id,
       title: r.ref,
-      sourceType: r.sourceType as LibrarySourceType,
+      sourceType: r.sourceType,
       projectId: r.projectId,
       channelName: r.channelName,
       threadId: r.threadId,

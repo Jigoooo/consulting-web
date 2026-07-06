@@ -1,6 +1,9 @@
 # deps
 node_modules/
 .pnpm-store/
+# 축6 문서 추출 파이썬 사이드카 venv (requirements.txt로 재현)
+apps/api/extractor/.venv/
+__pycache__/
 
 # build
 dist/

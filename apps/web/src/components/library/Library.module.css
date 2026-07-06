@@ -146,3 +146,10 @@
   color: var(--red);
   font-weight: 590;
 }
+.itemProcessing {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 590;
+}

@@ -1,0 +1,11 @@
+# 축6 문서 추출 파이썬 사이드카 의존성.
+# 재현: cd apps/api/extractor && uv venv .venv --python 3.12 && \
+#       uv pip install --python .venv/bin/python -r requirements.txt
+# (시스템: tesseract-ocr + kor/eng 언어팩 필요 — apt install tesseract-ocr tesseract-ocr-kor)
+pymupdf>=1.28
+pymupdf4llm>=1.28
+pdfplumber>=0.11
+pdfminer.six>=20251230
+pytesseract>=0.3.13
+olefile>=0.47
+pillow>=10

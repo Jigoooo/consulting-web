@@ -13,11 +13,12 @@ import { EvidenceStore } from './evidence.store.js';
 import { NotificationStore } from './notification.store.js';
 import { PushService } from './push.service.js';
 import { DocumentExtractionService } from './document-extraction.service.js';
+import { DocumentExtractionWorker } from './document-extraction.worker.js';
 
 @Module({
   imports: [DrizzleModule, AuthModule, SpacesModule],
   controllers: [ChatStreamController, NotificationsController, PushController, AttachmentsController],
-  providers: [ChatStreamUseCase, HermesRunsClient, ChatMessageStore, EvidenceStore, NotificationStore, PushService, DocumentExtractionService],
-  exports: [ChatStreamUseCase, HermesRunsClient, ChatMessageStore, EvidenceStore, NotificationStore, PushService, DocumentExtractionService],
+  providers: [ChatStreamUseCase, HermesRunsClient, ChatMessageStore, EvidenceStore, NotificationStore, PushService, DocumentExtractionService, DocumentExtractionWorker],
+  exports: [ChatStreamUseCase, HermesRunsClient, ChatMessageStore, EvidenceStore, NotificationStore, PushService, DocumentExtractionService, DocumentExtractionWorker],
 })
 export class ChatModule {}

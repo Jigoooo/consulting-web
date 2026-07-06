@@ -114,9 +114,18 @@ function ExtractedContent({
   kind: Kind;
   fileName: string;
   content: string;
-  status: 'indexed' | 'skipped' | 'failed' | null;
+  status: 'processing' | 'indexed' | 'skipped' | 'failed' | null;
   warnings: string[];
 }) {
+  if (status === 'processing') {
+    return (
+      <div className={s.viewerLoading}>
+        문서를 분석하고 있어요…
+        <br />
+        레이아웃·표·텍스트를 추출하는 중입니다. 잠시만 기다려주세요.
+      </div>
+    );
+  }
   if (status === 'failed' || (!content.trim() && status !== 'indexed')) {
     return (
       <div className={s.viewerError}>
