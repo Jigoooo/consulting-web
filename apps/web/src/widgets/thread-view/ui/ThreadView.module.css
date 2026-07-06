@@ -104,33 +104,6 @@
   opacity: 0.55;
   cursor: default;
 }
-.searchResults {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 90;
-  width: min(420px, 70vw);
-  max-height: 320px;
-  overflow: auto;
-  padding: 6px;
-  border: 1px solid var(--border-hair);
-  border-radius: 14px;
-  background: var(--surface-card);
-  box-shadow: var(--shadow-pop);
-}
-.searchResultsHead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 8px 8px;
-  font-size: 11px;
-  font-weight: 650;
-  color: var(--text-secondary);
-}
-.searchResultsHint {
-  font-weight: 500;
-  color: var(--text-muted);
-}
 .searchNav {
   display: flex;
   align-items: center;
@@ -156,39 +129,6 @@
   font-size: 11px;
   color: var(--text-secondary);
   min-width: 42px;
-  text-align: center;
-}
-.searchHit {
-  width: 100%;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  padding: 8px 10px;
-  text-align: left;
-  cursor: pointer;
-  display: grid;
-  gap: 3px;
-}
-.searchHit:hover,
-.searchHitOn {
-  background: var(--bg-warm);
-}
-.searchHitOn {
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-.searchHitRole {
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 700;
-}
-.searchHitText,
-.searchEmpty {
-  color: var(--text-secondary);
-  font-size: 12.5px;
-  line-height: 1.45;
-}
-.searchEmpty {
-  padding: 10px;
   text-align: center;
 }
 .statusChip {

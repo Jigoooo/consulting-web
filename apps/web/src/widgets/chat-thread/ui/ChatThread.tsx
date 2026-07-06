@@ -94,7 +94,6 @@ export function ChatThread({ threadId, title, breadcrumb }: { threadId: string; 
   const [input, setInput] = useState('');
   const [slashCursor, setSlashCursor] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchOpen, setSearchOpen] = useState(false);
   const [searching, setSearching] = useState(false);
   const [targetMessageId, setTargetMessageId] = useState<string | null>(null);
   const [runStatus, setRunStatus] = useState<RunStatusUi | null>(null);
@@ -152,7 +151,6 @@ export function ChatThread({ threadId, title, breadcrumb }: { threadId: string; 
     setActiveTool(null);
     setSlashCursor(0);
     setSearchQuery('');
-    setSearchOpen(false);
     setSearching(false);
     setTargetMessageId(null);
     setRunStatus(null);
@@ -171,14 +169,17 @@ export function ChatThread({ threadId, title, breadcrumb }: { threadId: string; 
   // F3: when the focused search result changes (e.g. clicked in the right panel
   // or stepped via the navigator), jump the chat window to that message.
   const lastFocusedId = useRef<string | null>(null);
-  const jumpAroundRef = useRef(history.jumpAround);
-  jumpAroundRef.current = history.jumpAround;
+  // G6: prefer focusMessage — it scrolls in place when the hit is already loaded
+  // (no window replacement → no layout shift) and only fetches an 'around' window
+  // when the target is outside the loaded range.
+  const focusMessageRef = useRef(history.focusMessage);
+  focusMessageRef.current = history.focusMessage;
   useEffect(() => {
     if (search.threadId !== threadId) return;
     const hit = search.results[search.focusedIndex];
     if (!hit || hit.id === lastFocusedId.current) return;
     lastFocusedId.current = hit.id;
-    void jumpAroundRef.current(hit.id).then((target) => setTargetMessageId(target)).catch(() => {});
+    void focusMessageRef.current(hit.id).then((target) => setTargetMessageId(target)).catch(() => {});
   }, [search.focusedIndex, search.results, search.threadId, threadId]);
 
   function patchTurn(id: number, patch: Partial<LiveTurn>) {
@@ -368,7 +369,6 @@ export function ChatThread({ threadId, title, breadcrumb }: { threadId: string; 
     const q = searchQuery.trim();
     if (!q) {
       searchStore.set({ query: '', results: [], focusedIndex: -1, open: false });
-      setSearchOpen(false);
       return;
     }
     setSearching(true);
@@ -379,7 +379,6 @@ export function ChatThread({ threadId, title, breadcrumb }: { threadId: string; 
       // Setting focusedIndex to 0 triggers the focus effect → jumps to first hit.
       lastFocusedId.current = null;
       searchStore.set({ threadId, query: q, results: res.results, focusedIndex: res.results.length > 0 ? 0 : -1, open: true });
-      setSearchOpen(true);
     } catch {
       toast('error', '대화 검색에 실패했어요.');
     } finally {
@@ -418,10 +417,9 @@ export function ChatThread({ threadId, title, breadcrumb }: { threadId: string; 
     jumpingToLatestRef.current = true;
     try {
       // clear search first so the FAB always lands on the clean live tail
-      if (search.query || searchOpen) {
+      if (search.query) {
         searchStore.reset(threadId);
         setSearchQuery('');
-        setSearchOpen(false);
         setTargetMessageId(null);
       }
       if (history.mode === 'around' || history.hasNewer) {
@@ -515,10 +513,8 @@ export function ChatThread({ threadId, title, breadcrumb }: { threadId: string; 
                 setSearchQuery(event.target.value);
                 if (!event.target.value.trim()) {
                   searchStore.set({ query: '', results: [], focusedIndex: -1, open: false });
-                  setSearchOpen(false);
                 }
               }}
-              onFocus={() => hasResults && setSearchOpen(true)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
                   event.preventDefault();
@@ -529,7 +525,7 @@ export function ChatThread({ threadId, title, breadcrumb }: { threadId: string; 
                     void searchTranscript();
                   }
                 }
-                if (event.key === 'Escape') setSearchOpen(false);
+                if (event.key === 'Escape') event.currentTarget.blur();
               }}
             />
             {hasResults ? (
@@ -554,25 +550,9 @@ export function ChatThread({ threadId, title, breadcrumb }: { threadId: string; 
                 {searching ? '검색 중' : '검색'}
               </button>
             )}
-            {searchOpen && hasResults ? (
-              <div className={s.searchResults}>
-                <div className={s.searchResultsHead}>
-                  <span>결과 {search.results.length}개</span>
-                  <span className={s.searchResultsHint}>Enter로 다음 · 우측 패널에서 전체 보기</span>
-                </div>
-                {search.results.slice(0, 5).map((hit, index) => (
-                  <button
-                    key={hit.id}
-                    type="button"
-                    className={`${s.searchHit} ${index === search.focusedIndex ? s.searchHitOn : ''} cwTap`}
-                    onClick={() => void jumpToSearchHit(hit, index)}
-                  >
-                    <span className={s.searchHitRole}>{hit.role === 'assistant' ? '지구' : userName}</span>
-                    <span className={s.searchHitText}>{hit.snippet}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
+            {/* G6: header result dropdown removed — the full result list lives in
+                the right context panel's "검색" tab (auto-focused on search), so
+                results appear in exactly one place. */}
           </div>
           {runStatus ? <RunStatusBar status={runStatus} /> : null}
           {busy || history.isJumping ? (

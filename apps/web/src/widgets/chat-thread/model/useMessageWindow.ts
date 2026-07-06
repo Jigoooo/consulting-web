@@ -106,6 +106,14 @@ export function useMessageWindow(threadId: string) {
     }
   };
 
+  // G6: focus a search hit. If the target is already inside the loaded window we
+  // only scroll to it (no fetch, no window replacement, no virtual-list remount →
+  // zero layout shift). Only when it's outside do we fetch an 'around' window.
+  const focusMessage = async (messageId: string): Promise<string> => {
+    if (windowState?.messagesById.has(messageId)) return messageId;
+    return jumpAround(messageId);
+  };
+
   // A2: escape a search-jump ('around') window back to the live tail in O(1)
   // instead of paging down. Replaces the window rather than accumulating.
   const resetToLatest = async () => {
@@ -138,6 +146,7 @@ export function useMessageWindow(threadId: string) {
     loadOlder,
     loadNewer,
     jumpAround,
+    focusMessage,
     resetToLatest,
     refetchLatest: latest.refetch,
   };
