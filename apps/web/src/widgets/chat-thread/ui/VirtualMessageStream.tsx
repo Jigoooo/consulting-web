@@ -6,9 +6,11 @@ import { StreamingMarkdown } from '../../../shared/ui/markdown/StreamingMarkdown
 import { Icon } from '../../../shared/icons/Icon';
 import { IconButton } from '../../../shared/ui/button/Button';
 import { SkeletonMessage } from '../../../shared/ui/skeleton/Skeleton';
+import { useDelayedFlag } from '../../../shared/lib/useDelayedFlag';
 import { hoveredMessageStore } from '../../../lib/threadCtx';
 import { ThinkingRibbon } from './ThinkingRibbon';
 import { HighlightedText } from './HighlightedText';
+import { computePrefetchRootMargin } from '../model/prefetchMargin';
 import s from '../../thread-view/ui/ThreadView.module.css';
 
 interface LiveTurnLike {
@@ -244,6 +246,11 @@ export function VirtualMessageStream({
   const virtualItems = virtualizer.getVirtualItems();
   const totalSize = virtualizer.getTotalSize();
 
+  // G2: suppress the "불러오는 중" affordance for fast prefetches — only show it
+  // when a page load genuinely takes >400ms. Normal prefetches stay silent.
+  const showOlderLoading = useDelayedFlag(isLoadingOlder, 400);
+  const showNewerLoading = useDelayedFlag(isLoadingNewer, 400);
+
   // Fresh guard/callback values for the IntersectionObserver without re-subscribing.
   const guards = useRef({ hasOlder, hasNewer, isLoadingOlder, isLoadingNewer });
   guards.current = { hasOlder, hasNewer, isLoadingOlder, isLoadingNewer };
@@ -296,43 +303,96 @@ export function VirtualMessageStream({
   // Sentinel-driven infinite scroll + bottom-proximity tracking (A1). Callbacks
   // are read from refs and inlined here, so this effect does NOT depend on the
   // React Compiler stabilizing anything (E1) — deps are the stable scrollRef only.
+  //
+  // G2 (unconscious prefetch): the observer's rootMargin is sized to a multiple
+  // of the viewport height and grown with scroll velocity, so older pages are
+  // requested well before the top edge scrolls into view. Velocity is tracked in
+  // a rAF loop; when the computed margin changes meaningfully we re-arm the
+  // observer with the new margin (anchor/sentinel logic is unchanged).
+  const rootMarginRef = useRef('');
   useEffect(() => {
     const scroller = scrollRef.current;
     const topEl = topSentinelRef.current;
     const bottomEl = bottomSentinelRef.current;
     if (!scroller) return;
-    const io = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.target === bottomEl) {
-            // bottom sentinel visibility === "user is at/near the tail"
-            atBottomRef.current(entry.isIntersecting);
-          }
-          if (!entry.isIntersecting) continue;
-          if (entry.target === topEl) {
-            if (!allowAutoLoad.current) continue;
-            const g = guards.current;
-            if (!g.hasOlder || g.isLoadingOlder) continue;
-            const first = virtualizer.getVirtualItems()[0];
-            if (first) {
-              const el = scroller.querySelector<HTMLElement>(`[data-index="${first.index}"]`);
-              const offset = el ? el.getBoundingClientRect().top - scroller.getBoundingClientRect().top : 0;
-              pendingAnchor.current = { index: first.index, offset };
-            }
-            void loadOlderRef.current();
-          } else if (entry.target === bottomEl) {
-            if (!allowAutoLoad.current) continue;
-            const g = guards.current;
-            if (!g.hasNewer || g.isLoadingNewer) continue;
-            void loadNewerRef.current();
-          }
+
+    let io: IntersectionObserver | null = null;
+    let lastScrollTop = scroller.scrollTop;
+    let lastTs = 0;
+    let velocity = 0;
+    let rafPending = false;
+    let idleTimer = 0;
+
+    const handleIntersect: IntersectionObserverCallback = (entries) => {
+      for (const entry of entries) {
+        if (entry.target === bottomEl) {
+          // bottom sentinel visibility === "user is at/near the tail"
+          atBottomRef.current(entry.isIntersecting);
         }
-      },
-      { root: scroller, rootMargin: '320px 0px 120px 0px', threshold: 0 },
-    );
-    if (topEl) io.observe(topEl);
-    if (bottomEl) io.observe(bottomEl);
-    return () => io.disconnect();
+        if (!entry.isIntersecting) continue;
+        if (entry.target === topEl) {
+          if (!allowAutoLoad.current) continue;
+          const g = guards.current;
+          if (!g.hasOlder || g.isLoadingOlder) continue;
+          const first = virtualizer.getVirtualItems()[0];
+          if (first) {
+            const el = scroller.querySelector<HTMLElement>(`[data-index="${first.index}"]`);
+            const offset = el ? el.getBoundingClientRect().top - scroller.getBoundingClientRect().top : 0;
+            pendingAnchor.current = { index: first.index, offset };
+          }
+          void loadOlderRef.current();
+        } else if (entry.target === bottomEl) {
+          if (!allowAutoLoad.current) continue;
+          const g = guards.current;
+          if (!g.hasNewer || g.isLoadingNewer) continue;
+          void loadNewerRef.current();
+        }
+      }
+    };
+
+    const arm = (rootMargin: string) => {
+      if (rootMargin === rootMarginRef.current && io) return;
+      rootMarginRef.current = rootMargin;
+      io?.disconnect();
+      io = new IntersectionObserver(handleIntersect, { root: scroller, rootMargin, threshold: 0 });
+      if (topEl) io.observe(topEl);
+      if (bottomEl) io.observe(bottomEl);
+    };
+
+    // Prime with an idle margin. We only re-measure while the user is actively
+    // scrolling — no always-on rAF loop, so idle costs nothing.
+    arm(computePrefetchRootMargin({ viewportHeight: scroller.clientHeight, velocity: 0 }));
+
+    const measure = () => {
+      rafPending = false;
+      const now = scroller.scrollTop;
+      velocity = Math.abs(now - lastScrollTop);
+      lastScrollTop = now;
+      arm(computePrefetchRootMargin({ viewportHeight: scroller.clientHeight, velocity }));
+    };
+
+    const onScroll = () => {
+      lastTs = Date.now();
+      if (!rafPending) {
+        rafPending = true;
+        window.requestAnimationFrame(measure);
+      }
+      // After scrolling stops, relax the margin back to idle so the observer
+      // isn't left armed with a huge velocity-inflated margin.
+      window.clearTimeout(idleTimer);
+      idleTimer = window.setTimeout(() => {
+        if (Date.now() - lastTs < 140) return;
+        arm(computePrefetchRootMargin({ viewportHeight: scroller.clientHeight, velocity: 0 }));
+      }, 160);
+    };
+
+    scroller.addEventListener('scroll', onScroll, { passive: true });
+
+    return () => {
+      scroller.removeEventListener('scroll', onScroll);
+      window.clearTimeout(idleTimer);
+      io?.disconnect();
+    };
   }, [scrollRef, virtualizer]);
 
   // Jump-to-search-hit: center the target row and pulse-highlight it.
@@ -351,8 +411,9 @@ export function VirtualMessageStream({
   return (
     <>
       <div ref={topSentinelRef} className={s.scrollSentinel} aria-hidden="true" />
-      {/* Top loading / end-of-history affordance (A6) */}
-      {isLoadingOlder ? (
+      {/* Top loading / end-of-history affordance (A6). G2: only surfaced when the
+          older-page load exceeds 400ms — fast prefetches stay silent. */}
+      {showOlderLoading ? (
         <div className={s.loadEdge}>
           <span className={s.sp} /> 이전 대화 불러오는 중…
         </div>
@@ -397,8 +458,8 @@ export function VirtualMessageStream({
         })}
       </div>
 
-      {/* Bottom loading / end affordance (A6) */}
-      {isLoadingNewer ? (
+      {/* Bottom loading / end affordance (A6). G2: delayed like the top edge. */}
+      {showNewerLoading ? (
         <div className={s.loadEdge}>
           <span className={s.sp} /> 이후 대화 불러오는 중…
         </div>
@@ -406,7 +467,7 @@ export function VirtualMessageStream({
         <button type="button" className={`${s.loadRetry} cwTap`} onClick={() => void loadNewerRef.current()}>
           <Icon name="retry" size="xs" decorative /> 이후 대화를 불러오지 못했어요. 다시 시도
         </button>
-      ) : hasNewer ? (
+      ) : hasNewer && !isLoadingNewer ? (
         <div className={s.loadEdge}>
           <SkeletonMessage />
         </div>

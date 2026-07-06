@@ -408,16 +408,32 @@ export function ChatThread({ threadId, title, breadcrumb }: { threadId: string; 
     el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
-  // A2: return to the live tail. From a search-jump ('around') window we replace
-  // the window with the latest page in O(1) instead of paging down.
+  // A2 / G7-FAB: return to the live tail. From a search-jump ('around') window we
+  // replace the window with the latest page in O(1) instead of paging down. A
+  // re-entrancy guard makes rapid FAB taps a no-op while a jump is in flight, and
+  // any active search state is cleared first so the tail isn't left highlighted.
+  const jumpingToLatestRef = useRef(false);
   async function jumpToLatest() {
-    if (history.mode === 'around' || history.hasNewer) {
-      await history.resetToLatest();
+    if (jumpingToLatestRef.current) return;
+    jumpingToLatestRef.current = true;
+    try {
+      // clear search first so the FAB always lands on the clean live tail
+      if (search.query || searchOpen) {
+        searchStore.reset(threadId);
+        setSearchQuery('');
+        setSearchOpen(false);
+        setTargetMessageId(null);
+      }
+      if (history.mode === 'around' || history.hasNewer) {
+        await history.resetToLatest();
+      }
+      atBottomRef.current = true;
+      setAtBottom(true);
+      setUnseen(0);
+      requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' }));
+    } finally {
+      jumpingToLatestRef.current = false;
     }
-    atBottomRef.current = true;
-    setAtBottom(true);
-    setUnseen(0);
-    requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' }));
   }
   latestJumpRef.current = jumpToLatest;
 
