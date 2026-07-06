@@ -14,20 +14,30 @@ RUN pnpm --filter @consulting/shared --filter @consulting/contracts --filter @co
 # prune dev deps for the runtime image
 RUN pnpm --filter @consulting/api --prod deploy --legacy /out
 
+# 축6: 문서 추출 파이썬 사이드카 venv를 python 3.12-alpine에서 빌드.
+# node:22-alpine의 python은 3.14라 일부 wheel(pymupdf_layout)이 없어 실패하므로
+# 검증된 3.12 musllinux wheel 조합으로 별도 stage에서 만들어 런타임에 복사한다.
+# venv 절대경로가 박히므로 런타임과 동일 경로(/app/extractor/.venv)로 생성.
+FROM python:3.12-alpine AS pybuild
+WORKDIR /app/extractor
+COPY apps/api/extractor/requirements.txt ./requirements.txt
+RUN python3 -m venv .venv \
+  && .venv/bin/pip install --no-cache-dir -r requirements.txt
+
 FROM node:22-alpine AS runtime
 RUN apk add --no-cache \
     pandoc typst weasyprint chromium font-noto-cjk \
     poppler-utils tesseract-ocr tesseract-ocr-data-kor tesseract-ocr-data-eng unzip \
-    python3 py3-pip \
+    libstdc++ \
   && addgroup -S app && adduser -S app -G app
 ENV CHROME_BIN=/usr/bin/chromium-browser
 ENV TESSDATA_PREFIX=/usr/share/tessdata
 WORKDIR /app
-# 축6: 문서 추출 파이썬 사이드카(pymupdf4llm 레이아웃/표 + 다중 파서 비교 +
-# 다중 OCR). alpine musllinux wheel이 전부 존재해 소스빌드 없이 설치된다.
-COPY apps/api/extractor/requirements.txt ./extractor/requirements.txt
-RUN python3 -m venv ./extractor/.venv \
-  && ./extractor/.venv/bin/pip install --no-cache-dir -r ./extractor/requirements.txt
+# 축6: 파이썬 사이드카 — python 3.12 인터프리터 전체(/usr/local)와 venv를 복사.
+# venv의 bin/python은 /usr/local/bin/python3.12 를 가리키므로 인터프리터도 함께
+# 가져와야 실행된다(런타임 node 이미지엔 3.14만 있어 무관하게 독립 동작).
+COPY --from=pybuild /usr/local /usr/local
+COPY --from=pybuild /app/extractor/.venv ./extractor/.venv
 COPY apps/api/extractor/extractor_worker.py ./extractor/extractor_worker.py
 COPY --from=build /out .
 COPY --from=build /repo/apps/api/dist ./dist

@@ -176,27 +176,61 @@ def hwpx_structured(data: bytes) -> str:
 
 
 def hwp_binary(data: bytes) -> str:
-    """HWP olefile BodyText(zlib) — 한컴 공식 방식."""
+    """HWP olefile BodyText — 한컴 공식 구조. FileHeader(36바이트+) bit0=압축 여부를
+    확인해 압축이면 zlib raw(-15) 해제, 비압축이면 그대로. 각 레코드는 HWPTAG_PARA_TEXT
+    를 UTF-16LE로 담는다. 깨진 결과(한글 비율 극소)는 품질 스코어에서 걸러진다."""
     try:
         import olefile
         import zlib
+        import struct
+
         ole = olefile.OleFileIO(io.BytesIO(data))
-        # 압축 여부는 FileHeader에 있으나 실무상 zlib raw(-15) 시도.
+        # 압축 여부: FileHeader 스트림 offset 36의 속성 플래그 bit0.
+        compressed = True
+        if ole.exists("FileHeader"):
+            fh = ole.openstream("FileHeader").read()
+            if len(fh) > 36:
+                compressed = bool(fh[36] & 0x01)
+
         texts = []
         for entry in ole.listdir():
-            if entry and entry[0] == "BodyText":
-                stream = ole.openstream(entry).read()
+            if not entry or entry[0] != "BodyText":
+                continue
+            stream = ole.openstream(entry).read()
+            if compressed:
                 try:
-                    dec = zlib.decompress(stream, -15)
+                    stream = zlib.decompress(stream, -15)
                 except Exception:
-                    dec = stream
-                # UTF-16LE 한글 텍스트 추출(제어문자 제거).
-                try:
-                    t = dec.decode("utf-16-le", errors="ignore")
-                    t = re.sub(r"[\x00-\x08\x0b-\x1f]", "", t)
-                    texts.append(t)
-                except Exception:
-                    pass
+                    continue
+            # HWP 레코드 파싱: 4바이트 헤더(tag_id 10bit, level 10bit, size 12bit).
+            # HWPTAG_PARA_TEXT = 0x43 (67). 그 payload가 UTF-16LE 문단 텍스트.
+            i, n = 0, len(stream)
+            while i + 4 <= n:
+                header = struct.unpack_from("<I", stream, i)[0]
+                tag_id = header & 0x3FF
+                size = (header >> 20) & 0xFFF
+                i += 4
+                if size == 0xFFF:  # 확장 크기(다음 4바이트)
+                    if i + 4 > n:
+                        break
+                    size = struct.unpack_from("<I", stream, i)[0]
+                    i += 4
+                if i + size > n:
+                    break
+                if tag_id == 67:  # HWPTAG_PARA_TEXT
+                    payload = stream[i:i + size]
+                    try:
+                        t = payload.decode("utf-16-le", errors="ignore")
+                        # 제어문자(문단/컨트롤 마커) 제거.
+                        t = re.sub(r"[\x00-\x08\x0b-\x1f]", "", t)
+                        # 레코드 경계 오인식으로 섞이는 깨진 CJK 바이트열 완화:
+                        # 한글/영문/숫자/공백/문장부호 사이에 낀 고립 한자 잔재 제거는
+                        # 과교정 위험이 있어, 명백한 제어영역만 지운다(위 라인으로 충분).
+                        if t.strip():
+                            texts.append(t)
+                    except Exception:
+                        pass
+                i += size
         return "\n".join(texts)
     except Exception:
         return ""
