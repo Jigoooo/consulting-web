@@ -125,6 +125,11 @@ export const ThreadDetailResponseSchema = z
     id: UuidSchema,
     title: TitleSchema,
     topicId: UuidSchema,
+    topicName: NameSchema,
+    channelId: UuidSchema,
+    channelName: NameSchema,
+    projectId: UuidSchema,
+    projectName: NameSchema,
     createdAt: z.string().datetime({ offset: true }),
   })
   .strict();

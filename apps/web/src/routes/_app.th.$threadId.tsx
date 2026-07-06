@@ -17,5 +17,17 @@ function ThreadPage() {
     queryKey: ['thread', threadId],
     queryFn: () => api.threadDetail(threadId),
   });
-  return <ChatThread threadId={threadId} title={detail.data?.title ?? '…'} />;
+  return (
+    <ChatThread
+      threadId={threadId}
+      title={detail.data?.title ?? '…'}
+      {...(detail.data ? {
+        breadcrumb: {
+          projectName: detail.data.projectName,
+          channelName: detail.data.channelName,
+          topicName: detail.data.topicName,
+        },
+      } : {})}
+    />
+  );
 }

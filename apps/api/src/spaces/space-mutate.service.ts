@@ -94,13 +94,37 @@ export class SpaceMutateService {
         id: schema.threads.id,
         title: schema.threads.title,
         topicId: schema.threads.topicId,
+        topicName: schema.topics.name,
+        channelId: schema.channels.id,
+        channelName: schema.channels.name,
+        projectId: schema.projects.id,
+        projectName: schema.projects.name,
         createdAt: schema.threads.createdAt,
       })
       .from(schema.threads)
-      .where(and(eq(schema.threads.id, id), isNull(schema.threads.deletedAt)))
+      .innerJoin(schema.topics, eq(schema.threads.topicId, schema.topics.id))
+      .innerJoin(schema.channels, eq(schema.topics.channelId, schema.channels.id))
+      .innerJoin(schema.projects, eq(schema.channels.projectId, schema.projects.id))
+      .where(and(
+        eq(schema.threads.id, id),
+        isNull(schema.threads.deletedAt),
+        isNull(schema.topics.deletedAt),
+        isNull(schema.channels.deletedAt),
+        isNull(schema.projects.deletedAt),
+      ))
       .limit(1);
     if (!row) return null;
-    return { id: row.id, title: row.title, topicId: row.topicId, createdAt: row.createdAt.toISOString() };
+    return {
+      id: row.id,
+      title: row.title,
+      topicId: row.topicId,
+      topicName: row.topicName,
+      channelId: row.channelId,
+      channelName: row.channelName,
+      projectId: row.projectId,
+      projectName: row.projectName,
+      createdAt: row.createdAt.toISOString(),
+    };
   }
 
   async listMembers(workspaceId: string): Promise<ListMembersResponse> {

@@ -44,6 +44,12 @@ interface SlashCommandItem {
   hint: string;
 }
 
+interface ThreadBreadcrumb {
+  projectName: string;
+  channelName: string;
+  topicName: string;
+}
+
 const HERMES_SLASH_COMMANDS: SlashCommandItem[] = [
   { command: '/help', value: '/help', title: '도움말', hint: 'Hermes가 지원하는 slash 명령 안내' },
   { command: '/commands', value: '/commands', title: '명령 목록', hint: 'gateway/CLI 명령 목록을 조회' },
@@ -71,7 +77,7 @@ function fmtSize(bytes: number): string {
  * hover on assistant messages glows the linked evidence (E-4), and answers
  * can be saved as artifacts (2-B) with file attachments (2-D G-3).
  */
-export function ChatThread({ threadId, title }: { threadId: string; title: string }) {
+export function ChatThread({ threadId, title, breadcrumb }: { threadId: string; title: string; breadcrumb?: ThreadBreadcrumb }) {
   const { user } = useAuth();
   const toast = useToast();
   const qc = useQueryClient();
@@ -467,8 +473,20 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
   return (
     <>
       <div className={s.head}>
-        <div>
-          <div className={s.title}>{title}</div>
+        <div className={s.headTitleBlock}>
+          {breadcrumb ? (
+            <>
+              <div className={s.crumb}>{breadcrumb.projectName}</div>
+              <div className={s.title}>{breadcrumb.channelName}</div>
+              {breadcrumb.topicName &&
+                breadcrumb.topicName !== '대화' &&
+                breadcrumb.topicName !== breadcrumb.channelName && (
+                  <div className={s.subTitle}>{breadcrumb.topicName}</div>
+                )}
+            </>
+          ) : (
+            <div className={s.title}>{title}</div>
+          )}
         </div>
         <div className={s.right}>
           <div className={s.threadSearch}>
