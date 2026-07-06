@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
-import { Link, useRouter } from '@tanstack/react-router';
+import { Link, useLocation, useRouter } from '@tanstack/react-router';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../../lib/useAuth';
 import {
   useWorkspaces,
@@ -268,11 +269,18 @@ function InlineCreate({
 
 function Sidebar({ className = '', onNavigate }: { className?: string | undefined; onNavigate?: (() => void) | undefined }) {
   const router = useRouter();
+  const location = useLocation();
   const { user } = useAuth();
   const toast = useToast();
   const selected = useSelectedWorkspace();
   const { data: wsData } = useWorkspaces();
   const { data: tree, isLoading } = useWorkspaceTree(selected ?? undefined);
+  const activeThread = useActiveThread();
+  const activeThreadDetail = useQuery({
+    queryKey: ['thread', activeThread],
+    queryFn: () => api.threadDetail(activeThread!),
+    enabled: activeThread !== null,
+  });
   const createProject = useCreateProject(selected ?? undefined);
   const createChannel = useCreateChannel(selected ?? undefined);
   const createTopic = useCreateTopic(selected ?? undefined);
@@ -282,6 +290,9 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
   const [pendingDelete, setPendingDelete] = useState<{ kind: 'projects' | 'channels' | 'topics'; id: string; label: string } | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
+
+  const routeTopicId = location.pathname.match(/^\/t\/([^/]+)/)?.[1] ?? null;
+  const currentTopicId = activeThreadDetail.data?.topicId ?? routeTopicId;
 
   const ws = wsData?.workspaces.find((w) => w.id === selected);
   const wsName = ws?.name ?? user?.displayName ?? '…';
@@ -313,6 +324,7 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
   async function openChannel(channel: { id: string; name: string; topics: Array<{ id: string; name: string }> }) {
     try {
       const topicId = channel.topics[0]?.id ?? (await createTopic.mutateAsync({ channelId: channel.id, name: '대화' })).id;
+      if (topicId === currentTopicId) return;
       onNavigate?.();
       await router.navigate({ to: '/t/$topicId', params: { topicId } });
     } catch {
@@ -378,10 +390,6 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
         </span>
       </Link>
       <div className={s.tree}>
-        <div className={s.treeIntro}>
-          <div className={s.treeIntroTitle}>작업 구조</div>
-          <div className={s.treeIntroText}>프로젝트 → 채널 → 토픽 순서로 정리됩니다.</div>
-        </div>
         <div className={s.secLabel}>프로젝트</div>
         {isLoading ? (
           <div style={{ padding: '8px' }}>
@@ -417,10 +425,18 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
               </div>
               {!collapsed ? (
                 <div className={s.channelList}>
-                  {p.channels.map((c) => (
+                  {p.channels.map((c) => {
+                    const channelActive = c.topics.some((t) => t.id === currentTopicId);
+                    return (
                     <div key={c.id} className={s.channelBlock}>
-                      <div className={s.chanRow}>
-                        <button type="button" className={s.chanMain} onClick={() => void openChannel(c)}>
+                      <div className={`${s.chanRow} ${channelActive ? s.chanRowActive : ''}`}>
+                        <button
+                          type="button"
+                          className={s.chanMain}
+                          aria-current={channelActive ? 'page' : undefined}
+                          disabled={channelActive}
+                          onClick={() => void openChannel(c)}
+                        >
                           <Icon name="hash" size="xs" tone="muted" decorative />
                           {c.name}
                         </button>
@@ -432,7 +448,8 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
                         />
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                   <InlineCreate
                     level="channel"
                     placeholder="채널 추가"

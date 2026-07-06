@@ -239,6 +239,8 @@
 
 .composer {
   padding: 12px 22px 20px;
+  background: var(--bg-canvas);
+  border-top: 1px solid var(--border-hair);
 }
 /* 2-D G-3: attachment strip + attach button */
 .fileStrip {
@@ -294,7 +296,7 @@
   border: 1px solid var(--border-whisper);
   border-radius: var(--radius-card);
   background: var(--bg-canvas);
-  box-shadow: var(--shadow-card);
+  box-shadow: none;
   transition: box-shadow var(--dur-base), border-color var(--dur-base);
 }
 .box:focus-within {
@@ -303,6 +305,8 @@
 }
 .boxTop {
   padding: 12px 14px 6px;
+  background: var(--bg-canvas);
+  border-radius: var(--radius-card) var(--radius-card) 0 0;
 }
 .textarea {
   width: 100%;
@@ -312,12 +316,15 @@
   font: inherit;
   font-size: 15px;
   color: var(--text-primary);
+  background: var(--bg-canvas);
 }
 .bar {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 6px 12px 10px;
+  background: var(--bg-canvas);
+  border-radius: 0 0 var(--radius-card) var(--radius-card);
 }
 .hint {
   font-size: 11.5px;
