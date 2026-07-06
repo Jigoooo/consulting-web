@@ -653,6 +653,31 @@
   align-items: center;
   gap: 7px;
 }
+.projToggle,
+.projMain,
+.chanMain {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.projToggle {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.projToggle[aria-expanded='false'] {
+  transform: rotate(-90deg);
+}
+.projToggle:hover {
+  background: rgba(15, 16, 17, 0.06);
+}
 .rowKicker {
   flex: none;
   font-size: 9.5px;
@@ -842,6 +867,24 @@
 .projMain,
 .chanMain {
   gap: 6px;
+}
+.projToggle,
+.projMain,
+.chanMain {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.projToggle {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
 }
 .rowKicker {
   display: none;

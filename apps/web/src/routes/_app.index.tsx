@@ -8,7 +8,7 @@ export const Route = createFileRoute('/_app/')({
 function IndexEmptyState() {
   return (
     <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--text-muted)' }}>
-      <SharedEmptyState icon="navigation" title="토픽을 선택하세요" description="왼쪽에서 토픽을 고르거나 새로 만들어 시작합니다." />
+      <SharedEmptyState icon="navigation" title="채널을 선택하세요" description="왼쪽에서 채널을 고르면 바로 대화를 시작할 수 있습니다." />
     </div>
   );
 }

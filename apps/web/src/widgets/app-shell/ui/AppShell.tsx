@@ -164,7 +164,7 @@ function Rail() {
               maxLength={120}
             />
             <div className={s.wsCreateHint}>
-              구조: 워크스페이스 → 프로젝트 → 채널 → 토픽(대화)
+              구조: 워크스페이스 → 프로젝트 → 채널(대화)
             </div>
             <div className={s.wsCreateActions}>
               <Button type="button" variant="secondary" onClick={() => setWsCreateOpen(false)} disabled={createWorkspace.isPending}>
@@ -267,6 +267,7 @@ function InlineCreate({
 }
 
 function Sidebar({ className = '', onNavigate }: { className?: string | undefined; onNavigate?: (() => void) | undefined }) {
+  const router = useRouter();
   const { user } = useAuth();
   const toast = useToast();
   const selected = useSelectedWorkspace();
@@ -280,6 +281,7 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
   const { prompt, dialog } = useTextPrompt();
   const [pendingDelete, setPendingDelete] = useState<{ kind: 'projects' | 'channels' | 'topics'; id: string; label: string } | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
 
   const ws = wsData?.workspaces.find((w) => w.id === selected);
   const wsName = ws?.name ?? user?.displayName ?? '…';
@@ -297,6 +299,35 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
 
   function onDelete(kind: 'projects' | 'channels' | 'topics', id: string, label: string) {
     setPendingDelete({ kind, id, label });
+  }
+
+  function toggleProject(projectId: string) {
+    setCollapsedProjects((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  }
+
+  async function openChannel(channel: { id: string; name: string; topics: Array<{ id: string; name: string }> }) {
+    try {
+      const topicId = channel.topics[0]?.id ?? (await createTopic.mutateAsync({ channelId: channel.id, name: '대화' })).id;
+      onNavigate?.();
+      await router.navigate({ to: '/t/$topicId', params: { topicId } });
+    } catch {
+      toast('error', '채널 대화를 여는 데 실패했어요.');
+    }
+  }
+
+  async function createChannelWithDefaultTopic(projectId: string, name: string) {
+    try {
+      const channel = await createChannel.mutateAsync({ projectId, name });
+      const topic = await createTopic.mutateAsync({ channelId: channel.id, name: '대화' });
+      await router.navigate({ to: '/t/$topicId', params: { topicId: topic.id } });
+    } catch {
+      toast('error', '채널 생성에 실패했어요.');
+    }
   }
 
   async function confirmDelete() {
@@ -359,77 +390,60 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
             <div className={s.skel} style={{ width: '85%' }} />
           </div>
         ) : null}
-        {tree?.projects.map((p) => (
-          <div key={p.id} className={s.projectBlock}>
-            <div className={s.projRow}>
-              <span className={s.projMain}>
-                <Icon name="folder" size="xs" tone="muted" decorative />
-                <span className={s.rowKicker}>프로젝트</span>
-                {p.name}
-              </span>
-              <RowMenu
-                actions={[
-                  { label: '이름 변경', onSelect: () => void onRename('projects', p.id, p.name) },
-                  { label: '삭제', danger: true, onSelect: () => void onDelete('projects', p.id, p.name) },
-                ]}
-              />
-            </div>
-            <div className={s.channelList}>
-              {p.channels.map((c) => (
-                <div key={c.id} className={s.channelBlock}>
-                  <div className={s.chanRow}>
-                    <span className={s.chanMain}>
-                      <Icon name="hash" size="xs" tone="muted" decorative />
-                      <span className={s.rowKicker}>채널</span>
-                      {c.name}
-                    </span>
-                    <RowMenu
-                      actions={[
-                        { label: '이름 변경', onSelect: () => void onRename('channels', c.id, c.name) },
-                        { label: '삭제', danger: true, onSelect: () => void onDelete('channels', c.id, c.name) },
-                      ]}
-                    />
-                  </div>
-                  <div className={s.topicList}>
-                    {c.topics.map((t) => (
-                      <div key={t.id} className={s.topicRow}>
-                        <Link
-                          to="/t/$topicId"
-                          params={{ topicId: t.id }}
-                          className={s.topic}
-                          activeProps={{ className: `${s.topic} ${s.active}` }}
-                          onClick={() => onNavigate?.()}
-                        >
-                          <span className={s.topicDot} />
-                          <span className={s.rowKicker}>토픽</span>
-                          {t.name}
-                        </Link>
+        {tree?.projects.map((p) => {
+          const collapsed = collapsedProjects.has(p.id);
+          return (
+            <div key={p.id} className={s.projectBlock}>
+              <div className={s.projRow}>
+                <button
+                  type="button"
+                  className={s.projToggle}
+                  aria-label={collapsed ? `${p.name} 펼치기` : `${p.name} 접기`}
+                  aria-expanded={!collapsed}
+                  onClick={() => toggleProject(p.id)}
+                >
+                  <Icon name="chevron-down" size="xs" tone="muted" decorative />
+                </button>
+                <button type="button" className={s.projMain} onClick={() => toggleProject(p.id)}>
+                  <Icon name="folder" size="xs" tone="muted" decorative />
+                  {p.name}
+                </button>
+                <RowMenu
+                  actions={[
+                    { label: '이름 변경', onSelect: () => void onRename('projects', p.id, p.name) },
+                    { label: '삭제', danger: true, onSelect: () => void onDelete('projects', p.id, p.name) },
+                  ]}
+                />
+              </div>
+              {!collapsed ? (
+                <div className={s.channelList}>
+                  {p.channels.map((c) => (
+                    <div key={c.id} className={s.channelBlock}>
+                      <div className={s.chanRow}>
+                        <button type="button" className={s.chanMain} onClick={() => void openChannel(c)}>
+                          <Icon name="hash" size="xs" tone="muted" decorative />
+                          {c.name}
+                        </button>
                         <RowMenu
                           actions={[
-                            { label: '이름 변경', onSelect: () => void onRename('topics', t.id, t.name) },
-                            { label: '삭제', danger: true, onSelect: () => void onDelete('topics', t.id, t.name) },
+                            { label: '이름 변경', onSelect: () => void onRename('channels', c.id, c.name) },
+                            { label: '삭제', danger: true, onSelect: () => void onDelete('channels', c.id, c.name) },
                           ]}
                         />
                       </div>
-                    ))}
-                    <InlineCreate
-                      level="topic"
-                      placeholder="토픽 추가"
-                      busy={createTopic.isPending}
-                      onSubmit={(name) => createTopic.mutate({ channelId: c.id, name })}
-                    />
-                  </div>
+                    </div>
+                  ))}
+                  <InlineCreate
+                    level="channel"
+                    placeholder="채널 추가"
+                    busy={createChannel.isPending || createTopic.isPending}
+                    onSubmit={(name) => void createChannelWithDefaultTopic(p.id, name)}
+                  />
                 </div>
-              ))}
-              <InlineCreate
-                level="channel"
-                placeholder="채널 추가"
-                busy={createChannel.isPending}
-                onSubmit={(name) => createChannel.mutate({ projectId: p.id, name })}
-              />
+              ) : null}
             </div>
-          </div>
-        ))}
+          );
+        })}
         <InlineCreate
           level="project"
           placeholder="프로젝트 추가"

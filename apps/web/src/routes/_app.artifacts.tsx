@@ -103,9 +103,8 @@ function ArtifactsPage() {
               className={s.backBtn}
               title="워크스페이스로 돌아가기"
               onClick={() => void router.navigate({ to: '/' })}
-            >
-              돌아가기
-            </Button>
+              aria-label="워크스페이스로 돌아가기"
+            />
             산출물
           </span>
           <Button type="button" variant="primary" size="sm" className={s.newBtn} leadingIcon="file-text" onClick={() => setCreating(true)}>
@@ -172,7 +171,7 @@ function ArtifactsPage() {
           </div>
         ) : !selected ? (
           <div className={s.placeholder}>
-            <EmptyState icon="file-text" title="산출물을 선택하세요" description="왼쪽 목록에서 선택하거나 새 산출물을 만듭니다." />
+            <EmptyState icon="file-text" title="산출물을 선택하세요" description="채널 대화에서 확정된 답변·보고서를 보관하고 PDF/DOCX로 내보내는 공간입니다." />
           </div>
         ) : detail.isLoading ? (
           <div className={s.placeholder}>불러오는 중…</div>

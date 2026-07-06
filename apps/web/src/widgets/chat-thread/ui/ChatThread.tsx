@@ -38,6 +38,11 @@ function fmtSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
 }
 
+function visibleRunId(runId?: string | null): string | null {
+  if (!runId || runId.startsWith('telegram-sync:')) return null;
+  return `${runId.slice(0, 12)}…`;
+}
+
 /**
  * Live chat for a thread (persistent). History loads from the API; new sends
  * stream via SSE and are persisted server-side. Craft layer (U-2):
@@ -274,7 +279,7 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
                   <span className={s.time}>
                     {new Date(m.createdAt).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' })}
                   </span>
-                  {m.runId ? <span className={s.runid}>{m.runId.slice(0, 12)}…</span> : null}
+                  {visibleRunId(m.runId) ? <span className={s.runid}>{visibleRunId(m.runId)}</span> : null}
                   <span className={s.msgActions}>
                     <IconButton type="button" className={s.msgActionBtn} label="복사" icon="copy" onClick={() => void copyText(m.content)} />
                     {m.role === 'assistant' && m.content ? (
@@ -317,7 +322,7 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
               <div className={s.body}>
                 <div className={s.meta}>
                   <span className={s.who}>{t.role === 'user' ? userName : '지구'}</span>
-                  {t.runId ? <span className={s.runid}>{t.runId.slice(0, 12)}…</span> : null}
+                  {visibleRunId(t.runId) ? <span className={s.runid}>{visibleRunId(t.runId)}</span> : null}
                   {!t.streaming && t.text ? (
                     <span className={s.msgActions}>
                       <IconButton type="button" className={s.msgActionBtn} label="복사" icon="copy" onClick={() => void copyText(t.text)} />
