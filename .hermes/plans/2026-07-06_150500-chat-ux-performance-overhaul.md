@@ -370,6 +370,127 @@ requestAnimationFrame(() => requestAnimationFrame(() => root.removeAttribute('da
 
 ---
 
+# Track E — React Compiler 정합 정리 (사용자 추가지시)
+
+**Objective:** React Compiler가 자동 메모이제이션하므로 수동 `useMemo`/`useCallback`을 전부 제거하고, 컴파일러가 못 잡는 지점만 **다른 방식**으로 최적화. 총 19개 사용처(7파일) 감사.
+
+**원칙:** React Compiler(babel-plugin-react-compiler v1)가 컴포넌트·커스텀훅 내 모든 파생값·함수를 deps 분석 기반으로 안정화한다. 따라서 수동 memo는 (a) 순수 성능용이면 제거, (b) 컴파일러가 bail-out하는 구조면 구조를 바꿔 제거, (c) ref 안정성이 **정확성**에 필요하면 `useRef`로 대체(memo 아님).
+
+**감사 결과 (전 케이스 순수 성능 → 제거 대상):**
+
+| 파일 | 사용 | 조치 |
+|------|------|------|
+| `ChatThread.tsx` | `slashItems` useMemo, `liveRows`(VirtualStream), `minimapEntries`(미메모) | useMemo 제거. minimapEntries는 F9대로 파생 유지(컴파일러가 안정화) |
+| `VirtualMessageStream.tsx` | `requestOlder`/`requestNewer` useCallback, `liveRows` useMemo | **ref 기반 리팩터**(E1) — IO 효과가 컴파일러에 의존하지 않게. liveRows useMemo 제거 |
+| `useMessageWindow.ts` | `loadOlder`/`loadNewer`/`jumpAround` useCallback | 제거(컴파일러가 훅 반환 콜백 안정화). 단 소비처 effect deps 회귀 QA |
+| `ConvoMinimap.tsx` | `userEntries` useMemo | 제거 |
+| `CommandPalette.tsx` | `items`/`filtered` useMemo | 제거(단 filtered는 Track F 한글매처로 교체됨) |
+| `Toast.tsx` | `push` useCallback (context value) | 제거 — 컴파일러가 context value 안정화. 소비처 재렌더 회귀 Profiler 확인 |
+| `push.ts` | `toggle` useCallback | 제거 |
+
+## Task E1: VirtualMessageStream IO 콜백 ref화 (컴파일러 독립)
+
+**Objective:** 무한스크롤 IO 효과의 정확성이 컴파일러 memo에 의존하지 않도록 구조 변경.
+
+**Steps:**
+1. `requestOlder`/`requestNewer` useCallback 삭제 → 로직을 IO effect **내부 인라인** 함수로 이동.
+2. effect가 참조하는 모든 가변값(guards, load fns, allowAutoLoad)은 이미 ref이므로 effect deps는 `[scrollRef]`(불변)만.
+3. 결과: 컴파일러가 이 컴포넌트를 bail-out해도 IO 재구독 없음. anchor 보정 로직도 ref 기반 확인.
+
+## Task E2: 나머지 수동 memo 일괄 제거 + 검증
+
+**Steps:**
+1. 위 표대로 useMemo/useCallback 제거(useRef·useEffect·useState는 유지).
+2. eslint `react-hooks` (v6, react-compiler 룰 포함) 통과 확인 — 불필요 memo 경고 0.
+3. React DevTools Profiler로 3지점 회귀 확인: (a) Toast 다발 시 소비처 과다 리렌더 없음, (b) 채널 트리 재렌더, (c) 스트리밍 중 커밋 빈도.
+4. **다른 방식 최적화(사용자 "다른 방식으로")**: 제거로 드러나는 진짜 병목은 memo가 아니라 *리렌더 유발원*이므로 Track A4(rAF 배칭)·A5(타이머 격리)·D(containment)가 실질 최적화를 담당. E는 코드 단순화 + 컴파일러 신뢰가 목적.
+
+**Verify:** typecheck+build+test GREEN, Profiler 3지점 회귀 없음.
+
+---
+
+# Track F — 검색 UX 전면 보강 + 한글 스마트 검색 (사용자 추가지시)
+
+**Objective:** ① 결과가 많을 때 "한 곳으로 점프"만 하던 UX를 **전체 결과 목록 + 전 버블 하이라이트 + 결과 네비게이터**로 교체. ② 초성/합성(부분자모)/띄어쓰기무시 한글 검색을 트랜스크립트 검색·⌘K 팔레트 양쪽에 적용.
+
+**아키텍처 결정:** 한글 매처는 **순수 TS 유틸**로 `packages/contracts`에 두어 web·api 양쪽이 동일 로직 공유(스키마 변경 없음, 외부 의존 0). 트랜스크립트 검색은 서버 store가 스레드 메시지(경계 있음)를 로드해 JS 매처로 필터 — pg 확장/초성 컬럼 불필요.
+
+## Task F1: 한글 스마트 매처 유틸 (공유)
+
+**Files:** Create `packages/contracts/src/hangul-search.ts` + export in `packages/contracts/src/index.ts`; Test `packages/contracts/src/hangul-search.test.ts`
+
+**명세 (TDD):**
+```ts
+// 유니코드 한글 음절 0xAC00~0xD7A3, 초성 19 / 중성 21 / 종성 28
+export function decomposeJamo(s: string): string   // 음절→자모열, 그외 그대로
+export function chosung(s: string): string          // 각 음절의 초성만
+export function normalizeSearch(s: string): string  // lowercase + 모든 공백 제거
+export function isChosungQuery(q: string): boolean   // 질의가 전부 초성자모(ㄱ~ㅎ)인가
+export function hangulMatch(text: string, query: string): boolean
+  // 아래 OR:
+  //  (1) normalizeSearch(text).includes(normalizeSearch(query))   ← 띄어쓰기무시 부분일치
+  //  (2) isChosungQuery면 chosung(text)에 대해 질의 초성 subsequence
+  //  (3) decomposeJamo(text)에 대해 decomposeJamo(query) subsequence ← 합성/부분자모
+export function highlightRanges(text: string, query: string): [number,number][]
+  // (1) 경로로 매칭될 때만 원문 인덱스 범위 반환(초성/자모는 범위 없음 → 버블레벨 강조로 폴백)
+```
+**RED 테스트 케이스:** `hangulMatch('창원시 예산서','ㅊㅇㅅ')===true`, `('창원시 예산서','창원 예산')===true`, `('창원시','차')===true`(합성), `('Hello World','hw')===true`(영문초성 유사), `('예산서','상')===false`.
+
+## Task F2: 서버 트랜스크립트 검색을 한글매처로 교체
+
+**Files:** Modify `apps/api/src/chat/chat-message.store.ts` `searchMessages`, `apps/api/src/chat/chat-stream.controller.ts`(변경 없음), `packages/contracts` 재빌드
+
+**Steps:**
+1. `searchMessages(threadId, q, limit)`: 기존 `ILIKE '%q%'` → 스레드 메시지 로드(`selectBase().where(visibleThread).orderBy(desc createdAt).limit(2000)`) 후 `hangulMatch(content, q)` 필터 → 상위 limit. (스레드 메시지 경계 있음; 2000 상한 가드.)
+2. 스니펫: `highlightRanges` 있으면 그 위치 기준, 없으면(초성/자모) 첫 매칭 어절 기준 발췌.
+3. 응답 contract에 `matchKind: 'text'|'chosung'|'jamo'`와 선택적 `ranges` 추가(SearchMessagesResponse 스키마 확장, optional).
+
+## Task F3: 검색 결과 UX — 우측 패널 결과 + 전 버블 하이라이트 + 네비게이터
+
+**Files:** Modify `ChatThread.tsx`(검색상태 상향), `VirtualMessageStream.tsx`(하이라이트셋), `AppShell.tsx` ContextPanel(검색 탭), `ThreadView.module.css`; Create `apps/web/src/widgets/chat-thread/model/searchStore.ts`(스레드-검색 상태 공유 store, threadCtx 패턴)
+
+**UX 명세:**
+1. **결과 목록(우측 패널 "검색" 탭)**: 검색 실행 시 ContextPanel에 검색 탭 자동 활성 + 전체 결과(스니펫·역할·시각) 리스트. 각 항목 클릭 → 해당 버블로 점프+포커스. 헤더 드롭다운은 **빠른 미리보기(상위 5)**로 축소, "우측에서 전체 보기" 링크.
+2. **전 버블 하이라이트**: 검색 활성 동안 현재 윈도우에 로드된 매칭 메시지 전부 `mark` 배경. `highlightRanges`가 있으면 해당 문자 범위에 `<mark>`, 없으면(초성/자모) 버블 좌측 accent 레일 + 옅은 배경.
+3. **결과 네비게이터**: 헤더에 `◀ 3 / 12 ▶` (Ctrl+F 스타일). 다음/이전 = 결과 배열 순회 → 해당 메시지 `jumpAround` 후 강조. 현재 포커스 결과는 강조 강함(다른 매칭은 약함).
+4. **엣지**: 결과가 현재 윈도우 밖이면 `jumpAround(id)`로 윈도우 이동(F10 트리밍과 정합) 후 강조. 검색어 지우면 하이라이트·네비 초기화. 스레드 전환 시 검색상태 리셋.
+5. **하이라이트 지속**: 기존 1.8s 펄스는 "현재 포커스 결과"에만, 나머지 매칭은 검색 활성 동안 지속.
+
+## Task F4: ⌘K 커맨드 팔레트 한글 매처 적용
+
+**Files:** Modify `CommandPalette.tsx`
+
+**Steps:** 기존 영문 subsequence `match()`를 `hangulMatch()`로 교체(초성/공백무시/합성 자동). `filtered` useMemo는 E대로 제거.
+
+**Verify(F 전체):** contracts 테스트 GREEN, 브라우저에서 `ㅊㅇ`→창원 채널·메시지 매칭, `창원 예산`(공백)→`창원예산서` 매칭, 결과 12개 시 우측 패널 목록+네비게이터+전 버블 mark, 다크모드 mark 대비 확인.
+
+---
+
+# Track A 확장 — 채팅 불러오기 UX 보강 (사용자 "더 많이 잘")
+
+기존 A1~A5에 더해:
+
+## Task A6: 로딩 상태 3종 시각 분리 + 상단 "이전 대화" 로드 표시 강화
+
+**Files:** `VirtualMessageStream.tsx`, `ThreadView.module.css`
+
+**Steps:**
+1. **초기 로드**: SkeletonMessage(완료됨) 유지.
+2. **상단 older 로딩**: 현재 텍스트 프로브 → 상단 고정 미니 스피너 바 + `SkeletonMessage` 1개를 리스트 최상단에 얹어 "이어붙는 중" 시각화(레이아웃 점프 방지: 앵커 보정과 함께).
+3. **하단 newer 로딩**(검색 점프 상태): 동일 패턴 하단.
+4. **끝 도달**: "대화의 시작이에요"/"최신입니다" 종결 표식(hasOlder=false / hasNewer=false).
+5. **네트워크 지연**: older 로드가 400ms 초과 시에만 스피너(useDelayedFlag) — 빠르면 무표시.
+6. **에러**: older/newer 로드 실패 시 "다시 시도" 인라인 버튼(현재 무처리) — `useMessageWindow`에 로드 에러 state 추가.
+
+## Task A7: 읽던 위치 보존(스레드 재진입) + 신규 메시지 구분선
+
+**Files:** `useMessageWindow.ts`, `VirtualMessageStream.tsx`, `searchStore.ts`
+
+**Steps:**
+1. **마지막 읽음 위치**: 스레드별 마지막 본 messageId를 sessionStorage에 저장, 재진입 시 그 위치로 복원(옵션: 바닥이 기본, 안 읽은 게 있으면 첫 안읽음으로).
+2. **신규 메시지 구분선**: 위로 스크롤 중 도착한 새 메시지 앞에 "여기까지 읽음 ─── 새 메시지" 디바이더(Slack 패턴). A2의 unseenCount와 연동.
+3. **엣지**: 스트리밍 자기 메시지는 구분선 대상 아님(내가 보낸 것).
+
 # 구현 순서 (의존성 기준)
 
 ```

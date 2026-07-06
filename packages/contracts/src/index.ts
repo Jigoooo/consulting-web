@@ -5,3 +5,4 @@ export * from './invitation.js';
 export * from './chat.js';
 export * from './spaces.js';
 export * from './collab.js';
+export * from './hangul-search.js';
