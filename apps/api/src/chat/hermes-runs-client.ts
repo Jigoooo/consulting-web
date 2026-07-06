@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { ChatStreamEvent, ChatStreamRequest } from '@consulting/contracts';
+import type { ChatStreamEvent, ChatStreamRequest, ChatStreamUsage } from '@consulting/contracts';
 import { ENV_TOKEN } from '../config/config.module.js';
 import type { Env } from '../config/env.schema.js';
 
@@ -16,6 +16,24 @@ interface HermesRunSseEvent {
   readonly error?: unknown;
   readonly tool?: unknown;
   readonly preview?: unknown;
+  readonly text?: unknown;
+  readonly usage?: unknown;
+}
+
+interface HermesRunStatusResponse {
+  readonly model?: unknown;
+  readonly usage?: unknown;
+}
+
+interface HermesUsageWire {
+  readonly input_tokens?: unknown;
+  readonly output_tokens?: unknown;
+  readonly total_tokens?: unknown;
+  readonly reasoning_tokens?: unknown;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object';
 }
 
 @Injectable()
@@ -26,7 +44,9 @@ export class HermesRunsClient {
     let runId: string | undefined;
     try {
       runId = await this.startRun(cmd);
-      yield { type: 'start', runId, threadId: cmd.threadId, ts: new Date().toISOString() };
+      const status = await this.getRunStatus(runId).catch(() => null);
+      const model = typeof status?.model === 'string' ? status.model : undefined;
+      yield { type: 'start', runId, threadId: cmd.threadId, ts: new Date().toISOString(), ...(model ? { model } : {}) };
 
       for await (const upstream of this.readRunEvents(runId)) {
         const eventType = typeof upstream.event === 'string' ? upstream.event : '';
@@ -49,8 +69,14 @@ export class HermesRunsClient {
           }
           continue;
         }
+        if (eventType === 'reasoning.available') {
+          const text = typeof upstream.text === 'string' ? upstream.text.slice(0, 2_000) : '';
+          yield { type: 'reasoning', runId, text };
+          continue;
+        }
         if (eventType === 'run.completed') {
-          yield { type: 'done', runId };
+          const usage = this.normalizeUsage(upstream.usage);
+          yield { type: 'done', runId, ...(usage ? { usage } : {}) };
           return;
         }
         if (eventType === 'run.failed') {
@@ -96,6 +122,31 @@ export class HermesRunsClient {
       throw new Error('Hermes run start returned invalid run_id');
     }
     return body.run_id;
+  }
+
+  private async getRunStatus(runId: string): Promise<HermesRunStatusResponse> {
+    const response = await fetch(this.url(`/v1/runs/${encodeURIComponent(runId)}`), {
+      method: 'GET',
+      headers: this.headers({ accept: 'application/json' }),
+    });
+    if (!response.ok) return {};
+    const body: unknown = await response.json();
+    if (!isRecord(body)) return {};
+    return {
+      ...(typeof body.model === 'string' ? { model: body.model } : {}),
+      ...(isRecord(body.usage) ? { usage: body.usage } : {}),
+    };
+  }
+
+  private normalizeUsage(raw: unknown): ChatStreamUsage | undefined {
+    if (!raw || typeof raw !== 'object') return undefined;
+    const usage = raw as HermesUsageWire;
+    const out: ChatStreamUsage = {};
+    if (typeof usage.input_tokens === 'number') out.inputTokens = usage.input_tokens;
+    if (typeof usage.output_tokens === 'number') out.outputTokens = usage.output_tokens;
+    if (typeof usage.total_tokens === 'number') out.totalTokens = usage.total_tokens;
+    if (typeof usage.reasoning_tokens === 'number') out.reasoningTokens = usage.reasoning_tokens;
+    return Object.keys(out).length > 0 ? out : undefined;
   }
 
   private async *readRunEvents(runId: string): AsyncGenerator<HermesRunSseEvent> {

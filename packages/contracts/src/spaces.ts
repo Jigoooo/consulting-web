@@ -150,6 +150,62 @@ export const ListMessagesResponseSchema = z
   .strict();
 export type ListMessagesResponse = z.infer<typeof ListMessagesResponseSchema>;
 
+export const ListMessagesPageRequestSchema = z
+  .object({
+    limit: z.number().int().min(1).max(100).optional(),
+    before: UuidSchema.optional(),
+    after: UuidSchema.optional(),
+    around: UuidSchema.optional(),
+    direction: z.enum(['older', 'newer']).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const cursorCount = [value.before, value.after, value.around].filter(Boolean).length;
+    if (cursorCount > 1) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Use only one of before, after, or around.',
+        path: ['before'],
+      });
+    }
+  });
+export type ListMessagesPageRequest = z.infer<typeof ListMessagesPageRequestSchema>;
+
+export const ListMessagesPageResponseSchema = z
+  .object({
+    messages: z.array(ChatMessageSchema),
+    hasOlder: z.boolean(),
+    hasNewer: z.boolean(),
+    olderCursor: UuidSchema.nullable(),
+    newerCursor: UuidSchema.nullable(),
+    anchorMessageId: UuidSchema.optional(),
+  })
+  .strict();
+export type ListMessagesPageResponse = z.infer<typeof ListMessagesPageResponseSchema>;
+
+export const SearchMessagesRequestSchema = z
+  .object({
+    q: z.string().trim().min(1).max(120),
+    limit: z.number().int().min(1).max(50).optional(),
+  })
+  .strict();
+export type SearchMessagesRequest = z.infer<typeof SearchMessagesRequestSchema>;
+
+export const MessageSearchHitSchema = z
+  .object({
+    id: UuidSchema,
+    role: z.enum(['user', 'assistant']),
+    snippet: z.string(),
+    createdAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+export type MessageSearchHit = z.infer<typeof MessageSearchHitSchema>;
+
+export const SearchMessagesResponseSchema = z
+  .object({ results: z.array(MessageSearchHitSchema) })
+  .strict();
+export type SearchMessagesResponse = z.infer<typeof SearchMessagesResponseSchema>;
+
 /** Rename any space node (N-4). */
 export const RenameRequestSchema = z.object({ name: NameSchema }).strict();
 export type RenameRequest = z.infer<typeof RenameRequestSchema>;

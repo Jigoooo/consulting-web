@@ -3,6 +3,15 @@ import { z } from 'zod';
 const UuidSchema = z.string().uuid();
 const RunIdSchema = z.string().trim().min(1).max(128);
 
+export const ChatStreamUsageSchema = z.object({
+  inputTokens: z.number().int().nonnegative().optional(),
+  outputTokens: z.number().int().nonnegative().optional(),
+  totalTokens: z.number().int().nonnegative().optional(),
+  reasoningTokens: z.number().int().nonnegative().optional(),
+  contextLimit: z.number().int().positive().optional(),
+}).strict();
+export type ChatStreamUsage = z.infer<typeof ChatStreamUsageSchema>;
+
 export const ChatStreamRequestSchema = z.object({
   threadId: UuidSchema,
   message: z.string().min(1).max(20_000),
@@ -15,6 +24,8 @@ export const ChatStreamStartEventSchema = z.object({
   runId: RunIdSchema,
   threadId: UuidSchema,
   ts: z.string().datetime(),
+  model: z.string().min(1).max(200).optional(),
+  contextLimit: z.number().int().positive().optional(),
 }).strict();
 
 export const ChatStreamDeltaEventSchema = z.object({
@@ -32,9 +43,16 @@ export const ChatStreamToolEventSchema = z.object({
   preview: z.string().max(500).optional(),
 }).strict();
 
+export const ChatStreamReasoningEventSchema = z.object({
+  type: z.literal('reasoning'),
+  runId: RunIdSchema,
+  text: z.string().max(2_000),
+}).strict();
+
 export const ChatStreamDoneEventSchema = z.object({
   type: z.literal('done'),
   runId: RunIdSchema,
+  usage: ChatStreamUsageSchema.optional(),
 }).strict();
 
 export const ChatStreamErrorEventSchema = z.object({
@@ -48,13 +66,14 @@ export const ChatStreamEventSchema = z.discriminatedUnion('type', [
   ChatStreamStartEventSchema,
   ChatStreamDeltaEventSchema,
   ChatStreamToolEventSchema,
+  ChatStreamReasoningEventSchema,
   ChatStreamDoneEventSchema,
   ChatStreamErrorEventSchema,
 ]);
 export type ChatStreamEvent = z.infer<typeof ChatStreamEventSchema>;
 
 export const ChatStreamSseFrameSchema = z.object({
-  event: z.enum(['start', 'delta', 'tool', 'done', 'error']),
+  event: z.enum(['start', 'delta', 'tool', 'reasoning', 'done', 'error']),
   data: ChatStreamEventSchema,
 }).strict();
 export type ChatStreamSseFrame = z.infer<typeof ChatStreamSseFrameSchema>;

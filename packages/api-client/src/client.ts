@@ -34,6 +34,8 @@ import {
   ListThreadsResponseSchema,
   ThreadDetailResponseSchema,
   ListMessagesResponseSchema,
+  ListMessagesPageResponseSchema,
+  SearchMessagesResponseSchema,
   ListMembersResponseSchema,
   OkResponseSchema,
   type ListWorkspacesResponse,
@@ -41,6 +43,10 @@ import {
   type ListThreadsResponse,
   type ThreadDetailResponse,
   type ListMessagesResponse,
+  type ListMessagesPageRequest,
+  type ListMessagesPageResponse,
+  type SearchMessagesRequest,
+  type SearchMessagesResponse,
   type ListMembersResponse,
   type OkResponse,
   ListEvidenceResponseSchema,
@@ -149,6 +155,28 @@ export class ConsultingApiClient {
   listMessages(threadId: string): Promise<ListMessagesResponse> {
     return this.http.request(`/chat/threads/${threadId}/messages`, { method: 'GET' }, (d) =>
       ListMessagesResponseSchema.parse(d),
+    );
+  }
+
+  listMessagesPage(threadId: string, query: ListMessagesPageRequest = {}): Promise<ListMessagesPageResponse> {
+    const params = new URLSearchParams();
+    if (query.limit !== undefined) params.set('limit', String(query.limit));
+    if (query.before !== undefined) params.set('before', query.before);
+    if (query.after !== undefined) params.set('after', query.after);
+    if (query.around !== undefined) params.set('around', query.around);
+    if (query.direction !== undefined) params.set('direction', query.direction);
+    const suffix = params.size > 0 ? `?${params.toString()}` : '?page=1';
+    return this.http.request(`/chat/threads/${threadId}/messages${suffix}`, { method: 'GET' }, (d) =>
+      ListMessagesPageResponseSchema.parse(d),
+    );
+  }
+
+  searchMessages(threadId: string, query: SearchMessagesRequest): Promise<SearchMessagesResponse> {
+    const params = new URLSearchParams();
+    params.set('q', query.q);
+    if (query.limit !== undefined) params.set('limit', String(query.limit));
+    return this.http.request(`/chat/threads/${threadId}/messages/search?${params.toString()}`, { method: 'GET' }, (d) =>
+      SearchMessagesResponseSchema.parse(d),
     );
   }
 

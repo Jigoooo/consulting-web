@@ -1,10 +1,23 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { schema } from '@consulting/db-schema';
-import { and, asc, eq, isNull } from 'drizzle-orm';
-import type { ListMessagesResponse } from '@consulting/contracts';
+import { and, asc, desc, eq, gt, ilike, isNull, lt, or } from 'drizzle-orm';
+import type { ChatMessage, ListMessagesPageRequest, ListMessagesPageResponse, ListMessagesResponse, SearchMessagesResponse } from '@consulting/contracts';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 
 export type FinishState = 'complete' | 'cancelled' | 'error';
+
+type DbMessageRow = {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  authorUserId: string | null;
+  authorName: string | null;
+  runId: string | null;
+  finishState: string;
+  createdAt: Date;
+};
+
+type MessageRow = ChatMessage & { createdAtDate: Date };
 
 /**
  * Persistence for chat transcripts (N-1). The stream controller writes here:
@@ -53,7 +66,127 @@ export class ChatMessageStore {
   }
 
   async listMessages(threadId: string): Promise<ListMessagesResponse> {
-    const rows = await this.db
+    const rows = await this.selectBase()
+      .where(this.visibleThread(threadId))
+      .orderBy(asc(schema.chatMessages.createdAt), asc(schema.chatMessages.id));
+
+    return { messages: rows.map((r) => this.toMessage(r)) };
+  }
+
+  async listMessagesPage(threadId: string, input: ListMessagesPageRequest): Promise<ListMessagesPageResponse> {
+    const limit = input.limit ?? 50;
+    if (input.around) return this.listAround(threadId, input.around, limit);
+    if (input.before) return this.listBefore(threadId, input.before, limit);
+    if (input.after) return this.listAfter(threadId, input.after, limit);
+    return this.listLatest(threadId, limit);
+  }
+
+  async searchMessages(threadId: string, query: string, limit = 20): Promise<SearchMessagesResponse> {
+    const q = query.trim();
+    if (!q) return { results: [] };
+    const rows = await this.selectBase()
+      .where(and(this.visibleThread(threadId), ilike(schema.chatMessages.content, `%${q}%`)))
+      .orderBy(desc(schema.chatMessages.createdAt), desc(schema.chatMessages.id))
+      .limit(Math.min(Math.max(limit, 1), 50));
+    return {
+      results: rows.map((row) => ({
+        id: row.id,
+        role: row.role,
+        snippet: this.snippet(row.content, q),
+        createdAt: row.createdAt.toISOString(),
+      })),
+    };
+  }
+
+  private async listLatest(threadId: string, limit: number): Promise<ListMessagesPageResponse> {
+    const rows = await this.selectBase()
+      .where(this.visibleThread(threadId))
+      .orderBy(desc(schema.chatMessages.createdAt), desc(schema.chatMessages.id))
+      .limit(limit + 1);
+    const hasOlder = rows.length > limit;
+    return this.page(rows.slice(0, limit).reverse(), hasOlder, false);
+  }
+
+  private async listBefore(threadId: string, beforeId: string, limit: number): Promise<ListMessagesPageResponse> {
+    const cursor = await this.cursor(threadId, beforeId);
+    if (!cursor) return this.emptyPage();
+    const rows = await this.selectBase()
+      .where(and(
+        this.visibleThread(threadId),
+        or(
+          lt(schema.chatMessages.createdAt, cursor.createdAtDate),
+          and(eq(schema.chatMessages.createdAt, cursor.createdAtDate), lt(schema.chatMessages.id, cursor.id)),
+        ),
+      ))
+      .orderBy(desc(schema.chatMessages.createdAt), desc(schema.chatMessages.id))
+      .limit(limit + 1);
+    const hasOlder = rows.length > limit;
+    return this.page(rows.slice(0, limit).reverse(), hasOlder, true);
+  }
+
+  private async listAfter(threadId: string, afterId: string, limit: number): Promise<ListMessagesPageResponse> {
+    const cursor = await this.cursor(threadId, afterId);
+    if (!cursor) return this.emptyPage();
+    const rows = await this.selectBase()
+      .where(and(
+        this.visibleThread(threadId),
+        or(
+          gt(schema.chatMessages.createdAt, cursor.createdAtDate),
+          and(eq(schema.chatMessages.createdAt, cursor.createdAtDate), gt(schema.chatMessages.id, cursor.id)),
+        ),
+      ))
+      .orderBy(asc(schema.chatMessages.createdAt), asc(schema.chatMessages.id))
+      .limit(limit + 1);
+    const hasNewer = rows.length > limit;
+    return this.page(rows.slice(0, limit), true, hasNewer);
+  }
+
+  private async listAround(threadId: string, aroundId: string, limit: number): Promise<ListMessagesPageResponse> {
+    const anchor = await this.cursor(threadId, aroundId);
+    if (!anchor) return this.emptyPage();
+    const beforeCount = Math.floor((limit - 1) / 2);
+    const afterCount = Math.max(0, limit - 1 - beforeCount);
+    const olderRows = beforeCount > 0
+      ? await this.selectBase()
+        .where(and(
+          this.visibleThread(threadId),
+          or(
+            lt(schema.chatMessages.createdAt, anchor.createdAtDate),
+            and(eq(schema.chatMessages.createdAt, anchor.createdAtDate), lt(schema.chatMessages.id, anchor.id)),
+          ),
+        ))
+        .orderBy(desc(schema.chatMessages.createdAt), desc(schema.chatMessages.id))
+        .limit(beforeCount + 1)
+      : [];
+    const newerRows = afterCount > 0
+      ? await this.selectBase()
+        .where(and(
+          this.visibleThread(threadId),
+          or(
+            gt(schema.chatMessages.createdAt, anchor.createdAtDate),
+            and(eq(schema.chatMessages.createdAt, anchor.createdAtDate), gt(schema.chatMessages.id, anchor.id)),
+          ),
+        ))
+        .orderBy(asc(schema.chatMessages.createdAt), asc(schema.chatMessages.id))
+        .limit(afterCount + 1)
+      : [];
+    const page = this.page(
+      [...olderRows.slice(0, beforeCount).reverse(), anchor, ...newerRows.slice(0, afterCount)],
+      olderRows.length > beforeCount,
+      newerRows.length > afterCount,
+    );
+    return { ...page, anchorMessageId: anchor.id };
+  }
+
+  private async cursor(threadId: string, messageId: string): Promise<MessageRow | null> {
+    const [row] = await this.selectBase()
+      .where(and(this.visibleThread(threadId), eq(schema.chatMessages.id, messageId)))
+      .limit(1);
+    return row ? this.toMessageRow(row) : null;
+  }
+
+  private selectBase() {
+    return this.db
       .select({
         id: schema.chatMessages.id,
         role: schema.chatMessages.role,
@@ -65,21 +198,59 @@ export class ChatMessageStore {
         createdAt: schema.chatMessages.createdAt,
       })
       .from(schema.chatMessages)
-      .leftJoin(schema.users, eq(schema.chatMessages.authorUserId, schema.users.id))
-      .where(and(eq(schema.chatMessages.threadId, threadId), isNull(schema.chatMessages.deletedAt)))
-      .orderBy(asc(schema.chatMessages.createdAt));
+      .leftJoin(schema.users, eq(schema.chatMessages.authorUserId, schema.users.id));
+  }
 
+  private visibleThread(threadId: string) {
+    return and(eq(schema.chatMessages.threadId, threadId), isNull(schema.chatMessages.deletedAt));
+  }
+
+  private page(rows: ReadonlyArray<DbMessageRow | MessageRow>, hasOlder: boolean, hasNewer: boolean): ListMessagesPageResponse {
+    const messages = rows.map((r) => ('createdAtDate' in r ? this.stripDate(r) : this.toMessage(r)));
     return {
-      messages: rows.map((r) => ({
-        id: r.id,
-        role: r.role,
-        content: r.content,
-        authorUserId: r.authorUserId,
-        authorName: r.authorName,
-        runId: r.runId,
-        finishState: (r.finishState as FinishState) ?? 'complete',
-        createdAt: r.createdAt.toISOString(),
-      })),
+      messages,
+      hasOlder,
+      hasNewer,
+      olderCursor: messages[0]?.id ?? null,
+      newerCursor: messages.at(-1)?.id ?? null,
     };
+  }
+
+  private emptyPage(): ListMessagesPageResponse {
+    return { messages: [], hasOlder: false, hasNewer: false, olderCursor: null, newerCursor: null };
+  }
+
+  private toMessageRow(r: DbMessageRow): MessageRow {
+    return { ...this.toMessage(r), createdAtDate: r.createdAt };
+  }
+
+  private stripDate(row: MessageRow): ChatMessage {
+    const { createdAtDate: _createdAtDate, ...message } = row;
+    return message;
+  }
+
+  private toMessage(r: DbMessageRow): ChatMessage {
+    return {
+      id: r.id,
+      role: r.role,
+      content: r.content,
+      authorUserId: r.authorUserId,
+      authorName: r.authorName,
+      runId: r.runId,
+      finishState: (r.finishState as FinishState) ?? 'complete',
+      createdAt: r.createdAt.toISOString(),
+    };
+  }
+
+  private snippet(content: string, query: string): string {
+    const lower = content.toLocaleLowerCase();
+    const needle = query.toLocaleLowerCase();
+    const index = lower.indexOf(needle);
+    if (index < 0) return content.slice(0, 140);
+    const start = Math.max(0, index - 48);
+    const end = Math.min(content.length, index + query.length + 92);
+    const prefix = start > 0 ? '…' : '';
+    const suffix = end < content.length ? '…' : '';
+    return `${prefix}${content.slice(start, end)}${suffix}`;
   }
 }

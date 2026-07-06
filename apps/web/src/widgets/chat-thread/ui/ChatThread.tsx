@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ChatStreamUsage, MessageSearchHit } from '@consulting/contracts';
+import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { api } from '../../../lib/api';
 import { useAuth } from '../../../lib/useAuth';
 import { useToast } from '../../../shared/ui/toast/Toast';
-import { activeThreadStore, hoveredMessageStore } from '../../../lib/threadCtx';
+import { activeThreadStore } from '../../../lib/threadCtx';
 import { useSelectedWorkspace } from '../../../lib/wsStore';
 import { useWorkspaceTree } from '../../../lib/spaces';
 import {
@@ -14,11 +15,11 @@ import {
   fileToBase64,
   saveAttachment,
 } from '../../../lib/collab';
-import { Markdown } from '../../../shared/ui/markdown/Markdown';
-import { ThinkingRibbon } from './ThinkingRibbon';
 import { ConvoMinimap, type MinimapEntry } from './ConvoMinimap';
+import { messageWindowKeys, useMessageWindow } from '../model/useMessageWindow';
+import { VirtualMessageStream } from './VirtualMessageStream';
 import { Icon } from '../../../shared/icons/Icon';
-import { IconButton, Button } from '../../../shared/ui/button/Button';
+import { Button } from '../../../shared/ui/button/Button';
 import { Textarea } from '../../../shared/ui/input/Input';
 import { EmptyState, Spinner } from '../../../shared/ui/feedback/EmptyState';
 import s from '../../thread-view/ui/ThreadView.module.css';
@@ -32,16 +33,62 @@ interface LiveTurn {
   error?: string;
 }
 
+interface SlashCommandItem {
+  command: string;
+  value: string;
+  title: string;
+  hint: string;
+}
+
+interface RunStatusUi {
+  runId?: string;
+  model?: string;
+  contextLimit?: number;
+  usage?: ChatStreamUsage;
+  startedAt: number;
+  finishedAt?: number;
+  state: 'running' | 'done' | 'error';
+  reasoning?: boolean;
+  reasoningText?: string;
+}
+
+const HERMES_SLASH_COMMANDS: SlashCommandItem[] = [
+  { command: '/help', value: '/help', title: '도움말', hint: 'Hermes가 지원하는 slash 명령 안내' },
+  { command: '/commands', value: '/commands', title: '명령 목록', hint: 'gateway/CLI 명령 목록을 조회' },
+  { command: '/usage', value: '/usage', title: '사용량', hint: '토큰/사용량 정보가 지원되면 표시' },
+  { command: '/status', value: '/status', title: '세션 상태', hint: '현재 Hermes 세션 상태 확인' },
+  { command: '/model', value: '/model', title: '모델 확인', hint: '현재 모델 또는 모델 변경 명령' },
+  { command: '/reasoning', value: '/reasoning show', title: 'Reasoning 표시', hint: 'reasoning 표시 상태를 확인/변경' },
+  { command: '/verbose', value: '/verbose', title: '진행 상세도', hint: '도구/진행 표시 레벨 전환' },
+  { command: '/skills', value: '/skills', title: '스킬', hint: '사용 가능한 Hermes skills 조회' },
+  { command: '/tools', value: '/tools', title: '도구', hint: '도구/툴셋 상태 조회' },
+];
+
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
 }
 
-function visibleRunId(runId?: string | null): string | null {
-  if (!runId || runId.startsWith('telegram-sync:')) return null;
-  return `${runId.slice(0, 12)}…`;
+function fmtTokens(tokens?: number): string {
+  if (tokens === undefined) return 'tok 대기';
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
+  if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`;
+  return String(tokens);
 }
+
+function fmtElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
+function contextPercent(usage?: ChatStreamUsage, contextLimit?: number): number | null {
+  if (!usage?.totalTokens || !contextLimit) return null;
+  return Math.min(100, Math.round((usage.totalTokens / contextLimit) * 100));
+}
+
 
 /**
  * Live chat for a thread (persistent). History loads from the API; new sends
@@ -58,15 +105,20 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
   const navigate = useNavigate();
   const workspaceId = useSelectedWorkspace();
   const { data: tree } = useWorkspaceTree(workspaceId ?? undefined);
-  const history = useQuery({
-    queryKey: ['messages', threadId],
-    queryFn: () => api.listMessages(threadId),
-  });
+  const history = useMessageWindow(threadId);
   const attachments = useAttachments(threadId);
   const uploadAttachment = useUploadAttachment(threadId);
 
   const [live, setLive] = useState<LiveTurn[]>([]);
   const [input, setInput] = useState('');
+  const [slashCursor, setSlashCursor] = useState(0);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<MessageSearchHit[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [targetMessageId, setTargetMessageId] = useState<string | null>(null);
+  const [runStatus, setRunStatus] = useState<RunStatusUi | null>(null);
+  const [nowTs, setNowTs] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -84,14 +136,27 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [live, history.data]);
+  }, [live]);
 
   useEffect(() => {
     setLive([]);
     abortRef.current?.abort();
     setBusy(false);
     setActiveTool(null);
+    setSlashCursor(0);
+    setSearchQuery('');
+    setSearchResults([]);
+    setSearchOpen(false);
+    setSearching(false);
+    setTargetMessageId(null);
+    setRunStatus(null);
   }, [threadId]);
+
+  useEffect(() => {
+    if (!busy) return;
+    const timer = window.setInterval(() => setNowTs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [busy]);
 
   function patchTurn(id: number, patch: Partial<LiveTurn>) {
     setLive((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
@@ -103,6 +168,8 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
     if (!messageOverride) setInput('');
     lastPromptRef.current = message;
     setBusy(true);
+    setNowTs(Date.now());
+    setRunStatus({ startedAt: Date.now(), state: 'running' });
     setActiveTool(null);
 
     const userTurn: LiveTurn = { id: nextId.current++, role: 'user', text: message };
@@ -116,21 +183,56 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
       for await (const event of api.streamChat({ threadId, message }, controller.signal)) {
         if (event.type === 'start') {
           patchTurn(aiTurn.id, { runId: event.runId });
+          setRunStatus((prev) => {
+            const next: RunStatusUi = {
+              ...(prev ?? { startedAt: Date.now(), state: 'running' as const }),
+              runId: event.runId,
+              state: 'running',
+            };
+            if (event.model) next.model = event.model;
+            if (event.contextLimit) next.contextLimit = event.contextLimit;
+            return next;
+          });
         } else if (event.type === 'tool') {
           // Phase 2-A: surface real tool activity in the ribbon.
           setActiveTool(event.phase === 'started' ? event.tool : null);
+        } else if (event.type === 'reasoning') {
+          setRunStatus((prev) => ({
+            ...(prev ?? { startedAt: Date.now(), state: 'running' as const }),
+            runId: event.runId,
+            reasoning: true,
+            reasoningText: event.text,
+            state: 'running',
+          }));
         } else if (event.type === 'delta') {
           acc += event.text;
           setActiveTool(null);
           patchTurn(aiTurn.id, { text: acc });
         } else if (event.type === 'done') {
           patchTurn(aiTurn.id, { streaming: false });
+          setRunStatus((prev) => {
+            const next: RunStatusUi = {
+              ...(prev ?? { startedAt: Date.now(), state: 'done' as const }),
+              runId: event.runId,
+              finishedAt: Date.now(),
+              state: 'done',
+            };
+            const usage = event.usage ?? prev?.usage;
+            if (usage) next.usage = usage;
+            return next;
+          });
         } else if (event.type === 'error') {
           patchTurn(aiTurn.id, { streaming: false, error: event.message });
+          setRunStatus((prev) => ({
+            ...(prev ?? { startedAt: Date.now(), state: 'error' as const }),
+            finishedAt: Date.now(),
+            state: 'error',
+          }));
           toast('error', '응답 생성 실패');
         }
       }
       patchTurn(aiTurn.id, { streaming: false });
+      setRunStatus((prev) => prev?.state === 'running' ? { ...prev, finishedAt: Date.now(), state: 'done' } : prev);
     } catch {
       if (controller.signal.aborted) {
         patchTurn(aiTurn.id, { streaming: false, error: '중단됨' });
@@ -142,7 +244,7 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
       setBusy(false);
       setActiveTool(null);
       abortRef.current = null;
-      void qc.invalidateQueries({ queryKey: ['messages', threadId], refetchType: 'none' });
+      void qc.invalidateQueries({ queryKey: messageWindowKeys.latest(threadId), refetchType: 'none' });
       // Evidence rows settle with the assistant message — refresh the panel.
       void qc.invalidateQueries({ queryKey: collabKeys.evidence(threadId) });
     }
@@ -211,14 +313,68 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
     }
   }
 
+  async function searchTranscript() {
+    const q = searchQuery.trim();
+    if (!q) {
+      setSearchResults([]);
+      setSearchOpen(false);
+      return;
+    }
+    setSearching(true);
+    try {
+      const res = await api.searchMessages(threadId, { q, limit: 8 });
+      setSearchResults(res.results);
+      setSearchOpen(true);
+    } catch {
+      toast('error', '대화 검색에 실패했어요.');
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  async function jumpToSearchHit(hit: MessageSearchHit) {
+    try {
+      const target = await history.jumpAround(hit.id);
+      setTargetMessageId(target);
+      setSearchOpen(false);
+    } catch {
+      toast('error', '검색 위치로 이동하지 못했어요.');
+    }
+  }
+
   function jumpTo(key: string) {
     const el = streamRef.current?.querySelector(`[data-turn="${key}"]`);
     el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
   const userName = user?.displayName ?? '나';
-  const persisted = history.data?.messages ?? [];
+  const persisted = history.messages;
   const files = attachments.data?.attachments ?? [];
+
+  const slashQuery = input.startsWith('/') && !input.includes('\n') ? input.slice(1).trim().toLocaleLowerCase() : '';
+  const showSlashMenu = input.startsWith('/') && !input.includes('\n');
+  const slashItems = useMemo(() => {
+    if (!showSlashMenu) return [];
+    const items = HERMES_SLASH_COMMANDS.filter((item) => {
+      if (!slashQuery) return true;
+      return item.command.slice(1).includes(slashQuery) || item.title.toLocaleLowerCase().includes(slashQuery);
+    });
+    return items.slice(0, 7);
+  }, [showSlashMenu, slashQuery]);
+
+  useEffect(() => setSlashCursor(0), [slashQuery]);
+
+  const currentUsage = runStatus?.usage;
+  const currentContextLimit = runStatus?.contextLimit ?? currentUsage?.contextLimit;
+  const runPct = contextPercent(currentUsage, currentContextLimit);
+  const runMeterWidth = runPct ?? (runStatus?.state === 'running' ? 18 : 0);
+  const runElapsedMs = runStatus ? (runStatus.finishedAt ?? nowTs) - runStatus.startedAt : 0;
+  const runStateClass = runStatus?.state === 'error'
+    ? s.runStatusError
+    : runStatus?.state === 'done'
+      ? s.runStatusDone
+      : s.runStatusRunning;
+  const runStateLabel = runStatus?.state === 'error' ? 'error' : runStatus?.state === 'done' ? 'done' : 'running';
 
   const minimapEntries: MinimapEntry[] = [
     ...persisted.map((m) => ({
@@ -240,9 +396,70 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
           <div className={s.title}>{title}</div>
         </div>
         <div className={s.right}>
-          {busy ? (
+          <div className={s.threadSearch}>
+            <Icon name="command" size="xs" decorative />
+            <input
+              className={s.threadSearchInput}
+              value={searchQuery}
+              placeholder="대화 검색"
+              onChange={(event) => {
+                setSearchQuery(event.target.value);
+                if (!event.target.value.trim()) {
+                  setSearchResults([]);
+                  setSearchOpen(false);
+                }
+              }}
+              onFocus={() => searchResults.length > 0 && setSearchOpen(true)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  void searchTranscript();
+                }
+                if (event.key === 'Escape') setSearchOpen(false);
+              }}
+            />
+            <button
+              type="button"
+              className={s.threadSearchBtn}
+              disabled={searching || history.isJumping}
+              onClick={() => void searchTranscript()}
+            >
+              {searching ? '검색 중' : '검색'}
+            </button>
+            {searchOpen ? (
+              <div className={s.searchResults}>
+                {searchResults.length === 0 ? (
+                  <div className={s.searchEmpty}>검색 결과가 없어요</div>
+                ) : searchResults.map((hit) => (
+                  <button key={hit.id} type="button" className={s.searchHit} onClick={() => void jumpToSearchHit(hit)}>
+                    <span className={s.searchHitRole}>{hit.role === 'assistant' ? '지구' : userName}</span>
+                    <span className={s.searchHitText}>{hit.snippet}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          {runStatus ? (
+            <div className={`${s.runStatus} ${runStateClass}`} title={runStatus.runId ?? 'Hermes run'}>
+              <span className={s.runStateDot} />
+              <span className={s.runModel}>{runStatus.model ?? 'Hermes'}</span>
+              <span className={s.runSep}>│</span>
+              <span>{fmtTokens(currentUsage?.totalTokens)} / {currentContextLimit ? fmtTokens(currentContextLimit) : 'limit n/a'}</span>
+              <span className={s.runMeter} aria-label="context usage">
+                <span style={{ width: `${runMeterWidth}%` }} />
+              </span>
+              <span>{runPct === null ? 'n/a' : `${runPct}%`}</span>
+              <span className={s.runSep}>│</span>
+              <span>⏱ {fmtElapsed(runElapsedMs)}</span>
+              <span className={s.runSep}>│</span>
+              <span>{runStatus.reasoning ? 'reasoning on' : 'reasoning 대기'}</span>
+              <span className={s.runSep}>│</span>
+              <span>{runStateLabel}</span>
+            </div>
+          ) : null}
+          {busy || history.isJumping ? (
             <div className={s.statusChip}>
-              <span className={s.pulse} /> 응답 생성 중
+              <span className={s.pulse} /> {history.isJumping ? '검색 위치 이동 중' : activeTool ? `${activeTool} 실행 중` : '응답 생성 중'}
             </div>
           ) : null}
         </div>
@@ -262,112 +479,26 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
             <EmptyState icon="bot" title="지구에게 물어보세요" description="필요한 맥락을 짧게 남기면 바로 이어서 작업합니다." />
           ) : null}
 
-          {persisted.map((m) => (
-            <div
-              key={m.id}
-              className={`${s.msg} ${s.msgHover}`}
-              data-turn={`p-${m.id}`}
-              onMouseEnter={() => m.role === 'assistant' && hoveredMessageStore.set(m.id)}
-              onMouseLeave={() => m.role === 'assistant' && hoveredMessageStore.set(null)}
-            >
-              <div className={`${s.avatar} ${m.role === 'user' ? s.avatarUser : s.avatarAi}`}>
-                {m.role === 'user' ? (m.authorName ?? userName).slice(0, 1) : <Icon name="bot" size="sm" decorative />}
-              </div>
-              <div className={s.body}>
-                <div className={s.meta}>
-                  <span className={s.who}>{m.role === 'user' ? (m.authorName ?? userName) : '지구'}</span>
-                  <span className={s.time}>
-                    {new Date(m.createdAt).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' })}
-                  </span>
-                  {visibleRunId(m.runId) ? <span className={s.runid}>{visibleRunId(m.runId)}</span> : null}
-                  <span className={s.msgActions}>
-                    <IconButton type="button" className={s.msgActionBtn} label="복사" icon="copy" onClick={() => void copyText(m.content)} />
-                    {m.role === 'assistant' && m.content ? (
-                      <IconButton
-                        type="button"
-                        className={s.msgActionBtn}
-                        label="산출물로 저장"
-                        icon="download"
-                        onClick={() => void saveAsArtifact(m.content, m.id)}
-                      />
-                    ) : null}
-                    {m.role === 'user' ? (
-                      <IconButton
-                        type="button"
-                        className={s.msgActionBtn}
-                        label="다시 질문"
-                        icon="retry"
-                        disabled={busy}
-                        onClick={() => void send(m.content)}
-                      />
-                    ) : null}
-                  </span>
-                </div>
-                {m.role === 'assistant' ? <Markdown text={m.content} /> : <div className={s.text}>{m.content}</div>}
-                {m.finishState === 'error' ? (
-                  <div style={{ marginTop: 6, fontSize: 12.5, color: 'var(--red)' }}>이 응답은 오류로 중단되었어요.</div>
-                ) : null}
-                {m.finishState === 'cancelled' ? (
-                  <div style={{ marginTop: 6, fontSize: 12.5, color: 'var(--text-muted)' }}>중단된 응답</div>
-                ) : null}
-              </div>
-            </div>
-          ))}
-
-          {live.map((t) => (
-            <div key={`live-${t.id}`} className={`${s.msg} ${s.msgHover}`} data-turn={`l-${t.id}`}>
-              <div className={`${s.avatar} ${t.role === 'user' ? s.avatarUser : s.avatarAi}`}>
-                {t.role === 'user' ? userName.slice(0, 1) : <Icon name="bot" size="sm" decorative />}
-              </div>
-              <div className={s.body}>
-                <div className={s.meta}>
-                  <span className={s.who}>{t.role === 'user' ? userName : '지구'}</span>
-                  {visibleRunId(t.runId) ? <span className={s.runid}>{visibleRunId(t.runId)}</span> : null}
-                  {!t.streaming && t.text ? (
-                    <span className={s.msgActions}>
-                      <IconButton type="button" className={s.msgActionBtn} label="복사" icon="copy" onClick={() => void copyText(t.text)} />
-                      {t.role === 'ai' ? (
-                        <IconButton
-                          type="button"
-                          className={s.msgActionBtn}
-                          label="산출물로 저장"
-                          icon="download"
-                          onClick={() => void saveAsArtifact(t.text)}
-                        />
-                      ) : null}
-                    </span>
-                  ) : null}
-                </div>
-                {t.role === 'ai' ? (
-                  t.text ? (
-                    <div>
-                      <Markdown text={t.text} />
-                      {t.streaming ? <span className={s.cursor} /> : null}
-                    </div>
-                  ) : t.streaming ? (
-                    <ThinkingRibbon tool={activeTool} />
-                  ) : null
-                ) : (
-                  <div className={s.text}>{t.text}</div>
-                )}
-                {t.error ? (
-                  <div style={{ marginTop: 6, fontSize: 12.5, color: 'var(--red)', display: 'flex', gap: 10, alignItems: 'center' }}>
-                    {t.error}
-                    {!busy && lastPromptRef.current ? (
-                      <button
-                        type="button"
-                        className={s.retryBtn}
-                        onClick={() => void send(lastPromptRef.current)}
-                      >
-                        <Icon name="retry" size="xs" decorative /> 다시 시도
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          ))}
-          <div ref={bottomRef} />
+          <VirtualMessageStream
+            messages={persisted}
+            live={live}
+            userName={userName}
+            busy={busy}
+            activeTool={activeTool}
+            scrollRef={streamRef}
+            bottomRef={bottomRef}
+            hasOlder={history.hasOlder}
+            hasNewer={history.hasNewer}
+            isLoadingOlder={history.isLoadingOlder}
+            isLoadingNewer={history.isLoadingNewer}
+            targetMessageId={targetMessageId}
+            onLoadOlder={history.loadOlder}
+            onLoadNewer={history.loadNewer}
+            onCopy={copyText}
+            onSaveArtifact={saveAsArtifact}
+            onRetry={send}
+            onRetryLast={() => send(lastPromptRef.current)}
+          />
         </div>
         <ConvoMinimap entries={minimapEntries} onJump={jumpTo} />
       </div>
@@ -388,6 +519,26 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
             ))}
           </div>
         ) : null}
+        {showSlashMenu && slashItems.length > 0 ? (
+          <div className={s.slashMenu} role="listbox" aria-label="Hermes slash commands">
+            {slashItems.map((item, index) => (
+              <button
+                key={item.command}
+                type="button"
+                role="option"
+                aria-selected={index === slashCursor}
+                className={`${s.slashItem} ${index === slashCursor ? s.slashItemOn : ''}`}
+                onMouseEnter={() => setSlashCursor(index)}
+                onClick={() => setInput(item.value)}
+              >
+                <span className={s.slashCmd}>{item.command}</span>
+                <span className={s.slashTitle}>{item.title}</span>
+                <span className={s.slashHint}>{item.hint}</span>
+              </button>
+            ))}
+            <div className={s.slashFoot}>↑↓ 선택 · Tab/Enter 채우기 · Enter 한 번 더 실행</div>
+          </div>
+        ) : null}
         <div className={s.box}>
           <div className={s.boxTop}>
             <Textarea
@@ -397,6 +548,28 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
               placeholder="메시지를 입력하세요…"
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
+                if (showSlashMenu && slashItems.length > 0) {
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setSlashCursor((cursor) => Math.min(cursor + 1, slashItems.length - 1));
+                    return;
+                  }
+                  if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setSlashCursor((cursor) => Math.max(cursor - 1, 0));
+                    return;
+                  }
+                  if (e.key === 'Tab') {
+                    e.preventDefault();
+                    setInput(slashItems[slashCursor]?.value ?? input);
+                    return;
+                  }
+                  if (e.key === 'Enter' && !e.shiftKey && slashItems[slashCursor] && input.trim() !== slashItems[slashCursor].value) {
+                    e.preventDefault();
+                    setInput(slashItems[slashCursor].value);
+                    return;
+                  }
+                }
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
                   void send();

@@ -126,6 +126,7 @@ export const chatMessages = pgTable(
   },
   (t) => [
     index('chat_messages_thread_idx').on(t.threadId, t.createdAt),
+    index('chat_messages_thread_cursor_idx').on(t.threadId, t.createdAt, t.id),
     index('chat_messages_workspace_idx').on(t.workspaceId),
   ],
 );

@@ -8,6 +8,11 @@
 
 **Tech Stack:** React 19, TanStack Router, TanStack Query, Drizzle/PostgreSQL, 후보 라이브러리 `@tanstack/react-virtual@3.14.5` 우선, `react-virtuoso@4.18.10` fallback, `@virtuoso.dev/message-list@1.17.1`은 상용 라이선스라 참고만.
 
+**Expanded Goals (2026-07-06 승인):**
+- Slash command UX: 메시지 입력창에서 `/`를 치면 Discord/Telegram처럼 명령어 palette가 떠야 한다. Hermes 공개 API로 실행 가능한 명령은 실제 연결하고, API가 없거나 세션 내부 전용인 명령은 UI action 또는 설명-only로 분류한다.
+- Hermes run status UI: 웹 채팅에도 `gpt-5.5 · 182K/272K · 67% · 31m · 4m33s` 같은 compact status를 표시한다. 실제 Hermes API/SSE/DB가 제공하는 값만 실측 표시하고, 미제공 값은 추정치로 둔갑시키지 않는다. 후보 필드: model/provider, runId, status, tool activity, elapsed, token usage, context limit/percent, reasoning effort/visibility, cost/status.
+- Sidebar accordion motion: 좌측 프로젝트/채널 접기·펼치기는 Slack flat tone을 유지하면서 height/opacity/chevron micro-animation을 추가한다. `prefers-reduced-motion`에서는 비활성화한다.
+
 ---
 
 ## 0. 현재 상태 진단
@@ -268,6 +273,56 @@ pnpm build
 
 ---
 
+### Task 9: slash command palette in composer
+
+**Objective:** 채팅 입력창에서 `/` 입력 시 Discord/Telegram식 명령어 메뉴를 제공한다.
+
+**Files:**
+- Modify: `apps/web/src/widgets/thread-view/ui/*`
+- Modify: `packages/contracts/src/chat.ts`
+- Modify: `apps/api/src/chat/hermes-runs-client.ts` or add capability endpoint if Hermes exposes one.
+
+**Plan:**
+1. Hermes Agent slash command 목록을 capability endpoint로 가져올 수 있는지 확인한다.
+2. 공개 API가 없으면 1차는 로컬 안전 명령으로 시작: `/help`, `/model`, `/usage`, `/status`, `/reasoning`, `/clear-draft`, `/artifact`.
+3. 명령을 누르면 입력창에 삽입하거나, 즉시 실행 가능한 UI action이면 바로 실행한다.
+4. dangerous/agent-session-mutating command는 웹에서 숨기거나 설명-only로 둔다.
+
+---
+
+### Task 10: Hermes run status HUD
+
+**Objective:** 사용자가 현재 모델/진행상태/토큰/컨텍스트/도구/추론 상태를 웹에서 볼 수 있게 한다.
+
+**Files:**
+- Modify: `packages/contracts/src/chat.ts`
+- Modify: `apps/api/src/chat/hermes-runs-client.ts`
+- Modify: `apps/web/src/widgets/chat-thread/ui/ChatThread.tsx`
+- Create: `apps/web/src/widgets/chat-thread/ui/RunStatusHud.tsx`
+
+**Rules:**
+- 실제 upstream 이벤트가 주는 값만 확정 표시.
+- token/context/reasoning이 Hermes API에서 미제공이면 `측정 불가` 또는 숨김. 절대 임의 계산하지 않는다.
+- fallback 표시: `model unknown · run <id> · elapsed · tool count · stream status`.
+
+---
+
+### Task 11: sidebar accordion animation
+
+**Objective:** 프로젝트/채널 접힘이 갑자기 사라지지 않고 고급스럽게 접힌다.
+
+**Files:**
+- Modify: `apps/web/src/widgets/app-shell/ui/AppShell.tsx`
+- Modify: `apps/web/src/widgets/app-shell/ui/AppShell.module.css`
+
+**Plan:**
+1. collapse body wrapper를 도입해 height/opacity/translateY 전환.
+2. chevron 회전 모션 추가.
+3. active channel이 포함된 프로젝트는 기본 펼침 유지.
+4. reduced-motion에서 transition 제거.
+
+---
+
 ## 4. 구현 순서와 커밋 단위
 
 1. `fix: mark active channel and unify composer surface`
@@ -277,6 +332,9 @@ pnpm build
 5. `feat(web): virtualize chat message stream`
 6. `feat(chat): add message search jump hydration`
 7. `test: harden chat scroll pagination invariants`
+8. `feat(chat): add slash command composer palette`
+9. `feat(chat): surface Hermes run status metadata`
+10. `style(shell): animate sidebar accordion transitions`
 
 ---
 

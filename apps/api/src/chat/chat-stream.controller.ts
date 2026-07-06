@@ -1,12 +1,16 @@
-import { Body, Controller, ForbiddenException, Get, HttpCode, Inject, NotFoundException, Param, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, ForbiddenException, Get, HttpCode, Inject, NotFoundException, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import {
   AddEvidenceRequestSchema,
   ChatStreamEventSchema,
   ChatStreamRequestSchema,
   ListEvidenceResponseSchema,
+  ListMessagesPageRequestSchema,
+  ListMessagesPageResponseSchema,
   ListMessagesResponseSchema,
   OkResponseSchema,
+  SearchMessagesRequestSchema,
+  SearchMessagesResponseSchema,
 } from '@consulting/contracts';
 import { AccessTokenGuard, requireAuthUserId, type AuthenticatedRequest } from '../auth/access-token.guard.js';
 import { parseBody, parseResponse } from '../http/contract-adapter.js';
@@ -26,12 +30,57 @@ export class ChatStreamController {
     @Inject(NotificationStore) private readonly notifications: NotificationStore,
   ) {}
 
+  /** Search persisted transcript rows inside a readable thread (J-1). */
+  @Get('threads/:threadId/messages/search')
+  @UseGuards(AccessTokenGuard)
+  async searchMessages(
+    @Param('threadId') threadId: string,
+    @Query('q') q: string | undefined,
+    @Query('limit') limitRaw: string | undefined,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const userId = requireAuthUserId(req);
+    await this.requireThreadRead(userId, threadId);
+    const parsed = SearchMessagesRequestSchema.safeParse({
+      q,
+      ...(limitRaw !== undefined ? { limit: Number(limitRaw) } : {}),
+    });
+    if (!parsed.success) {
+      throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Invalid message search query' });
+    }
+    return parseResponse(SearchMessagesResponseSchema, await this.messages.searchMessages(threadId, parsed.data.q, parsed.data.limit));
+  }
+
   /** Persisted transcript for a thread (N-1). */
   @Get('threads/:threadId/messages')
   @UseGuards(AccessTokenGuard)
-  async list(@Param('threadId') threadId: string, @Req() req: AuthenticatedRequest) {
+  async list(
+    @Param('threadId') threadId: string,
+    @Query('page') pageRaw: string | undefined,
+    @Query('limit') limitRaw: string | undefined,
+    @Query('before') before: string | undefined,
+    @Query('after') after: string | undefined,
+    @Query('around') around: string | undefined,
+    @Query('direction') direction: string | undefined,
+    @Req() req: AuthenticatedRequest,
+  ) {
     const userId = requireAuthUserId(req);
     await this.requireThreadRead(userId, threadId);
+    const wantsPage = [pageRaw, limitRaw, before, after, around, direction].some((v) => v !== undefined);
+    if (wantsPage) {
+      const parsedResult = ListMessagesPageRequestSchema.safeParse({
+        ...(limitRaw !== undefined ? { limit: Number(limitRaw) } : {}),
+        ...(before !== undefined ? { before } : {}),
+        ...(after !== undefined ? { after } : {}),
+        ...(around !== undefined ? { around } : {}),
+        ...(direction !== undefined ? { direction } : {}),
+      });
+      if (!parsedResult.success) {
+        throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Invalid message page query' });
+      }
+      const parsed = parsedResult.data;
+      return parseResponse(ListMessagesPageResponseSchema, await this.messages.listMessagesPage(threadId, parsed));
+    }
     return parseResponse(ListMessagesResponseSchema, await this.messages.listMessages(threadId));
   }
 

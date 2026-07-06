@@ -8,6 +8,38 @@ import { ConsultingApiClient, ApiClientError } from '../src/index.js';
  * using a plain function that captures its own `this`.
  */
 describe('HttpCore fetch binding', () => {
+  it('requests cursor-paged messages with query params', async () => {
+    const calls: string[] = [];
+    const fakeFetch = vi.fn((url: string | URL | Request) => {
+      calls.push(String(url));
+      return Promise.resolve(new Response(JSON.stringify({
+        messages: [],
+        hasOlder: false,
+        hasNewer: false,
+        olderCursor: null,
+        newerCursor: null,
+      }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    });
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+    await client.listMessagesPage('00000000-0000-4000-8000-000000000009', {
+      limit: 25,
+      before: '00000000-0000-4000-8000-000000000008',
+      direction: 'older',
+    });
+    expect(calls[0]).toBe('/api/chat/threads/00000000-0000-4000-8000-000000000009/messages?limit=25&before=00000000-0000-4000-8000-000000000008&direction=older');
+  });
+
+  it('requests message search with encoded query params', async () => {
+    const calls: string[] = [];
+    const fakeFetch = vi.fn((url: string | URL | Request) => {
+      calls.push(String(url));
+      return Promise.resolve(new Response(JSON.stringify({ results: [] }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    });
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+    await client.searchMessages('00000000-0000-4000-8000-000000000009', { q: '창원 버스', limit: 7 });
+    expect(calls[0]).toBe('/api/chat/threads/00000000-0000-4000-8000-000000000009/messages/search?q=%EC%B0%BD%EC%9B%90+%EB%B2%84%EC%8A%A4&limit=7');
+  });
+
   it('invokes fetch without binding it to the client instance', async () => {
     let capturedThis: unknown = 'unset';
     const fakeFetch = vi.fn(function (this: unknown, _url: string | URL | Request, _init?: RequestInit) {

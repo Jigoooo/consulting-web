@@ -401,11 +401,11 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
         {tree?.projects.map((p) => {
           const collapsed = collapsedProjects.has(p.id);
           return (
-            <div key={p.id} className={s.projectBlock}>
+            <div key={p.id} className={`${s.projectBlock} ${collapsed ? s.projectBlockCollapsed : s.projectBlockOpen}`}>
               <div className={s.projRow}>
                 <button
                   type="button"
-                  className={s.projToggle}
+                  className={`${s.projToggle} ${collapsed ? s.projToggleCollapsed : ''}`}
                   aria-label={collapsed ? `${p.name} 펼치기` : `${p.name} 접기`}
                   aria-expanded={!collapsed}
                   onClick={() => toggleProject(p.id)}
@@ -423,41 +423,44 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
                   ]}
                 />
               </div>
-              {!collapsed ? (
-                <div className={s.channelList}>
-                  {p.channels.map((c) => {
-                    const channelActive = c.topics.some((t) => t.id === currentTopicId);
-                    return (
-                    <div key={c.id} className={s.channelBlock}>
-                      <div className={`${s.chanRow} ${channelActive ? s.chanRowActive : ''}`}>
-                        <button
-                          type="button"
-                          className={s.chanMain}
-                          aria-current={channelActive ? 'page' : undefined}
-                          disabled={channelActive}
-                          onClick={() => void openChannel(c)}
-                        >
-                          <Icon name="hash" size="xs" tone="muted" decorative />
-                          {c.name}
-                        </button>
-                        <RowMenu
-                          actions={[
-                            { label: '이름 변경', onSelect: () => void onRename('channels', c.id, c.name) },
-                            { label: '삭제', danger: true, onSelect: () => void onDelete('channels', c.id, c.name) },
-                          ]}
-                        />
+              <div className={`${s.channelListShell} ${collapsed ? s.channelListCollapsed : s.channelListOpen}`} aria-hidden={collapsed} inert={collapsed ? true : undefined}>
+                <div className={s.channelListInner}>
+                  <div className={s.channelList}>
+                    {p.channels.map((c) => {
+                      const channelActive = c.topics.some((t) => t.id === currentTopicId);
+                      return (
+                      <div key={c.id} className={s.channelBlock}>
+                        <div className={`${s.chanRow} ${channelActive ? s.chanRowActive : ''}`}>
+                          <button
+                            type="button"
+                            className={s.chanMain}
+                            aria-current={channelActive ? 'page' : undefined}
+                            disabled={channelActive}
+                            tabIndex={collapsed ? -1 : undefined}
+                            onClick={() => void openChannel(c)}
+                          >
+                            <Icon name="hash" size="xs" tone="muted" decorative />
+                            {c.name}
+                          </button>
+                          <RowMenu
+                            actions={[
+                              { label: '이름 변경', onSelect: () => void onRename('channels', c.id, c.name) },
+                              { label: '삭제', danger: true, onSelect: () => void onDelete('channels', c.id, c.name) },
+                            ]}
+                          />
+                        </div>
                       </div>
-                    </div>
-                    );
-                  })}
-                  <InlineCreate
-                    level="channel"
-                    placeholder="채널 추가"
-                    busy={createChannel.isPending || createTopic.isPending}
-                    onSubmit={(name) => void createChannelWithDefaultTopic(p.id, name)}
-                  />
+                      );
+                    })}
+                    <InlineCreate
+                      level="channel"
+                      placeholder="채널 추가"
+                      busy={createChannel.isPending || createTopic.isPending}
+                      onSubmit={(name) => void createChannelWithDefaultTopic(p.id, name)}
+                    />
+                  </div>
                 </div>
-              ) : null}
+              </div>
             </div>
           );
         })}

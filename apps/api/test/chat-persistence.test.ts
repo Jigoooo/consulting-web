@@ -15,6 +15,8 @@ import {
   CreateTopicResponseSchema,
   CreateThreadResponseSchema,
   ListMessagesResponseSchema,
+  ListMessagesPageResponseSchema,
+  SearchMessagesResponseSchema,
   ThreadDetailResponseSchema,
   ListMembersResponseSchema,
   WorkspaceTreeResponseSchema,
@@ -67,6 +69,27 @@ async function makeUser(label: string) {
     (await request(app.getHttpServer()).post('/auth/login').send({ email, password }).expect(200)).body,
   );
   return { ...signup, bearer: `Bearer ${session.tokens.accessToken}` };
+}
+
+async function makeThread(owner: Awaited<ReturnType<typeof makeUser>>, label: string) {
+  const stamp = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+  const project = CreateProjectResponseSchema.parse(
+    (await request(app.getHttpServer()).post('/spaces/projects').set('authorization', owner.bearer)
+      .send({ workspaceId: owner.personalWorkspaceId, name: `${label} P`, slug: `${label}-p-${stamp}` }).expect(201)).body,
+  );
+  const channel = CreateChannelResponseSchema.parse(
+    (await request(app.getHttpServer()).post('/spaces/channels').set('authorization', owner.bearer)
+      .send({ projectId: project.id, name: `${label} C`, slug: `${label}-c-${stamp}` }).expect(201)).body,
+  );
+  const topic = CreateTopicResponseSchema.parse(
+    (await request(app.getHttpServer()).post('/spaces/topics').set('authorization', owner.bearer)
+      .send({ channelId: channel.id, name: `${label} T`, slug: `${label}-t-${stamp}` }).expect(201)).body,
+  );
+  const thread = CreateThreadResponseSchema.parse(
+    (await request(app.getHttpServer()).post('/spaces/threads').set('authorization', owner.bearer)
+      .send({ topicId: topic.id, title: `${label} thread` }).expect(201)).body,
+  );
+  return { project, channel, topic, thread };
 }
 
 d('chat persistence + space mutations (Phase 1.5)', () => {
@@ -147,6 +170,102 @@ d('chat persistence + space mutations (Phase 1.5)', () => {
     );
     expect(detail.title).toBe('영속 스레드');
     expect(detail.topicId).toBe(topic.id);
+  });
+
+  it('pages messages by newest window, older cursor, and around anchor', async () => {
+    const owner = await makeUser('page-owner');
+    const { thread } = await makeThread(owner, 'page');
+    const base = Date.now() - 10_000;
+    const inserted = await db
+      .insert(schema.chatMessages)
+      .values(
+        Array.from({ length: 5 }, (_, i) => ({
+          workspaceId: owner.personalWorkspaceId,
+          threadId: thread.id,
+          role: i % 2 === 0 ? 'user' as const : 'assistant' as const,
+          authorUserId: i % 2 === 0 ? owner.userId : null,
+          content: `메시지-${i + 1}`,
+          runId: i % 2 === 0 ? null : `run_page_${i + 1}`,
+          finishState: 'complete',
+          createdAt: new Date(base + i * 1000),
+          updatedAt: new Date(base + i * 1000),
+        })),
+      )
+      .returning({ id: schema.chatMessages.id });
+
+    const latest = ListMessagesPageResponseSchema.parse(
+      (await request(app.getHttpServer())
+        .get(`/chat/threads/${thread.id}/messages?page=1&limit=2`)
+        .set('authorization', owner.bearer)
+        .expect(200)).body,
+    );
+    expect(latest.messages.map((m) => m.content)).toEqual(['메시지-4', '메시지-5']);
+    expect(latest.hasOlder).toBe(true);
+    expect(latest.hasNewer).toBe(false);
+    expect(latest.olderCursor).toBe(inserted[3]!.id);
+    expect(latest.newerCursor).toBe(inserted[4]!.id);
+
+    const older = ListMessagesPageResponseSchema.parse(
+      (await request(app.getHttpServer())
+        .get(`/chat/threads/${thread.id}/messages?page=1&limit=2&before=${latest.olderCursor}`)
+        .set('authorization', owner.bearer)
+        .expect(200)).body,
+    );
+    expect(older.messages.map((m) => m.content)).toEqual(['메시지-2', '메시지-3']);
+    expect(older.hasOlder).toBe(true);
+    expect(older.hasNewer).toBe(true);
+
+    const around = ListMessagesPageResponseSchema.parse(
+      (await request(app.getHttpServer())
+        .get(`/chat/threads/${thread.id}/messages?page=1&limit=3&around=${inserted[2]!.id}`)
+        .set('authorization', owner.bearer)
+        .expect(200)).body,
+    );
+    expect(around.anchorMessageId).toBe(inserted[2]!.id);
+    expect(around.messages.map((m) => m.content)).toEqual(['메시지-2', '메시지-3', '메시지-4']);
+  });
+
+  it('searches messages inside a readable thread only', async () => {
+    const owner = await makeUser('search-owner');
+    const outsider = await makeUser('search-outsider');
+    const { thread } = await makeThread(owner, 'search');
+    const base = Date.now() - 10_000;
+    await db.insert(schema.chatMessages).values([
+      {
+        workspaceId: owner.personalWorkspaceId,
+        threadId: thread.id,
+        role: 'user',
+        authorUserId: owner.userId,
+        content: '창원 버스 데이터 품질 질문',
+        finishState: 'complete',
+        createdAt: new Date(base),
+        updatedAt: new Date(base),
+      },
+      {
+        workspaceId: owner.personalWorkspaceId,
+        threadId: thread.id,
+        role: 'assistant',
+        authorUserId: null,
+        content: '검색 대상이 아닌 답변',
+        finishState: 'complete',
+        createdAt: new Date(base + 1000),
+        updatedAt: new Date(base + 1000),
+      },
+    ]);
+
+    const found = SearchMessagesResponseSchema.parse(
+      (await request(app.getHttpServer())
+        .get(`/chat/threads/${thread.id}/messages/search?q=${encodeURIComponent('버스')}&limit=5`)
+        .set('authorization', owner.bearer)
+        .expect(200)).body,
+    );
+    expect(found.results).toHaveLength(1);
+    expect(found.results[0]!.snippet).toContain('버스');
+
+    await request(app.getHttpServer())
+      .get(`/chat/threads/${thread.id}/messages/search?q=버스`)
+      .set('authorization', outsider.bearer)
+      .expect(403);
   });
 
   it('renames and soft-deletes space nodes with membership enforcement', async () => {

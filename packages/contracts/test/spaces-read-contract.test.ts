@@ -3,6 +3,10 @@ import {
   ListWorkspacesResponseSchema,
   WorkspaceTreeResponseSchema,
   ListThreadsResponseSchema,
+  ListMessagesPageRequestSchema,
+  ListMessagesPageResponseSchema,
+  SearchMessagesRequestSchema,
+  SearchMessagesResponseSchema,
 } from '../src/index.js';
 
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -81,5 +85,54 @@ describe('space read contracts (Phase 1-M)', () => {
     expect(() =>
       ListThreadsResponseSchema.parse({ threads: [{ id: uuid(5), title: 't', createdAt: 'yesterday' }] }),
     ).toThrow();
+  });
+
+  it('parses cursor-paged chat message contracts', () => {
+    const req = {
+      limit: 50,
+      before: uuid(6),
+      direction: 'older' as const,
+    };
+    expect(ListMessagesPageRequestSchema.parse(req)).toEqual(req);
+
+    const res = {
+      messages: [
+        {
+          id: uuid(7),
+          role: 'assistant' as const,
+          content: '이전 답변',
+          authorUserId: null,
+          authorName: null,
+          runId: 'run_abc',
+          finishState: 'complete' as const,
+          createdAt: '2026-07-06T00:00:00.000Z',
+        },
+      ],
+      hasOlder: true,
+      hasNewer: false,
+      olderCursor: uuid(7),
+      newerCursor: uuid(7),
+      anchorMessageId: uuid(7),
+    };
+    expect(ListMessagesPageResponseSchema.parse(res)).toEqual(res);
+    expect(() => ListMessagesPageRequestSchema.parse({ limit: 500 })).toThrow();
+    expect(() => ListMessagesPageRequestSchema.parse({ before: uuid(1), after: uuid(2) })).toThrow();
+  });
+
+  it('parses message search contracts', () => {
+    expect(SearchMessagesRequestSchema.parse({ q: '창원', limit: 10 })).toEqual({ q: '창원', limit: 10 });
+    const res = {
+      results: [
+        {
+          id: uuid(8),
+          role: 'user' as const,
+          snippet: '창원 컨설팅 질문',
+          createdAt: '2026-07-06T01:00:00.000Z',
+        },
+      ],
+    };
+    expect(SearchMessagesResponseSchema.parse(res)).toEqual(res);
+    expect(() => SearchMessagesRequestSchema.parse({ q: '', limit: 10 })).toThrow();
+    expect(() => SearchMessagesRequestSchema.parse({ q: 'x', limit: 1000 })).toThrow();
   });
 });

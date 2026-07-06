@@ -101,3 +101,21 @@ Phase 3 Cloudflare/외부 노출: ░░░░░░░░░░ 0%
 - ★함정 기록: public/ 파일 umask 600 → 컨테이너 nginx 403. Dockerfile에 chmod 644/755 정규화로 구조적 차단.
 - 검증: typecheck/lint/test 전체 GREEN, 프로드 재배포, sw.js 200+no-cache, version.json 200,
   push subscribe→DB row→unsubscribe→0 실측, SW가 version.json+전체 에셋 프리캐시하는 로그 확인.
+
+## 2026-07-06 완료 — 채팅 가상화/검색/Hermes 런타임 UI/슬래시/사이드바 모션
+- 메시지 로딩을 전체 transcript fetch에서 cursor pagination으로 전환:
+  latest/before/after/around contract, `(created_at, id)` cursor index, API 호환 유지.
+- 클라이언트 message window store 추가:
+  dedupe/chronological merge, older/newer hydrate, search around jump window replace.
+- `@tanstack/react-virtual` 기반 채팅 가상화 적용:
+  dynamic height, prepend anchor preservation, top/bottom auto-load guard, live streaming row 분리.
+- 대화 검색:
+  `/chat/threads/:threadId/messages/search` + api-client + header 검색 dropdown + 결과 클릭 center jump/highlight.
+- Hermes slash palette:
+  `/` 입력 시 Discord/Telegram식 명령 제안, ↑↓/Tab/Enter 지원.
+  slash 전용 API는 현재 Hermes API Server에 없어서 기존 `/v1/runs`로 slash 문자열 전송.
+- Hermes runtime status UI:
+  model/runId, total/input/output token usage, context meter(한도 수신 시), elapsed, tool activity, reasoning.available 표시.
+- 좌측 프로젝트 collapse motion:
+  channel list unmount 대신 grid-row/opacity/chevron rotate 애니메이션, inert+aria-hidden, reduced-motion fallback.
+- 검증: `pnpm typecheck`, `pnpm build`, `pnpm test`, `pnpm --filter @consulting/web typecheck && build` GREEN.
