@@ -1,5 +1,5 @@
 import { Toaster, toast as sonnerToast } from 'sonner';
-import { createContext, useCallback, useContext, type ReactNode } from 'react';
+import { createContext, useContext, type ReactNode } from 'react';
 import { Icon } from '../../icons/Icon';
 import type { IconName } from '../../icons/registry';
 import s from './Toast.module.css';
@@ -43,11 +43,11 @@ export function useToast() {
 }
 
 export function ToastProvider({ children }: { children: ReactNode }) {
-  const push = useCallback((kind: ToastKind, message: string) => {
+  const push = (kind: ToastKind, message: string) => {
     sonnerToast.custom((id) => <ConsultingToast id={id} kind={kind} message={message} />, {
       duration: 3600,
     });
-  }, []);
+  };
 
   return (
     <ToastCtx.Provider value={push}>

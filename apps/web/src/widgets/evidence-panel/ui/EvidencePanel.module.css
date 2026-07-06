@@ -129,3 +129,84 @@
   color: var(--text-secondary);
   cursor: pointer;
 }
+
+/* F3: full search result list (right panel) */
+.searchList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.searchListHead {
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--text-secondary);
+  padding: 2px 2px 6px;
+}
+.searchRow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: 'meta go' 'text go';
+  align-items: center;
+  gap: 2px 8px;
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  padding: 9px 10px;
+  text-align: left;
+  cursor: pointer;
+}
+.searchRow:hover,
+.searchRowOn {
+  background: var(--bg-warm);
+}
+.searchRowOn {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.searchRowMeta {
+  grid-area: meta;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.searchRowRole {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.searchRowKind {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  background: var(--bg-warm);
+  border: 1px solid var(--border-hair);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.searchRowTime {
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+.searchRowText {
+  grid-area: text;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.searchRowGo {
+  grid-area: go;
+  color: var(--text-muted);
+  transform: rotate(180deg);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.searchRow:hover .searchRowGo,
+.searchRowOn .searchRowGo {
+  opacity: 1;
+}

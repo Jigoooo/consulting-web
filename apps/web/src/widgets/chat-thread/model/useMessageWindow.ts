@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../lib/api';
 import { mergeMessagePage, type MessageWindow } from './messageWindow';
@@ -14,10 +14,15 @@ export function useMessageWindow(threadId: string) {
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [isLoadingNewer, setIsLoadingNewer] = useState(false);
   const [isJumping, setIsJumping] = useState(false);
+  // A6: surface load failures so the stream can offer an inline retry.
+  const [olderError, setOlderError] = useState(false);
+  const [newerError, setNewerError] = useState(false);
 
   const latest = useQuery({
     queryKey: messageWindowKeys.latest(threadId),
     queryFn: () => api.listMessagesPage(threadId, { limit: PAGE_SIZE }),
+    // D6: don't refetch-on-focus (would reset the accumulated window).
+    staleTime: 30_000,
   });
 
   useEffect(() => {
@@ -25,6 +30,8 @@ export function useMessageWindow(threadId: string) {
     setIsLoadingOlder(false);
     setIsLoadingNewer(false);
     setIsJumping(false);
+    setOlderError(false);
+    setNewerError(false);
   }, [threadId]);
 
   useEffect(() => {
@@ -32,31 +39,38 @@ export function useMessageWindow(threadId: string) {
     setWindowState(mergeMessagePage(undefined, latest.data, 'latest'));
   }, [latest.data]);
 
-  const loadOlder = useCallback(async () => {
+  // React Compiler stabilizes these — no useCallback needed.
+  const loadOlder = async () => {
     const cursor = windowState?.olderCursor;
     if (!cursor || !windowState.hasOlder || isLoadingOlder) return;
     setIsLoadingOlder(true);
+    setOlderError(false);
     try {
       const page = await api.listMessagesPage(threadId, { limit: PAGE_SIZE, before: cursor, direction: 'older' });
       setWindowState((prev) => mergeMessagePage(prev, page, 'older'));
+    } catch {
+      setOlderError(true);
     } finally {
       setIsLoadingOlder(false);
     }
-  }, [isLoadingOlder, threadId, windowState]);
+  };
 
-  const loadNewer = useCallback(async () => {
+  const loadNewer = async () => {
     const cursor = windowState?.newerCursor;
     if (!cursor || !windowState.hasNewer || isLoadingNewer) return;
     setIsLoadingNewer(true);
+    setNewerError(false);
     try {
       const page = await api.listMessagesPage(threadId, { limit: PAGE_SIZE, after: cursor, direction: 'newer' });
       setWindowState((prev) => mergeMessagePage(prev, page, 'newer'));
+    } catch {
+      setNewerError(true);
     } finally {
       setIsLoadingNewer(false);
     }
-  }, [isLoadingNewer, threadId, windowState]);
+  };
 
-  const jumpAround = useCallback(async (messageId: string) => {
+  const jumpAround = async (messageId: string) => {
     setIsJumping(true);
     try {
       const page = await api.listMessagesPage(threadId, { limit: PAGE_SIZE, around: messageId });
@@ -65,10 +79,24 @@ export function useMessageWindow(threadId: string) {
     } finally {
       setIsJumping(false);
     }
-  }, [threadId]);
+  };
+
+  // A2: escape a search-jump ('around') window back to the live tail in O(1)
+  // instead of paging down. Replaces the window rather than accumulating.
+  const resetToLatest = async () => {
+    setIsJumping(true);
+    try {
+      const page = await api.listMessagesPage(threadId, { limit: PAGE_SIZE });
+      setWindowState(mergeMessagePage(undefined, page, 'latest'));
+      return page.messages.at(-1)?.id ?? null;
+    } finally {
+      setIsJumping(false);
+    }
+  };
 
   return {
     messages: windowState?.messages ?? [],
+    mode: windowState?.mode ?? 'latest',
     hasOlder: windowState?.hasOlder ?? false,
     hasNewer: windowState?.hasNewer ?? false,
     olderCursor: windowState?.olderCursor ?? null,
@@ -78,9 +106,12 @@ export function useMessageWindow(threadId: string) {
     isLoadingOlder,
     isLoadingNewer,
     isJumping,
+    olderError,
+    newerError,
     loadOlder,
     loadNewer,
     jumpAround,
+    resetToLatest,
     refetchLatest: latest.refetch,
   };
 }

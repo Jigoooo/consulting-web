@@ -1,4 +1,3 @@
-import { useMemo } from 'react';
 import s from './ConvoMinimap.module.css';
 
 export interface MinimapEntry {
@@ -16,7 +15,7 @@ export interface MinimapEntry {
  * "table of contents" that no mainstream chat UI ships.
  */
 export function ConvoMinimap({ entries, onJump }: { entries: MinimapEntry[]; onJump: (key: string) => void }) {
-  const userEntries = useMemo(() => entries.filter((e) => e.role === 'user'), [entries]);
+  const userEntries = entries.filter((e) => e.role === 'user');
   if (userEntries.length < 3) return null; // only useful once the thread has depth
 
   return (

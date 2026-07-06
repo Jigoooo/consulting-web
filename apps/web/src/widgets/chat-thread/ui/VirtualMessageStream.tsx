@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ChatMessage } from '@consulting/contracts';
 import { Markdown } from '../../../shared/ui/markdown/Markdown';
 import { Icon } from '../../../shared/icons/Icon';
 import { IconButton } from '../../../shared/ui/button/Button';
+import { SkeletonMessage } from '../../../shared/ui/skeleton/Skeleton';
 import { hoveredMessageStore } from '../../../lib/threadCtx';
 import { ThinkingRibbon } from './ThinkingRibbon';
+import { HighlightedText } from './HighlightedText';
 import s from '../../thread-view/ui/ThreadView.module.css';
 
 interface LiveTurnLike {
@@ -15,6 +17,16 @@ interface LiveTurnLike {
   runId?: string;
   streaming?: boolean;
   error?: string;
+}
+
+/** A search match to highlight within the stream (F3). */
+export interface HighlightState {
+  /** message ids that matched the current query */
+  ids: Set<string>;
+  /** the query string (for range highlighting) */
+  query: string;
+  /** the id currently focused by the result navigator (stronger highlight) */
+  focusedId: string | null;
 }
 
 interface Props {
@@ -29,24 +41,24 @@ interface Props {
   hasNewer: boolean;
   isLoadingOlder: boolean;
   isLoadingNewer: boolean;
+  olderError: boolean;
+  newerError: boolean;
   targetMessageId: string | null;
+  highlight: HighlightState | null;
   onLoadOlder: () => Promise<void> | void;
   onLoadNewer: () => Promise<void> | void;
+  onAtBottomChange: (atBottom: boolean) => void;
   onCopy: (text: string) => Promise<void> | void;
   onSaveArtifact: (content: string, messageId?: string) => Promise<void> | void;
   onRetry: (message: string) => Promise<void> | void;
   onRetryLast: () => Promise<void> | void;
 }
 
-function visibleRunId(runId?: string | null): string | null {
-  if (!runId || runId.startsWith('telegram-sync:')) return null;
-  return `${runId.slice(0, 12)}…`;
-}
-
 function PersistedRow({
   message,
   userName,
   busy,
+  highlight,
   onCopy,
   onSaveArtifact,
   onRetry,
@@ -54,10 +66,13 @@ function PersistedRow({
   message: ChatMessage;
   userName: string;
   busy: boolean;
+  highlight: HighlightState | null;
   onCopy: Props['onCopy'];
   onSaveArtifact: Props['onSaveArtifact'];
   onRetry: Props['onRetry'];
 }) {
+  const isMatch = highlight?.ids.has(message.id) ?? false;
+  const highlightQuery = isMatch ? highlight?.query ?? '' : '';
   return (
     <div
       className={`${s.msg} ${s.msgHover}`}
@@ -75,7 +90,6 @@ function PersistedRow({
           <span className={s.time}>
             {new Date(message.createdAt).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' })}
           </span>
-          {visibleRunId(message.runId) ? <span className={s.runid}>{visibleRunId(message.runId)}</span> : null}
           <span className={s.msgActions}>
             <IconButton type="button" className={s.msgActionBtn} label="복사" icon="copy" onClick={() => void onCopy(message.content)} />
             {message.role === 'assistant' && message.content ? (
@@ -99,7 +113,13 @@ function PersistedRow({
             ) : null}
           </span>
         </div>
-        {message.role === 'assistant' ? <Markdown text={message.content} /> : <div className={s.text}>{message.content}</div>}
+        {message.role === 'assistant' && !highlightQuery ? (
+          <Markdown text={message.content} />
+        ) : (
+          <div className={s.text}>
+            <HighlightedText text={message.content} query={highlightQuery} />
+          </div>
+        )}
         {message.finishState === 'error' ? (
           <div className={s.msgError}>이 응답은 오류로 중단되었어요.</div>
         ) : null}
@@ -136,7 +156,6 @@ function LiveRow({
       <div className={s.body}>
         <div className={s.meta}>
           <span className={s.who}>{turn.role === 'user' ? userName : '지구'}</span>
-          {visibleRunId(turn.runId) ? <span className={s.runid}>{visibleRunId(turn.runId)}</span> : null}
           {!turn.streaming && turn.text ? (
             <span className={s.msgActions}>
               <IconButton type="button" className={s.msgActionBtn} label="복사" icon="copy" onClick={() => void onCopy(turn.text)} />
@@ -191,9 +210,13 @@ export function VirtualMessageStream({
   hasNewer,
   isLoadingOlder,
   isLoadingNewer,
+  olderError,
+  newerError,
   targetMessageId,
+  highlight,
   onLoadOlder,
   onLoadNewer,
+  onAtBottomChange,
   onCopy,
   onSaveArtifact,
   onRetry,
@@ -218,38 +241,15 @@ export function VirtualMessageStream({
   const virtualItems = virtualizer.getVirtualItems();
   const totalSize = virtualizer.getTotalSize();
 
-  // Keep the latest guard state in a ref so the IntersectionObserver callback
-  // reads fresh values without re-subscribing on every scroll frame.
+  // Fresh guard/callback values for the IntersectionObserver without re-subscribing.
   const guards = useRef({ hasOlder, hasNewer, isLoadingOlder, isLoadingNewer });
   guards.current = { hasOlder, hasNewer, isLoadingOlder, isLoadingNewer };
   const loadOlderRef = useRef(onLoadOlder);
   loadOlderRef.current = onLoadOlder;
   const loadNewerRef = useRef(onLoadNewer);
   loadNewerRef.current = onLoadNewer;
-
-  // Older-page trigger: record a scroll anchor (first rendered row + its pixel
-  // offset from the scroller top) so we can restore the visual position after
-  // messages prepend, then request the page.
-  const requestOlder = useCallback(() => {
-    if (!allowAutoLoad.current) return;
-    const g = guards.current;
-    if (!g.hasOlder || g.isLoadingOlder) return;
-    const scroller = scrollRef.current;
-    const first = virtualizer.getVirtualItems()[0];
-    if (scroller && first) {
-      const el = scroller.querySelector<HTMLElement>(`[data-index="${first.index}"]`);
-      const offset = el ? el.getBoundingClientRect().top - scroller.getBoundingClientRect().top : 0;
-      pendingAnchor.current = { index: first.index, offset };
-    }
-    void loadOlderRef.current();
-  }, [scrollRef, virtualizer]);
-
-  const requestNewer = useCallback(() => {
-    if (!allowAutoLoad.current) return;
-    const g = guards.current;
-    if (!g.hasNewer || g.isLoadingNewer) return;
-    void loadNewerRef.current();
-  }, []);
+  const atBottomRef = useRef(onAtBottomChange);
+  atBottomRef.current = onAtBottomChange;
 
   // Initial mount: pin to the newest message, then arm auto-loading.
   useEffect(() => {
@@ -272,8 +272,6 @@ export function VirtualMessageStream({
   }, [messages.length, virtualizer]);
 
   // After an older page prepends, restore the anchor's on-screen position.
-  // scrollToIndex(newIndex) + offset is virtualization-safe: it does not rely on
-  // the pre-prepend DOM node still being rendered.
   useEffect(() => {
     const anchor = pendingAnchor.current;
     const prev = previousLength.current;
@@ -292,9 +290,9 @@ export function VirtualMessageStream({
     });
   }, [messages.length, virtualizer, scrollRef]);
 
-  // Sentinel-driven infinite scroll. Position-independent and auto-rearming:
-  // whenever the top/bottom sentinel re-enters the viewport it fires again, so
-  // repeated scrolls keep loading (the old scrollTop<=120 heuristic did not).
+  // Sentinel-driven infinite scroll + bottom-proximity tracking (A1). Callbacks
+  // are read from refs and inlined here, so this effect does NOT depend on the
+  // React Compiler stabilizing anything (E1) — deps are the stable scrollRef only.
   useEffect(() => {
     const scroller = scrollRef.current;
     const topEl = topSentinelRef.current;
@@ -303,17 +301,36 @@ export function VirtualMessageStream({
     const io = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
+          if (entry.target === bottomEl) {
+            // bottom sentinel visibility === "user is at/near the tail"
+            atBottomRef.current(entry.isIntersecting);
+          }
           if (!entry.isIntersecting) continue;
-          if (entry.target === topEl) requestOlder();
-          else if (entry.target === bottomEl) requestNewer();
+          if (entry.target === topEl) {
+            if (!allowAutoLoad.current) continue;
+            const g = guards.current;
+            if (!g.hasOlder || g.isLoadingOlder) continue;
+            const first = virtualizer.getVirtualItems()[0];
+            if (first) {
+              const el = scroller.querySelector<HTMLElement>(`[data-index="${first.index}"]`);
+              const offset = el ? el.getBoundingClientRect().top - scroller.getBoundingClientRect().top : 0;
+              pendingAnchor.current = { index: first.index, offset };
+            }
+            void loadOlderRef.current();
+          } else if (entry.target === bottomEl) {
+            if (!allowAutoLoad.current) continue;
+            const g = guards.current;
+            if (!g.hasNewer || g.isLoadingNewer) continue;
+            void loadNewerRef.current();
+          }
         }
       },
-      { root: scroller, rootMargin: '320px 0px 320px 0px', threshold: 0 },
+      { root: scroller, rootMargin: '320px 0px 120px 0px', threshold: 0 },
     );
     if (topEl) io.observe(topEl);
     if (bottomEl) io.observe(bottomEl);
     return () => io.disconnect();
-  }, [requestOlder, requestNewer, scrollRef]);
+  }, [scrollRef, virtualizer]);
 
   // Jump-to-search-hit: center the target row and pulse-highlight it.
   useEffect(() => {
@@ -328,46 +345,46 @@ export function VirtualMessageStream({
     return () => window.clearTimeout(timer);
   }, [messages, targetMessageId, virtualizer]);
 
-  const liveRows = useMemo(
-    () => live.map((turn) => (
-      <LiveRow
-        key={`live-${turn.id}`}
-        turn={turn}
-        userName={userName}
-        busy={busy}
-        activeTool={activeTool}
-        onCopy={onCopy}
-        onSaveArtifact={onSaveArtifact}
-        onRetryLast={onRetryLast}
-      />
-    )),
-    [activeTool, busy, live, onCopy, onRetryLast, onSaveArtifact, userName],
-  );
-
   return (
     <>
       <div ref={topSentinelRef} className={s.scrollSentinel} aria-hidden="true" />
+      {/* Top loading / end-of-history affordance (A6) */}
       {isLoadingOlder ? (
-        <div className={s.scrollProbe}>이전 메시지 불러오는 중…</div>
-      ) : hasOlder ? (
-        <div className={s.scrollProbe}>위로 올리면 이전 메시지를 불러옵니다</div>
+        <div className={s.loadEdge}>
+          <span className={s.sp} /> 이전 대화 불러오는 중…
+        </div>
+      ) : olderError ? (
+        <button type="button" className={`${s.loadRetry} cwTap`} onClick={() => void loadOlderRef.current()}>
+          <Icon name="retry" size="xs" decorative /> 이전 대화를 불러오지 못했어요. 다시 시도
+        </button>
+      ) : !hasOlder && messages.length > 0 ? (
+        <div className={s.loadEnd}>대화의 시작이에요</div>
       ) : null}
+
       <div className={s.virtualCanvas} style={{ height: totalSize }}>
         {virtualItems.map((virtualRow) => {
           const message = messages[virtualRow.index];
           if (!message) return null;
+          const isMatch = highlight?.ids.has(message.id) ?? false;
+          const isFocused = highlight?.focusedId === message.id;
           return (
             <div
               key={virtualRow.key}
               ref={virtualizer.measureElement}
               data-index={virtualRow.index}
-              className={`${s.virtualItem} ${message.id === highlightedId ? s.virtualItemHit : ''}`}
+              className={[
+                s.virtualItem,
+                message.id === highlightedId ? s.virtualItemHit : '',
+                isMatch ? s.virtualItemMatch : '',
+                isFocused ? s.virtualItemFocused : '',
+              ].filter(Boolean).join(' ')}
               style={{ transform: `translateY(${virtualRow.start}px)` }}
             >
               <PersistedRow
                 message={message}
                 userName={userName}
                 busy={busy}
+                highlight={highlight}
                 onCopy={onCopy}
                 onSaveArtifact={onSaveArtifact}
                 onRetry={onRetry}
@@ -376,13 +393,34 @@ export function VirtualMessageStream({
           );
         })}
       </div>
+
+      {/* Bottom loading / end affordance (A6) */}
       {isLoadingNewer ? (
-        <div className={s.scrollProbe}>이후 메시지 불러오는 중…</div>
+        <div className={s.loadEdge}>
+          <span className={s.sp} /> 이후 대화 불러오는 중…
+        </div>
+      ) : newerError ? (
+        <button type="button" className={`${s.loadRetry} cwTap`} onClick={() => void loadNewerRef.current()}>
+          <Icon name="retry" size="xs" decorative /> 이후 대화를 불러오지 못했어요. 다시 시도
+        </button>
       ) : hasNewer ? (
-        <div className={s.scrollProbe}>아래로 내리면 이후 메시지를 불러옵니다</div>
+        <div className={s.loadEdge}>
+          <SkeletonMessage />
+        </div>
       ) : null}
       <div ref={bottomSentinelRef} className={s.scrollSentinel} aria-hidden="true" />
-      {liveRows}
+      {live.map((turn) => (
+        <LiveRow
+          key={`live-${turn.id}`}
+          turn={turn}
+          userName={userName}
+          busy={busy}
+          activeTool={activeTool}
+          onCopy={onCopy}
+          onSaveArtifact={onSaveArtifact}
+          onRetryLast={onRetryLast}
+        />
+      ))}
       <div ref={bottomRef} />
     </>
   );

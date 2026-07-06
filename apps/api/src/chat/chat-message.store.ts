@@ -1,7 +1,8 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { schema } from '@consulting/db-schema';
-import { and, asc, desc, eq, gt, ilike, isNull, lt, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNull, lt, or } from 'drizzle-orm';
 import type { ChatMessage, ListMessagesPageRequest, ListMessagesPageResponse, ListMessagesResponse, SearchMessagesResponse } from '@consulting/contracts';
+import { hangulMatch, highlightRanges, isChosungQuery } from '@consulting/contracts';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 
 export type FinishState = 'complete' | 'cancelled' | 'error';
@@ -84,18 +85,29 @@ export class ChatMessageStore {
   async searchMessages(threadId: string, query: string, limit = 20): Promise<SearchMessagesResponse> {
     const q = query.trim();
     if (!q) return { results: [] };
+    // F2: hangul-aware match (초성/합성/띄어쓰기무시) done in JS over the thread's
+    // messages. Pull a bounded recent slice (thread-scoped, capped) and filter.
     const rows = await this.selectBase()
-      .where(and(this.visibleThread(threadId), ilike(schema.chatMessages.content, `%${q}%`)))
+      .where(this.visibleThread(threadId))
       .orderBy(desc(schema.chatMessages.createdAt), desc(schema.chatMessages.id))
-      .limit(Math.min(Math.max(limit, 1), 50));
-    return {
-      results: rows.map((row) => ({
+      .limit(2000);
+    const cap = Math.min(Math.max(limit, 1), 100);
+    const results: SearchMessagesResponse['results'] = [];
+    const isCho = isChosungQuery(q);
+    for (const row of rows) {
+      if (!hangulMatch(row.content, q)) continue;
+      const ranges = highlightRanges(row.content, q);
+      const matchKind = ranges.length > 0 ? 'text' : isCho ? 'chosung' : 'jamo';
+      results.push({
         id: row.id,
         role: row.role,
-        snippet: this.snippet(row.content, q),
+        snippet: this.snippet(row.content, q, ranges[0]?.[0] ?? -1),
         createdAt: row.createdAt.toISOString(),
-      })),
-    };
+        matchKind,
+      });
+      if (results.length >= cap) break;
+    }
+    return { results };
   }
 
   private async listLatest(threadId: string, limit: number): Promise<ListMessagesPageResponse> {
@@ -242,10 +254,12 @@ export class ChatMessageStore {
     };
   }
 
-  private snippet(content: string, query: string): string {
-    const lower = content.toLocaleLowerCase();
-    const needle = query.toLocaleLowerCase();
-    const index = lower.indexOf(needle);
+  private snippet(content: string, query: string, hintIndex = -1): string {
+    // Prefer the highlight-range start (F2); fall back to a plain substring probe.
+    let index = hintIndex;
+    if (index < 0) {
+      index = content.toLocaleLowerCase().indexOf(query.toLocaleLowerCase());
+    }
     if (index < 0) return content.slice(0, 140);
     const start = Math.max(0, index - 48);
     const end = Math.min(content.length, index + query.length + 92);

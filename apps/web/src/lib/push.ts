@@ -5,7 +5,7 @@
  *   disablePush(): unsubscribe locally → POST /push/unsubscribe
  * Availability requires: SW registered (prod, HTTPS), server VAPID configured.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from './api';
 
 function base64UrlToUint8Array(base64Url: string): Uint8Array {
@@ -55,7 +55,7 @@ export function usePushNotifications(enabled: boolean): {
     })();
   }, [enabled]);
 
-  const toggle = useCallback(async () => {
+  const toggle = async () => {
     const reg = await getRegistration();
     if (!reg) return;
     setState('busy');
@@ -101,7 +101,7 @@ export function usePushNotifications(enabled: boolean): {
     } catch {
       setState('off');
     }
-  }, []);
+  };
 
   return { state, toggle };
 }

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from '@tanstack/react-router';
 import { gsap } from 'gsap';
+import { hangulMatch } from '@consulting/contracts';
 import { useWorkspaceTree } from '../../../lib/spaces';
 import { useSelectedWorkspace } from '../../../lib/wsStore';
 import s from './CommandPalette.module.css';
@@ -46,40 +47,27 @@ export function CommandPalette() {
     }
   }, [open]);
 
-  const items = useMemo<Item[]>(() => {
-    const out: Item[] = [];
-    for (const p of tree?.projects ?? []) {
-      for (const c of p.channels) {
-        for (const t of c.topics) {
-          out.push({
-            id: t.id,
-            kind: 'topic',
-            label: t.name,
-            hint: `${p.name} › ${c.name}`,
-            run: () => void router.navigate({ to: '/t/$topicId', params: { topicId: t.id } }),
-          });
-        }
+  // React Compiler stabilizes these derived values — no useMemo needed (E).
+  const items: Item[] = [];
+  for (const p of tree?.projects ?? []) {
+    for (const c of p.channels) {
+      for (const t of c.topics) {
+        items.push({
+          id: t.id,
+          kind: 'topic',
+          label: t.name,
+          hint: `${p.name} › ${c.name}`,
+          run: () => void router.navigate({ to: '/t/$topicId', params: { topicId: t.id } }),
+        });
       }
     }
-    return out;
-  }, [tree, router]);
+  }
 
-  const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    if (!needle) return items.slice(0, 8);
-    // Korean-friendly subsequence match: every char of the query must appear in order.
-    const match = (hay: string) => {
-      const h = hay.toLowerCase();
-      let i = 0;
-      for (const ch of needle) {
-        i = h.indexOf(ch, i);
-        if (i < 0) return false;
-        i += 1;
-      }
-      return true;
-    };
-    return items.filter((it) => match(it.label) || (it.hint ? match(it.hint) : false)).slice(0, 8);
-  }, [q, items]);
+  const needle = q.trim();
+  // F4: hangul-aware match — 초성/합성/띄어쓰기무시.
+  const filtered = !needle
+    ? items.slice(0, 8)
+    : items.filter((it) => hangulMatch(it.label, needle) || (it.hint ? hangulMatch(it.hint, needle) : false)).slice(0, 8);
 
   useEffect(() => setCursor(0), [q]);
 

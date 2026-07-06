@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ChatStreamUsage, MessageSearchHit } from '@consulting/contracts';
+import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { api } from '../../../lib/api';
@@ -17,7 +16,10 @@ import {
 } from '../../../lib/collab';
 import { ConvoMinimap, type MinimapEntry } from './ConvoMinimap';
 import { messageWindowKeys, useMessageWindow } from '../model/useMessageWindow';
-import { VirtualMessageStream } from './VirtualMessageStream';
+import { searchStore, useSearchState } from '../model/searchStore';
+import { VirtualMessageStream, type HighlightState } from './VirtualMessageStream';
+import { RunStatusBar, type RunStatusUi } from './RunStatusBar';
+import { JumpToLatest } from './JumpToLatest';
 import { Icon } from '../../../shared/icons/Icon';
 import { Button } from '../../../shared/ui/button/Button';
 import { Textarea } from '../../../shared/ui/input/Input';
@@ -42,18 +44,6 @@ interface SlashCommandItem {
   hint: string;
 }
 
-interface RunStatusUi {
-  runId?: string;
-  model?: string;
-  contextLimit?: number;
-  usage?: ChatStreamUsage;
-  startedAt: number;
-  finishedAt?: number;
-  state: 'running' | 'done' | 'error';
-  reasoning?: boolean;
-  reasoningText?: string;
-}
-
 const HERMES_SLASH_COMMANDS: SlashCommandItem[] = [
   { command: '/help', value: '/help', title: '도움말', hint: 'Hermes가 지원하는 slash 명령 안내' },
   { command: '/commands', value: '/commands', title: '명령 목록', hint: 'gateway/CLI 명령 목록을 조회' },
@@ -70,25 +60,6 @@ function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
-}
-
-function fmtTokens(tokens?: number): string {
-  if (tokens === undefined) return 'tok 대기';
-  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
-  if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`;
-  return String(tokens);
-}
-
-function fmtElapsed(ms: number): string {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const minutes = Math.floor(total / 60);
-  const seconds = total % 60;
-  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
-}
-
-function contextPercent(usage?: ChatStreamUsage, contextLimit?: number): number | null {
-  if (!usage?.totalTokens || !contextLimit) return null;
-  return Math.min(100, Math.round((usage.totalTokens / contextLimit) * 100));
 }
 
 
@@ -110,24 +81,29 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
   const history = useMessageWindow(threadId);
   const attachments = useAttachments(threadId);
   const uploadAttachment = useUploadAttachment(threadId);
+  const search = useSearchState();
 
   const [live, setLive] = useState<LiveTurn[]>([]);
   const [input, setInput] = useState('');
   const [slashCursor, setSlashCursor] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<MessageSearchHit[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searching, setSearching] = useState(false);
   const [targetMessageId, setTargetMessageId] = useState<string | null>(null);
   const [runStatus, setRunStatus] = useState<RunStatusUi | null>(null);
-  const [nowTs, setNowTs] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
   const [activeTool, setActiveTool] = useState<string | null>(null);
+  const [atBottom, setAtBottom] = useState(true);
+  const [unseen, setUnseen] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   const nextId = useRef(1);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<HTMLDivElement | null>(null);
   const lastPromptRef = useRef<string>('');
+  const atBottomRef = useRef(true);
+  const deltaBuf = useRef('');
+  const rafId = useRef(0);
+
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   // Register this thread as the active context (evidence panel target).
@@ -136,8 +112,10 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
     return () => activeThreadStore.set(null);
   }, [threadId]);
 
+  // A1: only follow new live output when the user is already at the tail.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    if (!atBottomRef.current) return;
+    bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
   }, [live]);
 
   useEffect(() => {
@@ -147,18 +125,34 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
     setActiveTool(null);
     setSlashCursor(0);
     setSearchQuery('');
-    setSearchResults([]);
     setSearchOpen(false);
     setSearching(false);
     setTargetMessageId(null);
     setRunStatus(null);
+    setUnseen(0);
+    setAtBottom(true);
+    atBottomRef.current = true;
+    searchStore.reset(threadId);
   }, [threadId]);
 
+  function onAtBottomChange(next: boolean) {
+    atBottomRef.current = next;
+    setAtBottom(next);
+    if (next) setUnseen(0);
+  }
+
+  // F3: when the focused search result changes (e.g. clicked in the right panel
+  // or stepped via the navigator), jump the chat window to that message.
+  const lastFocusedId = useRef<string | null>(null);
+  const jumpAroundRef = useRef(history.jumpAround);
+  jumpAroundRef.current = history.jumpAround;
   useEffect(() => {
-    if (!busy) return;
-    const timer = window.setInterval(() => setNowTs(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [busy]);
+    if (search.threadId !== threadId) return;
+    const hit = search.results[search.focusedIndex];
+    if (!hit || hit.id === lastFocusedId.current) return;
+    lastFocusedId.current = hit.id;
+    void jumpAroundRef.current(hit.id).then((target) => setTargetMessageId(target)).catch(() => {});
+  }, [search.focusedIndex, search.results, search.threadId, threadId]);
 
   function patchTurn(id: number, patch: Partial<LiveTurn>) {
     setLive((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
@@ -170,9 +164,12 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
     if (!messageOverride) setInput('');
     lastPromptRef.current = message;
     setBusy(true);
-    setNowTs(Date.now());
     setRunStatus({ startedAt: Date.now(), state: 'running' });
     setActiveTool(null);
+    // sending pins us to the tail
+    atBottomRef.current = true;
+    setAtBottom(true);
+    setUnseen(0);
 
     const userTurn: LiveTurn = { id: nextId.current++, role: 'user', text: message };
     const aiTurn: LiveTurn = { id: nextId.current++, role: 'ai', text: '', streaming: true };
@@ -180,8 +177,27 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
 
     const controller = new AbortController();
     abortRef.current = controller;
+    // A4: batch SSE deltas into one patch per animation frame instead of one
+    // setState per token (was tens of re-renders/sec on the whole thread).
+    let acc = '';
+    const flush = () => {
+      rafId.current = 0;
+      if (!deltaBuf.current) return;
+      acc += deltaBuf.current;
+      deltaBuf.current = '';
+      patchTurn(aiTurn.id, { text: acc });
+    };
+    const scheduleFlush = () => {
+      if (!rafId.current) rafId.current = requestAnimationFrame(flush);
+    };
+    const cancelFlush = () => {
+      if (rafId.current) {
+        cancelAnimationFrame(rafId.current);
+        rafId.current = 0;
+      }
+      flush();
+    };
     try {
-      let acc = '';
       for await (const event of api.streamChat({ threadId, message }, controller.signal)) {
         if (event.type === 'start') {
           patchTurn(aiTurn.id, { runId: event.runId });
@@ -207,10 +223,11 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
             state: 'running',
           }));
         } else if (event.type === 'delta') {
-          acc += event.text;
+          deltaBuf.current += event.text;
           setActiveTool(null);
-          patchTurn(aiTurn.id, { text: acc });
+          scheduleFlush();
         } else if (event.type === 'done') {
+          cancelFlush();
           patchTurn(aiTurn.id, { streaming: false });
           setRunStatus((prev) => {
             const next: RunStatusUi = {
@@ -224,6 +241,7 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
             return next;
           });
         } else if (event.type === 'error') {
+          cancelFlush();
           patchTurn(aiTurn.id, { streaming: false, error: event.message });
           setRunStatus((prev) => ({
             ...(prev ?? { startedAt: Date.now(), state: 'error' as const }),
@@ -233,9 +251,13 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
           toast('error', '응답 생성 실패');
         }
       }
+      cancelFlush();
       patchTurn(aiTurn.id, { streaming: false });
       setRunStatus((prev) => prev?.state === 'running' ? { ...prev, finishedAt: Date.now(), state: 'done' } : prev);
+      // A2: if the user scrolled away during the answer, surface an unseen count.
+      if (!atBottomRef.current) setUnseen((n) => n + 1);
     } catch {
+      cancelFlush();
       if (controller.signal.aborted) {
         patchTurn(aiTurn.id, { streaming: false, error: '중단됨' });
       } else {
@@ -318,14 +340,18 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
   async function searchTranscript() {
     const q = searchQuery.trim();
     if (!q) {
-      setSearchResults([]);
+      searchStore.set({ query: '', results: [], focusedIndex: -1, open: false });
       setSearchOpen(false);
       return;
     }
     setSearching(true);
     try {
-      const res = await api.searchMessages(threadId, { q, limit: 8 });
-      setSearchResults(res.results);
+      // F2: server does hangul-aware matching; ask for a generous result set so
+      // the navigator + right-panel list are complete.
+      const res = await api.searchMessages(threadId, { q, limit: 50 });
+      // Setting focusedIndex to 0 triggers the focus effect → jumps to first hit.
+      lastFocusedId.current = null;
+      searchStore.set({ threadId, query: q, results: res.results, focusedIndex: res.results.length > 0 ? 0 : -1, open: true });
       setSearchOpen(true);
     } catch {
       toast('error', '대화 검색에 실패했어요.');
@@ -334,14 +360,20 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
     }
   }
 
-  async function jumpToSearchHit(hit: MessageSearchHit) {
-    try {
-      const target = await history.jumpAround(hit.id);
-      setTargetMessageId(target);
-      setSearchOpen(false);
-    } catch {
-      toast('error', '검색 위치로 이동하지 못했어요.');
-    }
+  function jumpToSearchHit(hit: { id: string }, index: number) {
+    // Set focus index; the focusedIndex effect performs the actual jumpAround so
+    // navigator / panel / this path all funnel through one code path (F3).
+    searchStore.focusIndex(index);
+    void hit;
+  }
+
+  // F3: result navigator — step to previous/next hit, wrapping around.
+  function stepSearch(dir: 1 | -1) {
+    const st = searchStore.get();
+    if (st.results.length === 0) return;
+    const nextIndex = st.focusedIndex + dir;
+    const hit = st.results[((nextIndex % st.results.length) + st.results.length) % st.results.length];
+    if (hit) void jumpToSearchHit(hit, nextIndex);
   }
 
   function jumpTo(key: string) {
@@ -349,36 +381,45 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
     el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
+  // A2: return to the live tail. From a search-jump ('around') window we replace
+  // the window with the latest page in O(1) instead of paging down.
+  async function jumpToLatest() {
+    if (history.mode === 'around' || history.hasNewer) {
+      await history.resetToLatest();
+    }
+    atBottomRef.current = true;
+    setAtBottom(true);
+    setUnseen(0);
+    requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' }));
+  }
+
   const userName = user?.displayName ?? '나';
   const persisted = history.messages;
   const files = attachments.data?.attachments ?? [];
-  // 300ms 이후에도 최초 로딩이면 스켈레톤 노출 — 즉시 로드는 깜빡임 없이 통과.
-  const showHistorySkeleton = useDelayedFlag(history.isLoading, 300);
 
   const slashQuery = input.startsWith('/') && !input.includes('\n') ? input.slice(1).trim().toLocaleLowerCase() : '';
   const showSlashMenu = input.startsWith('/') && !input.includes('\n');
-  const slashItems = useMemo(() => {
-    if (!showSlashMenu) return [];
-    const items = HERMES_SLASH_COMMANDS.filter((item) => {
-      if (!slashQuery) return true;
-      return item.command.slice(1).includes(slashQuery) || item.title.toLocaleLowerCase().includes(slashQuery);
-    });
-    return items.slice(0, 7);
-  }, [showSlashMenu, slashQuery]);
+  const slashItems = !showSlashMenu
+    ? []
+    : HERMES_SLASH_COMMANDS.filter((item) => {
+        if (!slashQuery) return true;
+        return item.command.slice(1).includes(slashQuery) || item.title.toLocaleLowerCase().includes(slashQuery);
+      }).slice(0, 7);
 
   useEffect(() => setSlashCursor(0), [slashQuery]);
 
-  const currentUsage = runStatus?.usage;
-  const currentContextLimit = runStatus?.contextLimit ?? currentUsage?.contextLimit;
-  const runPct = contextPercent(currentUsage, currentContextLimit);
-  const runMeterWidth = runPct ?? (runStatus?.state === 'running' ? 18 : 0);
-  const runElapsedMs = runStatus ? (runStatus.finishedAt ?? nowTs) - runStatus.startedAt : 0;
-  const runStateClass = runStatus?.state === 'error'
-    ? s.runStatusError
-    : runStatus?.state === 'done'
-      ? s.runStatusDone
-      : s.runStatusRunning;
-  const runStateLabel = runStatus?.state === 'error' ? 'error' : runStatus?.state === 'done' ? 'done' : 'running';
+  // F3: build the highlight set for the stream from the shared search state.
+  const highlight: HighlightState | null = search.query && search.threadId === threadId
+    ? {
+        ids: new Set(search.results.map((r) => r.id)),
+        query: search.query,
+        focusedId: search.results[search.focusedIndex]?.id ?? null,
+      }
+    : null;
+
+  // 300ms 이후에도 최초 로딩이면 스켈레톤 노출 — 즉시 로드는 깜빡임 없이 통과.
+  const showHistorySkeleton = useDelayedFlag(history.isLoading, 300);
+  const hasResults = search.results.length > 0 && search.threadId === threadId;
 
   const minimapEntries: MinimapEntry[] = [
     ...persisted.map((m) => ({
@@ -401,41 +442,67 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
         </div>
         <div className={s.right}>
           <div className={s.threadSearch}>
-            <Icon name="command" size="xs" decorative />
+            <Icon name="search" size="xs" decorative />
             <input
               className={s.threadSearchInput}
               value={searchQuery}
-              placeholder="대화 검색"
+              placeholder="대화 검색 (초성·띄어쓰기 무시)"
               onChange={(event) => {
                 setSearchQuery(event.target.value);
                 if (!event.target.value.trim()) {
-                  setSearchResults([]);
+                  searchStore.set({ query: '', results: [], focusedIndex: -1, open: false });
                   setSearchOpen(false);
                 }
               }}
-              onFocus={() => searchResults.length > 0 && setSearchOpen(true)}
+              onFocus={() => hasResults && setSearchOpen(true)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
                   event.preventDefault();
-                  void searchTranscript();
+                  if (hasResults && search.query === searchQuery.trim()) {
+                    // already searched → Enter steps to next hit (Ctrl+F feel)
+                    stepSearch(event.shiftKey ? -1 : 1);
+                  } else {
+                    void searchTranscript();
+                  }
                 }
                 if (event.key === 'Escape') setSearchOpen(false);
               }}
             />
-            <button
-              type="button"
-              className={s.threadSearchBtn}
-              disabled={searching || history.isJumping}
-              onClick={() => void searchTranscript()}
-            >
-              {searching ? '검색 중' : '검색'}
-            </button>
-            {searchOpen ? (
+            {hasResults ? (
+              <div className={s.searchNav}>
+                <button type="button" className={`${s.searchNavBtn} cwTap`} aria-label="이전 결과" onClick={() => stepSearch(-1)}>
+                  <Icon name="chevron-left" size="xs" decorative />
+                </button>
+                <span className={s.searchNavCount}>
+                  {search.focusedIndex + 1} / {search.results.length}
+                </span>
+                <button type="button" className={`${s.searchNavBtn} cwTap`} aria-label="다음 결과" onClick={() => stepSearch(1)}>
+                  <Icon name="chevron-right" size="xs" decorative />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className={`${s.threadSearchBtn} cwTap`}
+                disabled={searching || history.isJumping}
+                onClick={() => void searchTranscript()}
+              >
+                {searching ? '검색 중' : '검색'}
+              </button>
+            )}
+            {searchOpen && hasResults ? (
               <div className={s.searchResults}>
-                {searchResults.length === 0 ? (
-                  <div className={s.searchEmpty}>검색 결과가 없어요</div>
-                ) : searchResults.map((hit) => (
-                  <button key={hit.id} type="button" className={s.searchHit} onClick={() => void jumpToSearchHit(hit)}>
+                <div className={s.searchResultsHead}>
+                  <span>결과 {search.results.length}개</span>
+                  <span className={s.searchResultsHint}>Enter로 다음 · 우측 패널에서 전체 보기</span>
+                </div>
+                {search.results.slice(0, 5).map((hit, index) => (
+                  <button
+                    key={hit.id}
+                    type="button"
+                    className={`${s.searchHit} ${index === search.focusedIndex ? s.searchHitOn : ''} cwTap`}
+                    onClick={() => void jumpToSearchHit(hit, index)}
+                  >
                     <span className={s.searchHitRole}>{hit.role === 'assistant' ? '지구' : userName}</span>
                     <span className={s.searchHitText}>{hit.snippet}</span>
                   </button>
@@ -443,27 +510,10 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
               </div>
             ) : null}
           </div>
-          {runStatus ? (
-            <div className={`${s.runStatus} ${runStateClass}`} title={runStatus.runId ?? 'Hermes run'}>
-              <span className={s.runStateDot} />
-              <span className={s.runModel}>{runStatus.model ?? 'Hermes'}</span>
-              <span className={s.runSep}>│</span>
-              <span>{fmtTokens(currentUsage?.totalTokens)} / {currentContextLimit ? fmtTokens(currentContextLimit) : 'limit n/a'}</span>
-              <span className={s.runMeter} aria-label="context usage">
-                <span style={{ width: `${runMeterWidth}%` }} />
-              </span>
-              <span>{runPct === null ? 'n/a' : `${runPct}%`}</span>
-              <span className={s.runSep}>│</span>
-              <span>⏱ {fmtElapsed(runElapsedMs)}</span>
-              <span className={s.runSep}>│</span>
-              <span>{runStatus.reasoning ? 'reasoning on' : 'reasoning 대기'}</span>
-              <span className={s.runSep}>│</span>
-              <span>{runStateLabel}</span>
-            </div>
-          ) : null}
+          {runStatus ? <RunStatusBar status={runStatus} /> : null}
           {busy || history.isJumping ? (
             <div className={s.statusChip}>
-              <span className={s.pulse} /> {history.isJumping ? '검색 위치 이동 중' : activeTool ? `${activeTool} 실행 중` : '응답 생성 중'}
+              <span className={s.pulse} /> {history.isJumping ? '위치 이동 중' : activeTool ? `${activeTool} 실행 중` : '응답 생성 중'}
             </div>
           ) : null}
         </div>
@@ -495,13 +545,23 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
             hasNewer={history.hasNewer}
             isLoadingOlder={history.isLoadingOlder}
             isLoadingNewer={history.isLoadingNewer}
+            olderError={history.olderError}
+            newerError={history.newerError}
             targetMessageId={targetMessageId}
+            highlight={highlight}
             onLoadOlder={history.loadOlder}
             onLoadNewer={history.loadNewer}
+            onAtBottomChange={onAtBottomChange}
             onCopy={copyText}
             onSaveArtifact={saveAsArtifact}
             onRetry={send}
             onRetryLast={() => send(lastPromptRef.current)}
+          />
+          <JumpToLatest
+            visible={!atBottom || history.hasNewer || history.mode === 'around'}
+            unseen={unseen}
+            streaming={busy}
+            onJump={() => void jumpToLatest()}
           />
         </div>
         <ConvoMinimap entries={minimapEntries} onJump={jumpTo} />

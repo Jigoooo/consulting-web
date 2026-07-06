@@ -186,7 +186,7 @@ export type ListMessagesPageResponse = z.infer<typeof ListMessagesPageResponseSc
 export const SearchMessagesRequestSchema = z
   .object({
     q: z.string().trim().min(1).max(120),
-    limit: z.number().int().min(1).max(50).optional(),
+    limit: z.number().int().min(1).max(100).optional(),
   })
   .strict();
 export type SearchMessagesRequest = z.infer<typeof SearchMessagesRequestSchema>;
@@ -197,6 +197,8 @@ export const MessageSearchHitSchema = z
     role: z.enum(['user', 'assistant']),
     snippet: z.string(),
     createdAt: z.string().datetime({ offset: true }),
+    /** how the hangul-aware matcher matched (F1/F2) — used for highlight fallback */
+    matchKind: z.enum(['text', 'chosung', 'jamo']).optional(),
   })
   .strict();
 export type MessageSearchHit = z.infer<typeof MessageSearchHitSchema>;

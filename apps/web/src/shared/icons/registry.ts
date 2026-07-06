@@ -1,11 +1,14 @@
 import type { LucideIcon } from 'lucide-react';
 import {
+  ArrowDown,
   ArrowLeft,
   Bell,
   Bot,
   Brain,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleAlert,
   ClipboardCopy,
   Command,
@@ -32,6 +35,7 @@ import {
   Pin,
   Plus,
   RefreshCcw,
+  Search,
   Send,
   Square,
   Sun,
@@ -43,12 +47,15 @@ import {
 } from 'lucide-react';
 
 export const iconRegistry = {
+  'arrow-down': ArrowDown,
   'arrow-left': ArrowLeft,
   bell: Bell,
   bot: Bot,
   brain: Brain,
   check: CheckCircle2,
   'chevron-down': ChevronDown,
+  'chevron-left': ChevronLeft,
+  'chevron-right': ChevronRight,
   alert: CircleAlert,
   copy: ClipboardCopy,
   command: Command,
@@ -75,6 +82,7 @@ export const iconRegistry = {
   pin: Pin,
   plus: Plus,
   retry: RefreshCcw,
+  search: Search,
   send: Send,
   stop: Square,
   sun: Sun,

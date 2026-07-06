@@ -28,6 +28,8 @@ import { Input } from '../../../shared/ui/input/Input';
 import { Skeleton } from '../../../shared/ui/skeleton/Skeleton';
 import { useDelayedFlag } from '../../../shared/lib/useDelayedFlag';
 import { EvidencePanel } from '../../evidence-panel/ui/EvidencePanel';
+import { SearchResultsPanel } from '../../evidence-panel/ui/SearchResultsPanel';
+import { searchStore, useSearchState } from '../../chat-thread/model/searchStore';
 import { OfflineBadge } from '../../../shared/ui/offline/OfflineBadge';
 import s from './AppShell.module.css';
 
@@ -495,17 +497,21 @@ function ContextPanel() {
   const { data: members } = useMembers(selected ?? undefined);
   const toast = useToast();
   const activeThread = useActiveThread();
-  const [tab, setTab] = useState<'evidence' | 'members'>('members');
+  const searchState = useSearchState();
+  const [tab, setTab] = useState<'evidence' | 'members' | 'search'>('members');
   const [inviteRole, setInviteRole] = useState<'editor' | 'viewer' | 'admin'>('editor');
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const inviteRoleIndex = inviteRole === 'editor' ? 0 : inviteRole === 'viewer' ? 1 : 2;
+  const hasSearch = Boolean(searchState.query) && searchState.threadId === activeThread;
 
-  // Auto-switch to evidence when a thread opens (2-A E-4).
+  // Auto-switch to evidence when a thread opens (2-A E-4); to search when a
+  // search is active (F3).
   useEffect(() => {
-    if (activeThread) setTab('evidence');
+    if (hasSearch) setTab('search');
+    else if (activeThread) setTab('evidence');
     else setTab('members');
-  }, [activeThread]);
+  }, [activeThread, hasSearch]);
 
   async function createInvite() {
     if (!selected || inviteBusy) return;
@@ -544,6 +550,15 @@ function ContextPanel() {
           >
             근거
           </button>
+          {hasSearch ? (
+            <button
+              type="button"
+              className={`${s.ctxTab} ${tab === 'search' ? s.ctxTabOn : ''}`}
+              onClick={() => setTab('search')}
+            >
+              검색 {searchState.results.length}
+            </button>
+          ) : null}
           <button
             type="button"
             className={`${s.ctxTab} ${tab === 'members' ? s.ctxTabOn : ''}`}
@@ -551,6 +566,13 @@ function ContextPanel() {
           >
             멤버
           </button>
+        </div>
+      ) : null}
+
+      {tab === 'search' && hasSearch ? (
+        <div className={s.ctxSection}>
+          <div className={s.ctxTitle}>검색 결과</div>
+          <SearchResultsPanel onJump={(index) => searchStore.focusIndex(index)} />
         </div>
       ) : null}
 
