@@ -58,6 +58,9 @@ import {
   type UploadAttachmentRequest,
   type UploadAttachmentResponse,
   type ListAttachmentsResponse,
+  PushPublicKeyResponseSchema,
+  type PushPublicKeyResponse,
+  type PushSubscribeRequest,
 } from '@consulting/contracts';
 import { HttpCore, type ApiClientOptions } from './http-core.js';
 import { readChatSseStream } from './sse.js';
@@ -258,6 +261,23 @@ export class ConsultingApiClient {
 
   markNotificationsRead(ids?: string[]): Promise<OkResponse> {
     return this.http.request('/notifications/read', { method: 'POST', body: ids ? { ids } : {} }, (d) =>
+      OkResponseSchema.parse(d),
+    );
+  }
+
+  // --- Web Push (2026-07-06) ---
+  pushPublicKey(): Promise<PushPublicKeyResponse> {
+    return this.http.request('/push/public-key', { method: 'GET' }, (d) =>
+      PushPublicKeyResponseSchema.parse(d),
+    );
+  }
+
+  pushSubscribe(body: PushSubscribeRequest): Promise<OkResponse> {
+    return this.http.request('/push/subscribe', { method: 'POST', body }, (d) => OkResponseSchema.parse(d));
+  }
+
+  pushUnsubscribe(endpoint: string): Promise<OkResponse> {
+    return this.http.request('/push/unsubscribe', { method: 'POST', body: { endpoint } }, (d) =>
       OkResponseSchema.parse(d),
     );
   }

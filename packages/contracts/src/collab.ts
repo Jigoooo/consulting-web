@@ -162,6 +162,38 @@ export const MarkReadRequestSchema = z
 export type MarkReadRequest = z.infer<typeof MarkReadRequestSchema>;
 
 // ---------------------------------------------------------------------------
+// Web Push (2026-07-06)
+// ---------------------------------------------------------------------------
+
+export const PushPublicKeyResponseSchema = z
+  .object({
+    /** VAPID public key (base64url) or null when push is not configured. */
+    publicKey: z.string().nullable(),
+  })
+  .strict();
+export type PushPublicKeyResponse = z.infer<typeof PushPublicKeyResponseSchema>;
+
+export const PushSubscribeRequestSchema = z
+  .object({
+    endpoint: z.string().url().max(2000),
+    keys: z
+      .object({
+        p256dh: z.string().min(1).max(500),
+        auth: z.string().min(1).max(500),
+      })
+      .strict(),
+  })
+  .strict();
+export type PushSubscribeRequest = z.infer<typeof PushSubscribeRequestSchema>;
+
+export const PushUnsubscribeRequestSchema = z
+  .object({
+    endpoint: z.string().url().max(2000),
+  })
+  .strict();
+export type PushUnsubscribeRequest = z.infer<typeof PushUnsubscribeRequestSchema>;
+
+// ---------------------------------------------------------------------------
 // Phase 2-D G-3 — File attachments
 // ---------------------------------------------------------------------------
 

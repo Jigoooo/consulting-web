@@ -17,6 +17,12 @@ export const EnvSchema = z.object({
 
   HERMES_API_BASE_URL: z.string().url(),
   HERMES_API_KEY: z.string().min(1),
+
+  // Web Push (2026-07-06). Optional — when unset, push endpoints return
+  // publicKey: null and the sender no-ops; the in-app bell keeps working.
+  VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  VAPID_SUBJECT: z.string().default('mailto:admin@localhost'),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

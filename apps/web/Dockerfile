@@ -12,5 +12,10 @@ RUN pnpm --filter @consulting/shared --filter @consulting/contracts --filter @co
 
 FROM nginx:1.27-alpine AS runtime
 COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
+COPY apps/web/nginx-security-headers.conf /etc/nginx/snippets/security-headers.conf
 COPY --from=build /repo/apps/web/dist /usr/share/nginx/html
+# Normalize permissions: COPY preserves host modes; a 600 file (umask quirk)
+# would 403 under the non-root nginx workers. Make world-readability structural.
+RUN find /usr/share/nginx/html -type d -exec chmod 755 {} + \
+ && find /usr/share/nginx/html -type f -exec chmod 644 {} +
 EXPOSE 80

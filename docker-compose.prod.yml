@@ -74,6 +74,10 @@ services:
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set in .env.docker}
       HERMES_API_BASE_URL: http://host.docker.internal:38642
       HERMES_API_KEY: ${HERMES_API_KEY:?set in .env.docker}
+      # Web Push (optional — endpoints degrade to no-op when unset)
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@localhost}
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     depends_on:

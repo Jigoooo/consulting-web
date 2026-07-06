@@ -3,6 +3,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { gsap } from 'gsap';
 import { useAuth } from '../../../lib/useAuth';
 import { useNotifications, useMarkNotificationsRead } from '../../../lib/collab';
+import { usePushNotifications } from '../../../lib/push';
 import { Icon } from '../../../shared/icons/Icon';
 import type { IconName } from '../../../shared/icons/registry';
 import s from './NotificationBell.module.css';
@@ -31,6 +32,7 @@ export function NotificationBell() {
   const markRead = useMarkNotificationsRead();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+  const push = usePushNotifications(open);
   const popRef = useRef<HTMLDivElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
@@ -110,6 +112,34 @@ export function NotificationBell() {
               ))
             )}
           </div>
+          {push.state !== 'unsupported' && push.state !== 'unavailable' ? (
+            <div className={s.pushRow}>
+              <span className={s.pushLabel}>
+                <Icon name="monitor" size="sm" decorative /> 브라우저 알림
+              </span>
+              {push.state === 'denied' ? (
+                <span className={s.pushDenied}>브라우저 설정에서 차단됨</span>
+              ) : (
+                <button
+                  type="button"
+                  className={s.pushToggle}
+                  role="switch"
+                  aria-checked={push.state === 'on'}
+                  aria-label="브라우저 알림 켜기/끄기"
+                  disabled={push.state === 'busy'}
+                  onClick={() => void push.toggle()}
+                >
+                  {push.state === 'busy' ? (
+                    <Icon name="loader" size="sm" decorative />
+                  ) : push.state === 'on' ? (
+                    '켜짐'
+                  ) : (
+                    '꺼짐'
+                  )}
+                </button>
+              )}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

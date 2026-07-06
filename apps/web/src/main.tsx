@@ -4,9 +4,12 @@ import { RouterProvider, createRouter } from '@tanstack/react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { routeTree } from './routeTree.gen';
 import { authStore } from './lib/api';
+import { setupServiceWorker, reloadIfUpdateReady } from './lib/sw';
 import { ToastProvider } from './shared/ui/toast/Toast';
 import { ErrorBoundary } from './shared/ui/error-boundary/ErrorBoundary';
 import './styles/global.css';
+
+setupServiceWorker();
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
@@ -17,6 +20,12 @@ const router = createRouter({
   context: { queryClient, auth: authStore },
   defaultPreload: 'intent',
   scrollRestoration: true,
+});
+
+// SW deploy flow: when a new version is fully precached, swap at a natural
+// navigation boundary (user expects a screen change; no form state at risk).
+router.subscribe('onBeforeNavigate', () => {
+  reloadIfUpdateReady();
 });
 
 declare module '@tanstack/react-router' {

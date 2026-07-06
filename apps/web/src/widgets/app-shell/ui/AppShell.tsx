@@ -23,6 +23,7 @@ import type { IconName } from '../../../shared/icons/registry';
 import { Button } from '../../../shared/ui/button/Button';
 import { Input } from '../../../shared/ui/input/Input';
 import { EvidencePanel } from '../../evidence-panel/ui/EvidencePanel';
+import { OfflineBadge } from '../../../shared/ui/offline/OfflineBadge';
 import s from './AppShell.module.css';
 
 /** Persistent 4-pane frame: rail / sidebar(tree) / center(Outlet) / context. */
@@ -30,6 +31,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   return (
     <div className={s.app}>
+      <OfflineBadge />
       <Rail />
       <Sidebar className={drawerOpen ? s.drawerOpen ?? '' : ''} onNavigate={() => setDrawerOpen(false)} />
       {drawerOpen ? <div className={s.scrim} onClick={() => setDrawerOpen(false)} /> : null}

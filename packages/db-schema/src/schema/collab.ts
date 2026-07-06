@@ -134,6 +134,32 @@ export const notifications = pgTable(
 );
 
 /**
+ * Web Push subscriptions (2026-07-06). One row per browser endpoint; a user
+ * can hold several (desktop + mobile). Endpoint is globally unique per the
+ * Push API spec. Dead endpoints (404/410 on send) are pruned by the sender.
+ */
+export const pushSubscriptions = pgTable(
+  'push_subscriptions',
+  {
+    id: primaryId,
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    endpoint: text('endpoint').notNull(),
+    /** Client public key (base64url) — encrypts payloads end-to-end. */
+    p256dh: text('p256dh').notNull(),
+    /** Client auth secret (base64url). */
+    auth: text('auth').notNull(),
+    userAgent: text('user_agent'),
+    ...timestamps,
+  },
+  (t) => [
+    unique('push_subscriptions_endpoint_unique').on(t.endpoint),
+    index('push_subscriptions_user_idx').on(t.userId),
+  ],
+);
+
+/**
  * Chat file attachments (Phase 2-D G-3). Content stored inline as base64 —
  * survives container rebuilds via the pg volume, no extra object store.
  * Size capped at the contract layer (10MB binary ≈ 13.7MB base64).

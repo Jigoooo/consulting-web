@@ -82,3 +82,22 @@ Phase 3 Cloudflare/외부 노출: ░░░░░░░░░░ 0%
 - 로그인/회원가입 split 레이아웃 재구축: 인라인 검증, 비밀번호 토글, 강도미터
 - Google Fonts(Inter/JetBrains Mono) 제거 → Wanted Sans 셀프호스팅 + 시스템 mono
 - E2E: 가입→AppShell 진입, 콘솔에러 0 검증 완료
+
+## 2026-07-06 완료 — Service Worker 레이어 (배포안전 + Web Push + 오프라인)
+근거: velog "왜 서비스 워커를 안 쓸까" + MDN Service Worker API 검토 → 5단계 전부 적용.
+- ① nginx 캐시 정책 근본수정: index.html/sw.js/version.json = no-cache, /assets/ = immutable 1년.
+  ★nginx add_header 상속 함정: location에서 add_header 쓰면 상위 보안헤더 전체 소실
+  → nginx-security-headers.conf snippet으로 구조화(모든 location에 include). CSP에 worker-src 'self' 추가.
+- ② vite:preloadError 세션당 1회 reload 안전망 (최후 보루, src/lib/sw.ts)
+- ③ SW 본체 (public/sw.js + vite version-manifest 플러그인):
+  version.json(빌드타임스탬프+에셋목록, 불일치비교→롤백 안전) 폴링(5분+visibilitychange),
+  신버전 전체 프리캐시 후 NEW_VERSION postMessage → 라우트 이동 시점 자연 reload.
+  /assets/ cache-first(전체 버킷 검색→배포후 구 청크 404 원천 차단), 버킷 최신 3개 유지.
+  ★하드룰: /api/ (특히 SSE)는 respondWith 자체를 안 함. dev(5273)에선 SW 미등록.
+- ④ Web Push: push_subscriptions 테이블(0007), VAPID env(미설정시 no-op 열화),
+  /push/public-key·subscribe·unsubscribe, notifyWorkspace→sendToUsers 팬아웃(best-effort,
+  404/410 dead endpoint 자동 프룬), 벨 드롭다운에 "브라우저 알림" 토글.
+- ⑤ 오프라인: SW 셸 폴백(navigate 실패→캐시된 index.html) + OfflineBadge(online/offline 이벤트).
+- ★함정 기록: public/ 파일 umask 600 → 컨테이너 nginx 403. Dockerfile에 chmod 644/755 정규화로 구조적 차단.
+- 검증: typecheck/lint/test 전체 GREEN, 프로드 재배포, sw.js 200+no-cache, version.json 200,
+  push subscribe→DB row→unsubscribe→0 실측, SW가 version.json+전체 에셋 프리캐시하는 로그 확인.

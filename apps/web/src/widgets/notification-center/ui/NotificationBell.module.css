@@ -134,3 +134,44 @@
   background: var(--accent);
   flex-shrink: 0;
 }
+
+/* Web Push toggle row (2026-07-06) */
+.pushRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+.pushLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+.pushToggle {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.pushToggle[aria-checked='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.pushToggle:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.pushDenied {
+  font-size: 11px;
+  color: var(--text-muted);
+}

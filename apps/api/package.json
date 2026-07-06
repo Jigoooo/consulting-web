@@ -26,6 +26,7 @@
     "pino-http": "^11.0.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
+    "web-push": "^3.6.7",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -37,6 +38,7 @@
     "@types/node": "^26.1.0",
     "@types/pg": "^8.20.0",
     "@types/supertest": "^7.2.0",
+    "@types/web-push": "^3.6.4",
     "eslint": "^10.6.0",
     "supertest": "^7.2.2",
     "typescript": "^6.0.3",

@@ -3,13 +3,18 @@ import { schema } from '@consulting/db-schema';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { ListNotificationsResponse, NotificationType } from '@consulting/contracts';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
+import { PushService } from './push.service.js';
 
 /** Per-user notification feed (Phase 2-C). Fan-out on write: domain services
  * call notifyWorkspace() which inserts one row per recipient. Reads are a
- * simple per-user query — no joins at read time, cheap to poll. */
+ * simple per-user query — no joins at read time, cheap to poll.
+ * 2026-07-06: additionally fans out via Web Push (best-effort, non-blocking). */
 @Injectable()
 export class NotificationStore {
-  constructor(@Inject(DRIZZLE) private readonly db: Db) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: Db,
+    @Inject(PushService) private readonly push: PushService,
+  ) {}
 
   /** Insert a notification for every workspace member except `excludeUserId`. */
   async notifyWorkspace(input: {
@@ -42,6 +47,16 @@ export class NotificationStore {
         refId: input.refId,
       })),
     );
+
+    // Web Push fan-out — best-effort, must never delay or fail the domain flow.
+    const url = input.refType === 'thread' ? `/th/${input.refId}` : '/';
+    void this.push.sendToUsers(recipients, {
+      title: input.title.slice(0, 200),
+      body: input.body.slice(0, 500),
+      url,
+      tag: `${input.refType}:${input.refId}`,
+    });
+
     return recipients.length;
   }
 
