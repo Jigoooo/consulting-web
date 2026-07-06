@@ -5,29 +5,56 @@
   color: var(--text-muted);
   line-height: 1.6;
 }
-.card {
-  border: 1px solid var(--border-whisper);
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.loadingRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.rows {
+  display: flex;
+  flex-direction: column;
+}
+/* B4: flat evidence rows — no card chrome; hover background + accent rail glow. */
+.row {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 10px;
+  padding: 10px 10px 12px;
   border-radius: 10px;
-  padding: 10px 12px;
-  margin-bottom: 8px;
-  background: var(--bg-canvas);
-  transition: box-shadow var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out),
-    transform var(--dur-base) var(--ease-out);
+  border-bottom: 1px solid var(--border-hair);
+  transition: background var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
 }
-/* E-4 창조 패턴: 메시지 hover ↔ 근거 글로우 링크 */
-.glow {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-glow), 0 4px 16px -6px var(--accent-glow);
-  transform: translateX(-2px);
+.row:last-child {
+  border-bottom: 0;
 }
-.cardHead {
+.row:hover {
+  background: var(--bg-warm);
+}
+/* E-4: message hover ↔ evidence glow via a restrained accent rail. */
+.rowGlow {
+  background: color-mix(in srgb, var(--accent-soft) 55%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.rowIcon {
+  color: var(--text-secondary);
+  padding-top: 1px;
+}
+.rowBody {
+  min-width: 0;
+}
+.rowHead {
   display: flex;
   align-items: center;
   gap: 6px;
   margin-bottom: 5px;
-}
-.srcIcon {
-  font-size: 12px;
 }
 .srcType {
   font-size: 10px;
@@ -55,25 +82,31 @@
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  /* 한글 어절 보존 + 긴 URL만 임의 위치 줄바꿈 허용 */
   word-break: keep-all;
   overflow-wrap: anywhere;
 }
 .link {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   margin-top: 6px;
   font-size: 11.5px;
   font-weight: 560;
 }
 .addBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   width: 100%;
-  margin-top: 4px;
-  padding: 8px 0;
+  margin-top: 6px;
+  padding: 9px 0;
   font: inherit;
   font-size: 12px;
+  font-weight: 560;
   color: var(--text-secondary);
-  border: 1px dashed var(--border-whisper);
-  border-radius: 8px;
+  border: 1px dashed var(--border-hair);
+  border-radius: 9px;
   background: none;
   cursor: pointer;
 }
@@ -81,11 +114,30 @@
   border-color: var(--accent);
   color: var(--accent);
 }
-.form {
+/* B5: grid accordion — 0fr→1fr height transition without JS measurement. */
+.formShell {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: grid-template-rows 200ms var(--ease-out), opacity 160ms var(--ease-out), transform 200ms var(--ease-out);
+}
+.formShellOpen {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: none;
+}
+.formInner {
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-top: 6px;
+  padding-top: 6px;
+}
+.formActions {
+  display: flex;
+  gap: 6px;
 }
 .input {
   width: 100%;
@@ -128,6 +180,11 @@
   background: none;
   color: var(--text-secondary);
   cursor: pointer;
+}
+@media (prefers-reduced-motion: reduce) {
+  .formShell {
+    transition: none;
+  }
 }
 
 /* F3: full search result list (right panel) */

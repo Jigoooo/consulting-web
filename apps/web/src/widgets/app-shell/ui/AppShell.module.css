@@ -421,35 +421,51 @@
   flex-direction: column;
   overflow-y: auto;
 }
-/* 2-A: evidence/member tabs */
+/* 2-A / B4: evidence/member/search tabs — underline-indicator style */
 .ctxTabs {
   display: flex;
-  gap: 4px;
-  padding: 12px 12px 0;
+  gap: 2px;
+  padding: 10px 14px 0;
+  border-bottom: 1px solid var(--border-hair);
+  position: sticky;
+  top: 0;
+  background: var(--surface-panel);
+  z-index: 2;
 }
 .ctxTab {
-  flex: 1;
+  position: relative;
   font: inherit;
   font-size: 12px;
   font-weight: 600;
-  padding: 6px 0;
-  border: 1px solid var(--border-whisper);
-  border-radius: 8px;
+  padding: 8px 10px 10px;
+  border: 0;
   background: none;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   cursor: pointer;
-  transition: all var(--dur-fast) var(--ease-out);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.ctxTab::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: transparent;
+  transition: background var(--dur-fast) var(--ease-out);
 }
 .ctxTab:hover {
-  border-color: var(--accent);
+  color: var(--text-secondary);
 }
 .ctxTabOn {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--text-primary);
+}
+.ctxTabOn::after {
+  background: var(--accent);
 }
 .ctxSection {
-  padding: 16px;
+  padding: 14px 16px;
   border-bottom: 1px solid var(--border-hair);
 }
 .ctxTitle {
@@ -458,13 +474,19 @@
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  margin-bottom: 11px;
+  margin-bottom: 10px;
 }
 .member {
-  display: flex;
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
   align-items: center;
   gap: 10px;
-  padding: 6px 0;
+  padding: 7px 6px;
+  border-radius: 8px;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.member:hover {
+  background: var(--surface-hover, var(--bg-warm));
 }
 .memberAv {
   width: 28px;
@@ -482,14 +504,13 @@
 .memberName {
   font-size: 13px;
   font-weight: 510;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .memberRole {
-  margin-left: auto;
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--text-muted);
-  background: var(--bg-warm);
-  border-radius: 9999px;
-  padding: 2px 8px;
 }
 .rolePick {
   flex: 1;
@@ -1099,20 +1120,10 @@
   height: 24px;
 }
 
-/* Tabs/segmented controls: keep the moving affordance, but make the track belong to the white surface. */
-.ctxTabs {
-  padding: 12px 12px 0;
-  background: var(--bg-canvas);
-}
-.ctxTab,
+/* Segmented controls keep the moving affordance on the surface. Tab styling now
+   lives in the primary .ctxTab rules above (underline indicator) — no override. */
 .roleSeg {
   background: var(--surface-card);
-}
-.ctxTabOn {
-  background: var(--bg-canvas);
-  color: var(--text-primary);
-  border-color: var(--border-whisper);
-  box-shadow: none;
 }
 .roleSeg {
   border-color: var(--border-whisper);

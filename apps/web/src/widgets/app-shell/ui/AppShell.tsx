@@ -606,14 +606,18 @@ function ContextPanel() {
       ) : (
         <>
           <div className={s.ctxSection}>
-            <div className={s.ctxTitle}>멤버</div>
-            {members?.members.map((m) => (
-              <div key={m.userId} className={s.member}>
-                <div className={s.memberAv}>{m.displayName.slice(0, 1)}</div>
-                <div className={s.memberName}>{m.displayName}</div>
-                <div className={s.memberRole}>{roleLabel[m.role] ?? m.role}</div>
-              </div>
-            ))}
+            <div className={s.ctxTitle}>멤버 {members?.members.length ? `· ${members.members.length}` : ''}</div>
+            {members?.members.length ? (
+              members.members.map((m) => (
+                <div key={m.userId} className={s.member}>
+                  <div className={s.memberAv}>{m.displayName.slice(0, 1)}</div>
+                  <div className={s.memberName}>{m.displayName}</div>
+                  <div className={s.memberRole}>{roleLabel[m.role] ?? m.role}</div>
+                </div>
+              ))
+            ) : (
+              <div className={s.ctxHint}>아직 멤버가 없어요. 아래에서 초대 링크를 만들어 보세요.</div>
+            )}
           </div>
 
           <div className={s.ctxSection}>
