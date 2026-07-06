@@ -73,6 +73,7 @@ function LoginPage() {
         accessToken: session.tokens.accessToken,
         refreshToken: session.tokens.refreshToken,
         user: session.user,
+        accessExpiresAt: Date.now() + session.tokens.expiresInSec * 1000,
       });
       await router.navigate({ to: search.redirect });
     } catch (err) {
