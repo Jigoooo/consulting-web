@@ -169,9 +169,6 @@ function Rail() {
               disabled={createWorkspace.isPending}
               maxLength={120}
             />
-            <div className={s.wsCreateHint}>
-              구조: 워크스페이스 → 프로젝트 → 채널(대화)
-            </div>
             <div className={s.wsCreateActions}>
               <Button type="button" variant="secondary" onClick={() => setWsCreateOpen(false)} disabled={createWorkspace.isPending}>
                 취소
@@ -467,22 +464,30 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
           const collapsed = collapsedProjects.has(p.id);
           return (
             <div key={p.id} className={`${s.projectBlock} ${collapsed ? s.projectBlockCollapsed : s.projectBlockOpen}`}>
-              <div className={s.projRow}>
-                <button
-                  type="button"
-                  className={`${s.projToggle} ${collapsed ? s.projToggleCollapsed : ''}`}
-                  aria-label={collapsed ? `${p.name} 펼치기` : `${p.name} 접기`}
-                  aria-expanded={!collapsed}
-                  onClick={() => toggleProject(p.id)}
-                >
+              <div
+                className={s.projRow}
+                role="button"
+                tabIndex={0}
+                aria-expanded={!collapsed}
+                aria-label={collapsed ? `${p.name} 펼치기` : `${p.name} 접기`}
+                onClick={() => toggleProject(p.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    toggleProject(p.id);
+                  }
+                }}
+              >
+                <span className={`${s.projToggle} ${collapsed ? s.projToggleCollapsed : ''}`} aria-hidden>
                   <Icon name="chevron-down" size="xs" tone="muted" decorative />
-                </button>
-                <button type="button" className={s.projMain} onClick={() => toggleProject(p.id)}>
+                </span>
+                <span className={s.projMain}>
                   <Icon name="folder" size="xs" tone="muted" decorative />
                   {p.name}
-                </button>
+                </span>
                 <RowMenu
                   actions={[
+                    { label: '산출물 보기', onSelect: () => void router.navigate({ to: '/artifacts', search: { projectId: p.id } }) },
                     { label: '이름 변경', onSelect: () => void onRename('projects', p.id, p.name) },
                     { label: '삭제', danger: true, onSelect: () => void onDelete('projects', p.id, p.name) },
                   ]}
@@ -496,18 +501,24 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
                       const channelPending = navSpinner && c.topics.some((t) => t.id === pendingTopicId);
                       return (
                       <div key={c.id} className={s.channelBlock}>
-                        <div className={`${s.chanRow} ${channelActive ? s.chanRowActive : ''}`}>
-                          <button
-                            type="button"
-                            className={s.chanMain}
-                            aria-current={channelActive ? 'page' : undefined}
-                            tabIndex={collapsed ? -1 : undefined}
-                            onClick={() => void openChannel(c)}
-                          >
+                        <div
+                          className={`${s.chanRow} ${channelActive ? s.chanRowActive : ''}`}
+                          role="button"
+                          tabIndex={collapsed ? -1 : 0}
+                          aria-current={channelActive ? 'page' : undefined}
+                          onClick={() => void openChannel(c)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              void openChannel(c);
+                            }
+                          }}
+                        >
+                          <span className={s.chanMain}>
                             <Icon name="hash" size="xs" tone="muted" decorative />
                             {c.name}
                             {channelPending ? <Icon name="loader" size="xs" tone="muted" decorative className="cwSpin" /> : null}
-                          </button>
+                          </span>
                           <RowMenu
                             actions={[
                               { label: '이름 변경', onSelect: () => void onRename('channels', c.id, c.name) },
@@ -555,6 +566,15 @@ function ContextPanel() {
   const toast = useToast();
   const activeThread = useActiveThread();
   const searchState = useSearchState();
+  // #6: resolve the active thread's project so the evidence panel can offer a
+  // project-wide scope toggle.
+  const activeThreadDetail = useQuery({
+    queryKey: ['thread', activeThread],
+    queryFn: () => api.threadDetail(activeThread!),
+    enabled: activeThread !== null,
+    placeholderData: keepPreviousData,
+  });
+  const activeProjectId = activeThreadDetail.data?.projectId;
   const [tab, setTab] = useState<'evidence' | 'members' | 'search'>('members');
   const [inviteRole, setInviteRole] = useState<'editor' | 'viewer' | 'admin'>('editor');
   const [inviteBusy, setInviteBusy] = useState(false);
@@ -636,7 +656,7 @@ function ContextPanel() {
       {tab === 'evidence' && activeThread ? (
         <div className={s.ctxSection}>
           <div className={s.ctxTitle}>근거 자료</div>
-          <EvidencePanel threadId={activeThread} />
+          <EvidencePanel threadId={activeThread} {...(activeProjectId ? { projectId: activeProjectId } : {})} />
         </div>
       ) : (
         <>

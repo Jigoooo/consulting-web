@@ -578,6 +578,7 @@ export function ChatThread({ threadId, title, breadcrumb }: { threadId: string; 
           ) : null}
 
           <VirtualMessageStream
+            threadId={threadId}
             messages={persisted}
             live={live}
             userName={userName}

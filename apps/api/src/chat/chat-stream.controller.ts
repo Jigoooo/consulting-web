@@ -19,6 +19,7 @@ import { HermesRunsClient } from './hermes-runs-client.js';
 import { ChatMessageStore, type FinishState } from './chat-message.store.js';
 import { EvidenceStore, type CapturedToolUse } from './evidence.store.js';
 import { NotificationStore } from './notification.store.js';
+import { SpaceAccessService, type SpaceAccess } from '../spaces/space-access.service.js';
 
 @Controller('chat')
 export class ChatStreamController {
@@ -28,6 +29,7 @@ export class ChatStreamController {
     @Inject(ChatMessageStore) private readonly messages: ChatMessageStore,
     @Inject(EvidenceStore) private readonly evidence: EvidenceStore,
     @Inject(NotificationStore) private readonly notifications: NotificationStore,
+    @Inject(SpaceAccessService) private readonly access: SpaceAccessService,
   ) {}
 
   /** Search persisted transcript rows inside a readable thread (J-1). */
@@ -91,6 +93,19 @@ export class ChatStreamController {
     const userId = requireAuthUserId(req);
     await this.requireThreadRead(userId, threadId);
     return parseResponse(ListEvidenceResponseSchema, await this.evidence.listForThread(threadId));
+  }
+
+  /**
+   * #6: project-scoped evidence — aggregate a project's evidence across all its
+   * channels. Access gated by projectMember; the store enforces the F9 parent
+   * deletedAt guard so deleted channels' evidence never leaks.
+   */
+  @Get('projects/:projectId/evidence')
+  @UseGuards(AccessTokenGuard)
+  async listProjectEvidence(@Param('projectId') projectId: string, @Req() req: AuthenticatedRequest) {
+    const userId = requireAuthUserId(req);
+    this.throwIfDenied(await this.access.projectMember(userId, projectId));
+    return parseResponse(ListEvidenceResponseSchema, await this.evidence.listForProject(projectId));
   }
 
   /** Manual evidence attach (Phase 2-A E-3). */
@@ -182,7 +197,7 @@ export class ChatStreamController {
     });
 
     try {
-      for await (const event of this.hermesRunsClient.streamChat(cmd)) {
+      for await (const event of this.hermesRunsClient.streamChat(cmd, { workspaceId: access.workspaceId, projectId: access.projectId })) {
         const parsed = ChatStreamEventSchema.parse(event);
         if (parsed.type === 'start') runId = parsed.runId;
         if (parsed.type === 'delta') assistantText += parsed.text;
@@ -200,10 +215,16 @@ export class ChatStreamController {
     }
   }
 
-  private async requireThreadRead(userId: string, threadId: string): Promise<{ workspaceId: string }> {
+  private async requireThreadRead(userId: string, threadId: string): Promise<{ workspaceId: string; projectId: string }> {
     const access = await this.chatStreamUseCase.canReadThread(userId, threadId);
     if (access.status === 'not_found') throw new NotFoundException({ code: 'NOT_FOUND', message: 'Thread not found' });
     if (access.status === 'forbidden') throw new ForbiddenException({ code: 'FORBIDDEN', message: 'Thread access denied' });
-    return { workspaceId: access.workspaceId };
+    return { workspaceId: access.workspaceId, projectId: access.projectId };
+  }
+
+  private throwIfDenied(access: SpaceAccess): asserts access is Extract<SpaceAccess, { allowed: true }> {
+    if (access.allowed) return;
+    if (access.reason === 'not_found') throw new NotFoundException({ code: 'NOT_FOUND', message: 'space not found' });
+    throw new ForbiddenException({ code: 'FORBIDDEN', message: 'space access denied' });
   }
 }

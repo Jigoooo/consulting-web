@@ -256,13 +256,21 @@ export class ConsultingApiClient {
     );
   }
 
+  /** #6: project-scoped evidence aggregated across all channels of a project. */
+  listProjectEvidence(projectId: string): Promise<ListEvidenceResponse> {
+    return this.http.request(`/chat/projects/${projectId}/evidence`, { method: 'GET' }, (d) =>
+      ListEvidenceResponseSchema.parse(d),
+    );
+  }
+
   addEvidence(body: AddEvidenceRequest): Promise<OkResponse> {
     return this.http.request('/chat/evidence', { method: 'POST', body }, (d) => OkResponseSchema.parse(d));
   }
 
   // --- artifacts (Phase 2-B) ---
-  listArtifacts(workspaceId: string): Promise<ListArtifactsResponse> {
-    return this.http.request(`/artifacts/workspaces/${workspaceId}`, { method: 'GET' }, (d) =>
+  listArtifacts(workspaceId: string, projectId?: string): Promise<ListArtifactsResponse> {
+    const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+    return this.http.request(`/artifacts/workspaces/${workspaceId}${qs}`, { method: 'GET' }, (d) =>
       ListArtifactsResponseSchema.parse(d),
     );
   }

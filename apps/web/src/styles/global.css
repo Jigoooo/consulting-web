@@ -104,6 +104,40 @@ kbd {
   overflow-wrap: anywhere;
 }
 
+/* 텍스트 선택(user-select) 정책 — 사용자가 복사할 이유가 없는 UI 크롬은 선택
+   불가로 만들어 드래그 시 회색 선택 블록이 생기지 않게 한다(사용자 지적).
+   기본은 크롬 요소 위주로 끄고, 실제 콘텐츠(메시지 본문·코드·입력·산출물)는
+   아래에서 명시적으로 선택 가능하게 되살린다. */
+button,
+a,
+label,
+summary,
+select,
+[role='button'],
+[role='tab'],
+[role='option'],
+[role='menuitem'],
+[role='radio'],
+[role='switch'],
+.cwTap,
+svg,
+.cwNoSelect {
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* 실제 텍스트 콘텐츠는 선택 가능해야 한다(복사 필요). */
+input,
+textarea,
+p,
+pre,
+code,
+kbd,
+[contenteditable='true'],
+.cwSelectable {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /* U-6: visible focus for keyboard users only */
 :focus-visible {
   outline: 2px solid var(--accent);

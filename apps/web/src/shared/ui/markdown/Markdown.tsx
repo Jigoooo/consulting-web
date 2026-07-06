@@ -1,18 +1,31 @@
 import { memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
+import rehypeSanitize from 'rehype-sanitize';
 import { parseChoiceBlock } from './parseChoices';
+import { mdSanitizeSchema } from './sanitizeSchema';
 import s from './Markdown.module.css';
 
 function MarkdownBody({ text }: { text: string }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
+      // HTML rendering with a strict sanitize boundary (축 A). rehype-raw parses
+      // embedded HTML; rehype-sanitize immediately strips anything dangerous.
+      // Order matters: raw first, sanitize second.
+      rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSanitizeSchema]]}
       components={{
         a: ({ href, children }) => (
           <a href={href} target="_blank" rel="noreferrer noopener">
             {children}
           </a>
+        ),
+        // 넓은 표는 가로 스크롤 래퍼로 감싸 레이아웃이 터지지 않게(ChatGPT식).
+        table: ({ children }) => (
+          <div className={s.tableWrap}>
+            <table>{children}</table>
+          </div>
         ),
       }}
     >

@@ -19,6 +19,15 @@ export function useEvidence(threadId: string | undefined) {
   });
 }
 
+/** #6: project-scoped evidence across all channels of a project. */
+export function useProjectEvidence(projectId: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['evidence-project', projectId ?? ''],
+    queryFn: () => api.listProjectEvidence(projectId!),
+    enabled: Boolean(projectId) && enabled,
+  });
+}
+
 export function useAddEvidence(threadId: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
@@ -28,10 +37,10 @@ export function useAddEvidence(threadId: string | undefined) {
 }
 
 // --- artifacts (2-B) ---
-export function useArtifacts(workspaceId: string | undefined) {
+export function useArtifacts(workspaceId: string | undefined, projectId?: string) {
   return useQuery({
-    queryKey: collabKeys.artifacts(workspaceId ?? ''),
-    queryFn: () => api.listArtifacts(workspaceId!),
+    queryKey: [...collabKeys.artifacts(workspaceId ?? ''), projectId ?? 'all'],
+    queryFn: () => api.listArtifacts(workspaceId!, projectId),
     enabled: Boolean(workspaceId),
   });
 }

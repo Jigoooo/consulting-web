@@ -65,7 +65,7 @@
 
   /* type */
   --font-sans: 'Wanted Sans Variable', 'Wanted Sans', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Segoe UI', system-ui, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  --font-mono: ui-monospace, 'Cascadia Code', 'Cascadia Mono', 'DejaVu Sans Mono', 'Noto Sans Mono', SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
   /* weight scale — 400/510/590/650. 700+는 사용하지 않는다 (절제). */
   --fw-regular: 400;
   --fw-ui: 510;
@@ -87,6 +87,15 @@
   --w-rail: 64px;
   --w-sidebar: 268px;
   --w-context: 340px;
+
+  /* inset 상단 하이라이트 — 라이트에선 종이 위 광택, 다크에선 흰 선으로 보이지
+     않도록 테마 토큰화(사용자 지적: 다크모드 composer 상단 흰 border). */
+  --inset-hi: rgba(255, 255, 255, 0.52);
+
+  /* code / ASCII 블록 — 라이트: 차분한 잉크 패널(가독성), 코드는 어둡게. */
+  --code-bg: #1b1d21;
+  --code-fg: #e9eaec;
+  --code-border: rgba(31, 33, 36, 0.14);
 
   /* elevation — Vercel식 shadow-as-border 스택 */
   --shadow-ring: 0 0 0 1px var(--border-whisper);
@@ -124,6 +133,12 @@
   --border-whisper: rgba(235, 231, 222, 0.11);
   --border-hair: rgba(235, 231, 222, 0.06);
   --border-subtle: var(--border-whisper);
+  /* 다크에선 상단 흰 하이라이트를 거의 지운다(흰 선 방지). */
+  --inset-hi: rgba(235, 231, 222, 0.035);
+  /* 다크: 코드 블록은 캔버스보다 살짝 더 깊게. */
+  --code-bg: #101113;
+  --code-fg: #d7d4cc;
+  --code-border: rgba(235, 231, 222, 0.08);
 
   --accent: #8a91d6;
   --accent-hi: #a0a5e6;

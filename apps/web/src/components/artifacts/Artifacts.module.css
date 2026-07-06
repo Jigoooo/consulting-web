@@ -23,6 +23,14 @@
   align-items: center;
   gap: 8px;
 }
+.filterRow {
+  padding: 0 6px 10px;
+}
+.filterSelect {
+  width: 100%;
+  font: inherit;
+  font-size: 12.5px;
+}
 .backBtn {
   color: var(--text-secondary);
 }

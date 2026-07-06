@@ -57,6 +57,11 @@ const Block = memo(function Block({ text }: { text: string }) {
             {children}
           </a>
         ),
+        table: ({ children }) => (
+          <div className={s.tableWrap}>
+            <table>{children}</table>
+          </div>
+        ),
       }}
     >
       {text}

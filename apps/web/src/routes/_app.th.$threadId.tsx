@@ -19,6 +19,7 @@ function ThreadPage() {
   });
   return (
     <ChatThread
+      key={threadId}
       threadId={threadId}
       title={detail.data?.title ?? '…'}
       {...(detail.data ? {

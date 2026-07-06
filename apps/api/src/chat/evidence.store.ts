@@ -120,6 +120,62 @@ export class EvidenceStore {
       })),
     };
   }
+
+  /**
+   * #6: project-scoped evidence aggregation. Joins evidence → thread → topic →
+   * channel → project so a project's evidence across ALL its channels shows in
+   * one view. F9 (design doc): soft-delete does NOT cascade to evidence rows,
+   * so we must guard deletedAt on EVERY parent level (thread/topic/channel/
+   * project) — otherwise a deleted channel's evidence resurfaces as ghost data.
+   */
+  async listForProject(projectId: string, limit = 200): Promise<ListEvidenceResponse> {
+    const rows = await this.db
+      .select({
+        id: schema.evidenceItems.id,
+        messageId: schema.evidenceItems.messageId,
+        runId: schema.evidenceItems.runId,
+        sourceType: schema.evidenceItems.sourceType,
+        ref: schema.evidenceItems.ref,
+        excerpt: schema.evidenceItems.excerpt,
+        url: schema.evidenceItems.url,
+        qualityScore: schema.evidenceItems.qualityScore,
+        qualitySignals: schema.evidenceItems.qualitySignals,
+        addedByUserId: schema.evidenceItems.addedByUserId,
+        createdAt: schema.evidenceItems.createdAt,
+      })
+      .from(schema.evidenceItems)
+      .innerJoin(schema.threads, eq(schema.evidenceItems.threadId, schema.threads.id))
+      .innerJoin(schema.topics, eq(schema.threads.topicId, schema.topics.id))
+      .innerJoin(schema.channels, eq(schema.topics.channelId, schema.channels.id))
+      .where(
+        and(
+          eq(schema.channels.projectId, projectId),
+          isNull(schema.evidenceItems.deletedAt),
+          // F9: every parent level must be alive or the row is a ghost.
+          isNull(schema.threads.deletedAt),
+          isNull(schema.topics.deletedAt),
+          isNull(schema.channels.deletedAt),
+        ),
+      )
+      .orderBy(desc(schema.evidenceItems.createdAt))
+      .limit(limit);
+
+    return {
+      evidence: rows.map((r) => ({
+        id: r.id,
+        messageId: r.messageId,
+        runId: r.runId,
+        sourceType: r.sourceType,
+        ref: r.ref,
+        excerpt: r.excerpt,
+        url: r.url,
+        qualityScore: r.qualityScore,
+        qualitySignals: r.qualitySignals,
+        addedByUserId: r.addedByUserId,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    };
+  }
 }
 
 function extractUrl(preview: string | null): string | null {

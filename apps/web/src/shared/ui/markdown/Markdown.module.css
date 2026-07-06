@@ -12,8 +12,18 @@
 /* G7: wide block elements ignore the 72ch prose cap. */
 .md pre,
 .md table,
-.md img {
+.md img,
+.tableWrap {
   max-width: 100%;
+}
+/* 넓은 표 가로 스크롤 래퍼 — 표 자체 margin은 여기로 이관. */
+.tableWrap {
+  margin: 0.85em 0;
+  overflow-x: auto;
+  border-radius: 10px;
+}
+.tableWrap > table {
+  margin: 0;
 }
 .md > *:first-child {
   margin-top: 0;
@@ -74,15 +84,24 @@
 .md code {
   font-family: var(--font-mono);
   font-size: 0.86em;
-  background: var(--bg-warm);
-  border: 1px solid var(--border-hair);
+  /* 은은한 잉크 틴트 — 회색 박스가 아니라 살짝 눌린 코드 느낌. 배경 하드코딩
+     대신 본문색 5% 믹스로 라이트/다크 모두 자연스럽게. 보더 제거(pill 인상 제거). */
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  border: none;
   border-radius: 5px;
   padding: 1px 5px;
+  /* 살짝 자간. ⚠️ break-all 금지 — 한글이 어절 중간에서 끊겨 "5년 6월"이 뭉개짐.
+     한글 어절은 보존(keep-all), 긴 경로/토큰만 anywhere 로 오버플로 방지. */
+  letter-spacing: 0.01em;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 .md pre {
   margin: 0.6em 0;
-  padding: 12px 14px;
-  background: #141517;
+  padding: 14px 16px;
+  /* 코드/ASCII 블록 배경 — 라이트/다크 모두 자연스럽게(항상 검정 하드코딩 금지). */
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
   border-radius: 10px;
   overflow-x: auto;
   /* D3: skip rendering off-screen code blocks (web.dev content-visibility). */
@@ -90,32 +109,65 @@
   contain-intrinsic-size: auto 200px;
 }
 .md pre code {
+  display: block;
   background: transparent;
   border: none;
   padding: 0;
-  color: #e9eaec;
+  color: var(--code-fg);
   font-size: 12.5px;
-  line-height: 1.6;
+  /* ASCII 박스(┌─┐│└┘)가 세로로 끊기지 않게 줄간격을 촘촘히, 글리프 폭이
+     어긋나지 않게 리거처·문자간격 정규화(사용자 지적: ┌───┐ 렌더 깨짐). */
+  line-height: 1.35;
+  tab-size: 2;
+  font-variant-ligatures: none;
+  font-feature-settings: normal;
+  letter-spacing: 0;
+  white-space: pre;
 }
 .md table {
-  border-collapse: collapse;
-  margin: 0.6em 0;
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: 0.85em 0;
   font-size: 13.5px;
   width: 100%;
+  /* ChatGPT식 정돈된 표: 라운드 코너 + 얇은 외곽선. 넓은 표는 가로 스크롤. */
+  border: 1px solid var(--border-whisper);
+  border-radius: 10px;
+  overflow: hidden;
+  display: table;
 }
 .md th,
 .md td {
-  border: 1px solid var(--border-whisper);
-  padding: 6px 11px;
+  border-bottom: 1px solid var(--border-hair);
+  border-right: 1px solid var(--border-hair);
+  padding: 8px 13px;
   text-align: left;
+  vertical-align: top;
+  /* 표 안 한글은 어절 보존, 숫자/짧은값은 줄바꿈 최소화 */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.md th:last-child,
+.md td:last-child {
+  border-right: none;
+}
+.md tr:last-child td {
+  border-bottom: none;
 }
 .md th {
-  background: var(--bg-warm);
+  /* 회색 배경 대신 하단 강조 보더로 헤더를 구분 — 톤다운(회색 박스 인상 제거). */
+  background: color-mix(in srgb, var(--text-primary) 2.5%, transparent);
+  border-bottom: 2px solid var(--border-whisper);
   font-weight: 600;
   font-size: 12.5px;
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
-.md tr:nth-child(even) td {
-  background: rgba(15, 16, 17, 0.015);
+.md tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--text-primary) 2%, transparent);
+}
+.md tbody tr:hover td {
+  background: var(--accent-soft);
 }
 .md hr {
   border: none;

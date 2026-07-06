@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { DrizzleModule } from '../infra/drizzle.module.js';
 import { AuthModule } from '../auth/auth.module.js';
+import { SpacesModule } from '../spaces/spaces.module.js';
 import { ChatStreamController } from './chat-stream.controller.js';
 import { NotificationsController } from './notifications.controller.js';
 import { PushController } from './push.controller.js';
@@ -14,7 +15,7 @@ import { PushService } from './push.service.js';
 import { DocumentExtractionService } from './document-extraction.service.js';
 
 @Module({
-  imports: [DrizzleModule, AuthModule],
+  imports: [DrizzleModule, AuthModule, SpacesModule],
   controllers: [ChatStreamController, NotificationsController, PushController, AttachmentsController],
   providers: [ChatStreamUseCase, HermesRunsClient, ChatMessageStore, EvidenceStore, NotificationStore, PushService, DocumentExtractionService],
   exports: [ChatStreamUseCase, HermesRunsClient, ChatMessageStore, EvidenceStore, NotificationStore, PushService, DocumentExtractionService],

@@ -6,11 +6,14 @@ import { useArtifacts, useArtifactDetail, useCreateArtifact, useAddArtifactVersi
 import { Markdown } from '../shared/ui/markdown/Markdown';
 import { useToast } from '../shared/ui/toast/Toast';
 import { Button } from '../shared/ui/button/Button';
-import { Input, Textarea, NativeSelect } from '../shared/ui/input/Input';
+import { Input, Textarea } from '../shared/ui/input/Input';
+import { Select } from '../shared/ui/select/Select';
 import { EmptyState } from '../shared/ui/feedback/EmptyState';
 import s from '../components/artifacts/Artifacts.module.css';
 
 export const Route = createFileRoute('/_app/artifacts')({
+  validateSearch: (search: Record<string, unknown>): { projectId?: string } =>
+    (typeof search.projectId === 'string' && search.projectId ? { projectId: search.projectId } : {}),
   component: ArtifactsPage,
 });
 
@@ -18,8 +21,10 @@ export const Route = createFileRoute('/_app/artifacts')({
 function ArtifactsPage() {
   const workspaceId = useSelectedWorkspace();
   const router = useRouter();
+  const { projectId: urlProjectId } = Route.useSearch();
   const { data: tree } = useWorkspaceTree(workspaceId ?? undefined);
-  const { data, isLoading } = useArtifacts(workspaceId ?? undefined);
+  const [projectFilter, setProjectFilter] = useState<string>(urlProjectId ?? '');
+  const { data, isLoading } = useArtifacts(workspaceId ?? undefined, projectFilter || undefined);
   const [selected, setSelected] = useState<string | null>(null);
   const detail = useArtifactDetail(selected ?? undefined);
   const createArtifact = useCreateArtifact(workspaceId ?? undefined);
@@ -111,6 +116,29 @@ function ArtifactsPage() {
             새 산출물
           </Button>
         </div>
+        {projects.length > 0 ? (
+          <div className={s.filterRow}>
+            <Select
+              className={s.filterSelect}
+              size="sm"
+              value={projectFilter}
+              onValueChange={(next) => {
+                setProjectFilter(next);
+                setSelected(null);
+                void router.navigate({
+                  to: '/artifacts',
+                  search: next ? { projectId: next } : {},
+                  replace: true,
+                });
+              }}
+              ariaLabel="프로젝트로 산출물 필터"
+              options={[
+                { value: '', label: '전체 프로젝트' },
+                ...projects.map((p) => ({ value: p.id, label: p.name })),
+              ]}
+            />
+          </div>
+        ) : null}
         {isLoading ? <div className={s.muted}>불러오는 중…</div> : null}
         {!isLoading && artifacts.length === 0 ? (
           <div className={s.muted}>
@@ -141,13 +169,14 @@ function ArtifactsPage() {
         {creating ? (
           <div className={s.editor}>
             <div className={s.editorTitle}>새 산출물</div>
-            <NativeSelect className={s.input} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </NativeSelect>
+            <Select
+              className={s.input}
+              value={projectId || (projects[0]?.id ?? '')}
+              onValueChange={setProjectId}
+              ariaLabel="프로젝트 선택"
+              placeholder="프로젝트 선택"
+              options={projects.map((p) => ({ value: p.id, label: p.name }))}
+            />
             <Input
               className={s.input}
               placeholder="제목 (예: 공공시설 적정성 1차 보고)"

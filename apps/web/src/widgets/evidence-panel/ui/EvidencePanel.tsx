@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useEvidence, useAddEvidence } from '../../../lib/collab';
+import { useEvidence, useProjectEvidence, useAddEvidence } from '../../../lib/collab';
 import { useHoveredMessage } from '../../../lib/threadCtx';
 import { useToast } from '../../../shared/ui/toast/Toast';
 import { Icon } from '../../../shared/icons/Icon';
@@ -32,8 +32,12 @@ const sourceIcon: Record<string, IconName> = {
  * B4/B5: flat rows (no card chrome), EmptyState/Spinner reuse, and the add
  * form is a grid accordion (0fr→1fr) that expands/collapses smoothly.
  */
-export function EvidencePanel({ threadId }: { threadId: string }) {
-  const { data, isLoading } = useEvidence(threadId);
+export function EvidencePanel({ threadId, projectId }: { threadId: string; projectId?: string }) {
+  const [scope, setScope] = useState<'channel' | 'project'>('channel');
+  const channelEv = useEvidence(threadId);
+  const projectEv = useProjectEvidence(projectId, scope === 'project');
+  const data = scope === 'project' ? projectEv.data : channelEv.data;
+  const isLoading = scope === 'project' ? projectEv.isLoading : channelEv.isLoading;
   const hovered = useHoveredMessage();
   const addEvidence = useAddEvidence(threadId);
   const toast = useToast();
@@ -75,6 +79,28 @@ export function EvidencePanel({ threadId }: { threadId: string }) {
 
   return (
     <div className={s.wrap}>
+      {projectId ? (
+        <div className={s.scopeSwitch} role="radiogroup" aria-label="근거 범위">
+          <button
+            type="button"
+            role="radio"
+            aria-checked={scope === 'channel'}
+            className={`${s.scopeBtn} ${scope === 'channel' ? s.scopeBtnOn : ''}`}
+            onClick={() => setScope('channel')}
+          >
+            이 채널
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={scope === 'project'}
+            className={`${s.scopeBtn} ${scope === 'project' ? s.scopeBtnOn : ''}`}
+            onClick={() => setScope('project')}
+          >
+            프로젝트 전체
+          </button>
+        </div>
+      ) : null}
       {showLoading ? (
         <div className={s.loadingRow}>
           <Spinner label="근거 불러오는 중" /> 근거 불러오는 중…

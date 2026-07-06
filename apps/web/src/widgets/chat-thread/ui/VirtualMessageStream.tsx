@@ -7,6 +7,7 @@ import { Icon } from '../../../shared/icons/Icon';
 import { IconButton } from '../../../shared/ui/button/Button';
 import { SkeletonMessage } from '../../../shared/ui/skeleton/Skeleton';
 import { useDelayedFlag } from '../../../shared/lib/useDelayedFlag';
+import { formatDateLabel, formatFullDateTime, dayKey } from '../../../shared/lib/formatDate';
 import { hoveredMessageStore } from '../../../lib/threadCtx';
 import { ThinkingRibbon } from './ThinkingRibbon';
 import { HighlightedText } from './HighlightedText';
@@ -33,6 +34,7 @@ export interface HighlightState {
 }
 
 interface Props {
+  threadId: string;
   messages: ChatMessage[];
   live: LiveTurnLike[];
   userName: string;
@@ -94,7 +96,7 @@ function PersistedRow({
       <div className={s.body}>
         <div className={s.meta}>
           <span className={s.who}>{message.role === 'user' ? (message.authorName ?? userName) : '지구'}</span>
-          <span className={s.time}>
+          <span className={s.time} title={formatFullDateTime(message.createdAt)}>
             {new Date(message.createdAt).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' })}
           </span>
           <span className={s.msgActions}>
@@ -208,6 +210,7 @@ function LiveRow({
 }
 
 export function VirtualMessageStream({
+  threadId,
   messages,
   live,
   userName,
@@ -240,6 +243,7 @@ export function VirtualMessageStream({
   const topSentinelRef = useRef<HTMLDivElement | null>(null);
   const bottomSentinelRef = useRef<HTMLDivElement | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const [topDateLabel, setTopDateLabel] = useState<string>('');
 
   const virtualizer = useVirtualizer({
     count: messages.length,
@@ -251,6 +255,18 @@ export function VirtualMessageStream({
 
   const virtualItems = virtualizer.getVirtualItems();
   const totalSize = virtualizer.getTotalSize();
+
+  // 축2: sticky 날짜 pill — 현재 뷰포트 상단에 보이는 첫 메시지의 날짜를 추적.
+  // 가상 리스트라 DOM 순회 대신 virtualizer가 계산한 상단 인덱스의 createdAt을
+  // 읽는다(스크롤마다 virtualItems가 갱신되므로 effect가 재실행됨).
+  useEffect(() => {
+    const firstIndex = virtualItems[0]?.index;
+    if (firstIndex == null) return;
+    const msg = messages[firstIndex];
+    if (!msg) return;
+    const label = formatDateLabel(msg.createdAt);
+    setTopDateLabel((prev) => (prev === label ? prev : label));
+  }, [virtualItems, messages]);
 
   // G2: suppress the "불러오는 중" affordance for fast prefetches — only show it
   // when a page load genuinely takes >400ms. Normal prefetches stay silent.
@@ -266,6 +282,23 @@ export function VirtualMessageStream({
   loadNewerRef.current = onLoadNewer;
   const atBottomRef = useRef(onAtBottomChange);
   atBottomRef.current = onAtBottomChange;
+
+  // Channel switch: reset scroll/paging state so the new thread re-pins to its
+  // own tail. Without this, didInitialScroll stays true from the previous
+  // channel and the new channel never scrolls to the bottom (bug: 텔레그램
+  // 채널에서 맨 밑으로 안 감), and stale virtualizer offset shows the old
+  // conversation for a frame (bug: 새 채널에 이전 대화가 보임).
+  useEffect(() => {
+    didInitialScroll.current = false;
+    allowAutoLoad.current = false;
+    pendingAnchor.current = null;
+    previousLength.current = 0;
+    setHighlightedId(null);
+    // Snap to top immediately; the initial-scroll effect below re-pins to the
+    // tail once this thread's messages are in.
+    const scroller = scrollRef.current;
+    if (scroller) scroller.scrollTop = 0;
+  }, [threadId, scrollRef]);
 
   // Initial mount: pin to the newest message, then arm auto-loading.
   useEffect(() => {
@@ -416,6 +449,12 @@ export function VirtualMessageStream({
 
   return (
     <>
+      {/* 축2: sticky 날짜 pill — 현재 보는 영역의 날짜를 상단에 고정 표시. */}
+      {topDateLabel ? (
+        <div className={s.stickyDate} aria-hidden="true">
+          <span className={s.stickyDatePill}>{topDateLabel}</span>
+        </div>
+      ) : null}
       <div ref={topSentinelRef} className={s.scrollSentinel} aria-hidden="true" />
       {/* Top loading / end-of-history affordance (A6). G2: only surfaced when the
           older-page load exceeds 400ms — fast prefetches stay silent. */}
@@ -437,6 +476,9 @@ export function VirtualMessageStream({
           if (!message) return null;
           const isMatch = highlight?.ids.has(message.id) ?? false;
           const isFocused = highlight?.focusedId === message.id;
+          // 축2: 날짜가 바뀌는 첫 메시지 위에 경계 divider(── 2026년 7월 6일 ──).
+          const prev = virtualRow.index > 0 ? messages[virtualRow.index - 1] : undefined;
+          const showDateDivider = !prev || dayKey(prev.createdAt) !== dayKey(message.createdAt);
           return (
             <div
               key={virtualRow.key}
@@ -450,6 +492,11 @@ export function VirtualMessageStream({
               ].filter(Boolean).join(' ')}
               style={{ transform: `translateY(${virtualRow.start}px)` }}
             >
+              {showDateDivider ? (
+                <div className={s.dateDivider} role="separator">
+                  <span>{formatDateLabel(message.createdAt)}</span>
+                </div>
+              ) : null}
               <PersistedRow
                 message={message}
                 userName={userName}

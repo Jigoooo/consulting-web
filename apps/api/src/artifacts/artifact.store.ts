@@ -94,7 +94,7 @@ export class ArtifactStore {
     return row ?? null;
   }
 
-  async listForWorkspace(workspaceId: string): Promise<ListArtifactsResponse> {
+  async listForWorkspace(workspaceId: string, projectId?: string): Promise<ListArtifactsResponse> {
     const rows = await this.db
       .select({
         id: schema.artifacts.id,
@@ -106,7 +106,15 @@ export class ArtifactStore {
         updatedAt: schema.artifacts.updatedAt,
       })
       .from(schema.artifacts)
-      .where(and(eq(schema.artifacts.workspaceId, workspaceId), isNull(schema.artifacts.deletedAt)))
+      .where(
+        and(
+          eq(schema.artifacts.workspaceId, workspaceId),
+          isNull(schema.artifacts.deletedAt),
+          // #5: optional project scope. artifacts.projectId is already NOT NULL
+          // and indexed (artifacts_project_idx) so this is a cheap filter.
+          ...(projectId ? [eq(schema.artifacts.projectId, projectId)] : []),
+        ),
+      )
       .orderBy(desc(schema.artifacts.updatedAt));
     return {
       artifacts: rows.map((r) => ({

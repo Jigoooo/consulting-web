@@ -48,10 +48,17 @@ export class ArtifactsController {
   ) {}
 
   @Get('workspaces/:workspaceId')
-  async list(@Param('workspaceId') workspaceId: string, @Req() req: AuthenticatedRequest) {
+  async list(
+    @Param('workspaceId') workspaceId: string,
+    @Query('projectId') projectId: string | undefined,
+    @Req() req: AuthenticatedRequest,
+  ) {
     const userId = requireAuthUserId(req);
     this.throwIfDenied(await this.access.workspaceMember(userId, workspaceId));
-    return parseResponse(ListArtifactsResponseSchema, await this.artifacts.listForWorkspace(workspaceId));
+    return parseResponse(
+      ListArtifactsResponseSchema,
+      await this.artifacts.listForWorkspace(workspaceId, projectId || undefined),
+    );
   }
 
   @Get(':id')
