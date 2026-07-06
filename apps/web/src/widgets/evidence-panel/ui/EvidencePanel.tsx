@@ -146,11 +146,18 @@ export function EvidencePanel({ threadId }: { threadId: string }) {
         </div>
       </div>
 
-      {!formOpen ? (
+      {/* G3: the add button is always mounted and collapses via its own grid
+          accordion when the form opens — mutually-exclusive but never unmounted,
+          so canceling the form causes zero height jump. */}
+      <div
+        className={`${s.addBtnShell} ${formOpen ? s.addBtnShellHidden : ''}`}
+        aria-hidden={formOpen}
+        inert={formOpen ? true : undefined}
+      >
         <button type="button" className={`${s.addBtn} cwTap`} onClick={() => setFormOpen(true)}>
           <Icon name="plus" size="xs" decorative /> 근거 추가
         </button>
-      ) : null}
+      </div>
     </div>
   );
 }

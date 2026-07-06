@@ -99,7 +99,6 @@
   justify-content: center;
   gap: 5px;
   width: 100%;
-  margin-top: 6px;
   padding: 9px 0;
   font: inherit;
   font-size: 12px;
@@ -114,18 +113,48 @@
   border-color: var(--accent);
   color: var(--accent);
 }
-/* B5: grid accordion — 0fr→1fr height transition without JS measurement. */
+/* G3: add-button collapse accordion — mirrors the form shell so the two swap
+   without either unmounting (no height jump on cancel). */
+.addBtnShell {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  margin-top: 6px;
+  transition: grid-template-rows 200ms var(--ease-out), opacity 150ms var(--ease-out), margin-top 200ms var(--ease-out);
+}
+.addBtnShell > * {
+  min-height: 0;
+  overflow: hidden;
+}
+.addBtnShellHidden {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  margin-top: 0;
+  pointer-events: none;
+}
+/* B5: grid accordion — 0fr→1fr height transition without JS measurement.
+   G3: translateY removed (jittery); opacity + grid-rows only. */
 .formShell {
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
-  transform: translateY(-4px);
-  transition: grid-template-rows 200ms var(--ease-out), opacity 160ms var(--ease-out), transform 200ms var(--ease-out);
+  transition: grid-template-rows 200ms var(--ease-out), opacity 160ms var(--ease-out);
 }
 .formShellOpen {
   grid-template-rows: 1fr;
   opacity: 1;
-  transform: none;
+}
+/* G3: staggered field entry — each control fades + rises 40ms apart. */
+.formShellOpen .formInner > * {
+  animation: cwFieldRise 240ms var(--ease-out) both;
+}
+.formShellOpen .formInner > *:nth-child(1) { animation-delay: 0ms; }
+.formShellOpen .formInner > *:nth-child(2) { animation-delay: 40ms; }
+.formShellOpen .formInner > *:nth-child(3) { animation-delay: 80ms; }
+.formShellOpen .formInner > *:nth-child(4) { animation-delay: 120ms; }
+@keyframes cwFieldRise {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
 }
 .formInner {
   min-height: 0;
@@ -182,8 +211,12 @@
   cursor: pointer;
 }
 @media (prefers-reduced-motion: reduce) {
-  .formShell {
+  .formShell,
+  .addBtnShell {
     transition: none;
+  }
+  .formShellOpen .formInner > * {
+    animation: none;
   }
 }
 
