@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useState, useTransition, type CSSProperties, type ReactNode } from 'react';
 import { Link, useLocation, useRouter } from '@tanstack/react-router';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { useAuth } from '../../../lib/useAuth';
@@ -297,9 +297,23 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
   const [pendingDelete, setPendingDelete] = useState<{ kind: 'projects' | 'channels' | 'topics'; id: string; label: string } | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
+  // A3: optimistic channel selection — highlight the clicked topic instantly
+  // instead of waiting for threadDetail to resolve (keepPreviousData otherwise
+  // holds the OLD highlight until the new topic loads, which reads as lag).
+  const [pendingTopicId, setPendingTopicId] = useState<string | null>(null);
+  const [isNavPending, startNav] = useTransition();
+  const navSpinner = useDelayedFlag(isNavPending, 150);
 
   const routeTopicId = location.pathname.match(/^\/t\/([^/]+)/)?.[1] ?? null;
-  const currentTopicId = activeThreadDetail.data?.topicId ?? routeTopicId;
+  const resolvedTopicId = activeThreadDetail.data?.topicId ?? routeTopicId;
+  // Optimistic id wins until the server-resolved id catches up to it.
+  const currentTopicId = pendingTopicId ?? resolvedTopicId;
+
+  // Once the route/detail resolves to the optimistic target, clear the override.
+  useEffect(() => {
+    if (pendingTopicId && resolvedTopicId === pendingTopicId) setPendingTopicId(null);
+  }, [pendingTopicId, resolvedTopicId]);
+
   // 300ms 넘게 로딩일 때만 스켈레톤 — 즉시 로드는 깜빡임 없이 통과.
   const showTreeSkeleton = useDelayedFlag(isLoading, 300);
 
@@ -334,9 +348,15 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
     try {
       const topicId = channel.topics[0]?.id ?? (await createTopic.mutateAsync({ channelId: channel.id, name: '대화' })).id;
       if (topicId === currentTopicId) return;
+      // A3: optimistic highlight now; defer the (heavier) route swap so the click
+      // feedback is never blocked by rendering the new thread.
+      setPendingTopicId(topicId);
       onNavigate?.();
-      await router.navigate({ to: '/t/$topicId', params: { topicId } });
+      startNav(() => {
+        void router.navigate({ to: '/t/$topicId', params: { topicId } });
+      });
     } catch {
+      setPendingTopicId(null);
       toast('error', '채널 대화를 여는 데 실패했어요.');
     }
   }
@@ -437,6 +457,7 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
                   <div className={s.channelList}>
                     {p.channels.map((c) => {
                       const channelActive = c.topics.some((t) => t.id === currentTopicId);
+                      const channelPending = navSpinner && c.topics.some((t) => t.id === pendingTopicId);
                       return (
                       <div key={c.id} className={s.channelBlock}>
                         <div className={`${s.chanRow} ${channelActive ? s.chanRowActive : ''}`}>
@@ -450,6 +471,7 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
                           >
                             <Icon name="hash" size="xs" tone="muted" decorative />
                             {c.name}
+                            {channelPending ? <Icon name="loader" size="xs" tone="muted" decorative className="cwSpin" /> : null}
                           </button>
                           <RowMenu
                             actions={[
