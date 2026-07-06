@@ -46,6 +46,7 @@ interface Props {
   newerError: boolean;
   targetMessageId: string | null;
   highlight: HighlightState | null;
+  showNewDivider?: boolean;
   onLoadOlder: () => Promise<void> | void;
   onLoadNewer: () => Promise<void> | void;
   onAtBottomChange: (atBottom: boolean) => void;
@@ -215,6 +216,7 @@ export function VirtualMessageStream({
   newerError,
   targetMessageId,
   highlight,
+  showNewDivider,
   onLoadOlder,
   onLoadNewer,
   onAtBottomChange,
@@ -410,6 +412,11 @@ export function VirtualMessageStream({
         </div>
       ) : null}
       <div ref={bottomSentinelRef} className={s.scrollSentinel} aria-hidden="true" />
+      {showNewDivider && live.length > 0 ? (
+        <div className={s.newDivider} role="separator" aria-label="여기까지 읽음">
+          <span>새 메시지</span>
+        </div>
+      ) : null}
       {live.map((turn) => (
         <LiveRow
           key={`live-${turn.id}`}

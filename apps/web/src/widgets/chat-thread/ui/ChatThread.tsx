@@ -551,6 +551,7 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
             newerError={history.newerError}
             targetMessageId={targetMessageId}
             highlight={highlight}
+            showNewDivider={!atBottom && unseen > 0}
             onLoadOlder={history.loadOlder}
             onLoadNewer={history.loadNewer}
             onAtBottomChange={onAtBottomChange}
