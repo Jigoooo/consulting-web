@@ -56,6 +56,7 @@ interface Props {
   onSaveArtifact: (content: string, messageId?: string) => Promise<void> | void;
   onRetry: (message: string) => Promise<void> | void;
   onRetryLast: () => Promise<void> | void;
+  onChoice: (choice: string) => void;
 }
 
 function PersistedRow({
@@ -66,6 +67,7 @@ function PersistedRow({
   onCopy,
   onSaveArtifact,
   onRetry,
+  onChoice,
 }: {
   message: ChatMessage;
   userName: string;
@@ -74,6 +76,7 @@ function PersistedRow({
   onCopy: Props['onCopy'];
   onSaveArtifact: Props['onSaveArtifact'];
   onRetry: Props['onRetry'];
+  onChoice: Props['onChoice'];
 }) {
   const isMatch = highlight?.ids.has(message.id) ?? false;
   const highlightQuery = isMatch ? highlight?.query ?? '' : '';
@@ -118,7 +121,7 @@ function PersistedRow({
           </span>
         </div>
         {message.role === 'assistant' && !highlightQuery ? (
-          <Markdown text={message.content} />
+          <Markdown text={message.content} onChoice={onChoice} />
         ) : (
           <div className={s.text}>
             <HighlightedText text={message.content} query={highlightQuery} />
@@ -143,6 +146,7 @@ function LiveRow({
   onCopy,
   onSaveArtifact,
   onRetryLast,
+  onChoice,
 }: {
   turn: LiveTurnLike;
   userName: string;
@@ -151,6 +155,7 @@ function LiveRow({
   onCopy: Props['onCopy'];
   onSaveArtifact: Props['onSaveArtifact'];
   onRetryLast: Props['onRetryLast'];
+  onChoice: Props['onChoice'];
 }) {
   return (
     <div key={`live-${turn.id}`} className={`${s.msg} ${s.msgHover}`} data-turn={`l-${turn.id}`}>
@@ -178,7 +183,7 @@ function LiveRow({
         {turn.role === 'ai' ? (
           turn.text ? (
             <div>
-              {turn.streaming ? <StreamingMarkdown text={turn.text} /> : <Markdown text={turn.text} />}
+              {turn.streaming ? <StreamingMarkdown text={turn.text} /> : <Markdown text={turn.text} onChoice={onChoice} />}
               {turn.streaming ? <span className={s.cursor} /> : null}
             </div>
           ) : turn.streaming ? (
@@ -226,6 +231,7 @@ export function VirtualMessageStream({
   onSaveArtifact,
   onRetry,
   onRetryLast,
+  onChoice,
 }: Props) {
   const didInitialScroll = useRef(false);
   const allowAutoLoad = useRef(false);
@@ -452,6 +458,7 @@ export function VirtualMessageStream({
                 onCopy={onCopy}
                 onSaveArtifact={onSaveArtifact}
                 onRetry={onRetry}
+                onChoice={onChoice}
               />
             </div>
           );
@@ -488,6 +495,7 @@ export function VirtualMessageStream({
           onCopy={onCopy}
           onSaveArtifact={onSaveArtifact}
           onRetryLast={onRetryLast}
+          onChoice={onChoice}
         />
       ))}
       <div ref={bottomRef} />

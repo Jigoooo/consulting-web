@@ -1,10 +1,19 @@
 .md {
   font-size: 15px;
-  line-height: 1.65;
+  line-height: 1.7;
   color: var(--text-primary);
+  /* G7: cap prose line length for readability (컨설팅 가독성 최우선). Tables and
+     code opt back out below so wide data isn't squeezed. */
+  max-width: 72ch;
   /* 한글 어절 보존; 긴 URL/토큰은 anywhere 로 오버플로 방지 */
   word-break: keep-all;
   overflow-wrap: anywhere;
+}
+/* G7: wide block elements ignore the 72ch prose cap. */
+.md pre,
+.md table,
+.md img {
+  max-width: 100%;
 }
 .md > *:first-child {
   margin-top: 0;
@@ -43,6 +52,16 @@
 }
 .md li::marker {
   color: var(--text-muted);
+}
+.md a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--accent-soft);
+  transition: text-decoration-color var(--dur-fast) var(--ease-out);
+}
+.md a:hover {
+  text-decoration-color: var(--accent);
 }
 .md blockquote {
   margin: 0.6em 0;
@@ -107,4 +126,29 @@
 .md img {
   max-width: 100%;
   border-radius: 10px;
+}
+/* G11-a: agent-emitted ::choices block rendered as clickable chips. */
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0.7em 0 0.3em;
+}
+.choiceChip {
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 560;
+  line-height: 1.3;
+  padding: 8px 14px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 999px;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.choiceChip:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: var(--accent);
 }

@@ -601,6 +601,7 @@ export function ChatThread({ threadId, title, breadcrumb }: { threadId: string; 
             onSaveArtifact={saveAsArtifact}
             onRetry={send}
             onRetryLast={() => send(lastPromptRef.current)}
+            onChoice={(choice) => void send(choice)}
           />
           <JumpToLatest
             visible={!atBottom || history.hasNewer || history.mode === 'around'}
