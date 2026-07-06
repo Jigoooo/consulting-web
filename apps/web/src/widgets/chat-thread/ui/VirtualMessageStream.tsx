@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ChatMessage } from '@consulting/contracts';
 import { Markdown } from '../../../shared/ui/markdown/Markdown';
+import { StreamingMarkdown } from '../../../shared/ui/markdown/StreamingMarkdown';
 import { Icon } from '../../../shared/icons/Icon';
 import { IconButton } from '../../../shared/ui/button/Button';
 import { SkeletonMessage } from '../../../shared/ui/skeleton/Skeleton';
@@ -174,7 +175,7 @@ function LiveRow({
         {turn.role === 'ai' ? (
           turn.text ? (
             <div>
-              <Markdown text={turn.text} />
+              {turn.streaming ? <StreamingMarkdown text={turn.text} /> : <Markdown text={turn.text} />}
               {turn.streaming ? <span className={s.cursor} /> : null}
             </div>
           ) : turn.streaming ? (
