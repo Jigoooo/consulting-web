@@ -69,10 +69,14 @@ function LibraryPage() {
       void router.navigate({ to: '/artifacts', search: item.projectId ? { projectId: item.projectId } : {} });
       return;
     }
-    // evidence: 출처 대화로 딥링크(있으면) 또는 외부 URL.
+    // evidence: 출처 대화로 딥링크(있으면 답변 메시지까지 정밀 점프) 또는 외부 URL.
     if (item.kind === 'evidence') {
       if (item.threadId) {
-        void router.navigate({ to: '/th/$threadId', params: { threadId: item.threadId } });
+        void router.navigate({
+          to: '/th/$threadId',
+          params: { threadId: item.threadId },
+          ...(item.messageId ? { search: { m: item.messageId } } : {}),
+        });
       } else if (item.url) {
         window.open(item.url, '_blank', 'noreferrer,noopener');
       }

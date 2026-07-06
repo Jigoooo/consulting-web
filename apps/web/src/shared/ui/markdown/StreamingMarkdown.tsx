@@ -1,6 +1,7 @@
-import { memo } from 'react';
+import { memo, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { CodeBlock } from './CodeBlock';
 import s from './Markdown.module.css';
 
 /**
@@ -62,6 +63,20 @@ const Block = memo(function Block({ text }: { text: string }) {
             <table>{children}</table>
           </div>
         ),
+        // 스트리밍 중 코드블록 — 헤더바/복사 UI는 나오되 Shiki 하이라이트는
+        // streaming 플래그로 스킵(성능). 완료 후 <Markdown>이 하이라이트를 입힌다.
+        pre: ({ children }) => {
+          const arr: unknown[] = Array.isArray(children) ? (children as unknown[]) : [children];
+          const child: unknown = arr[0];
+          let codeClass: string | undefined;
+          let codeChildren: ReactNode;
+          if (child && typeof child === 'object' && 'props' in child) {
+            const props = (child as { props: { className?: unknown; children?: unknown } }).props;
+            codeClass = typeof props.className === 'string' ? props.className : undefined;
+            codeChildren = props.children as ReactNode;
+          }
+          return <CodeBlock className={codeClass} children={codeChildren} streaming />;
+        },
       }}
     >
       {text}

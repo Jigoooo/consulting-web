@@ -77,7 +77,7 @@ function fmtSize(bytes: number): string {
  * hover on assistant messages glows the linked evidence (E-4), and answers
  * can be saved as artifacts (2-B) with file attachments (2-D G-3).
  */
-export function ChatThread({ threadId, title, breadcrumb }: { threadId: string; title: string; breadcrumb?: ThreadBreadcrumb }) {
+export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { threadId: string; title: string; breadcrumb?: ThreadBreadcrumb; focusMessageId?: string }) {
   const { user } = useAuth();
   const toast = useToast();
   const qc = useQueryClient();
@@ -182,6 +182,15 @@ export function ChatThread({ threadId, title, breadcrumb }: { threadId: string; 
     lastFocusedId.current = hit.id;
     void focusMessageRef.current(hit.id).then((target) => setTargetMessageId(target)).catch(() => {});
   }, [search.focusedIndex, search.results, search.threadId, threadId]);
+
+  // 자료실 evidence 딥링크(?m=<messageId>): 진입 시 그 답변 메시지로 정밀 점프.
+  // focusMessage가 로드된 범위면 in-place 스크롤, 아니면 around 윈도우를 가져온다.
+  const didDeepLinkFocus = useRef(false);
+  useEffect(() => {
+    if (!focusMessageId || didDeepLinkFocus.current) return;
+    didDeepLinkFocus.current = true;
+    void focusMessageRef.current(focusMessageId).then((target) => setTargetMessageId(target)).catch(() => {});
+  }, [focusMessageId]);
 
   function patchTurn(id: number, patch: Partial<LiveTurn>) {
     setLive((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));

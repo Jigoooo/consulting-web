@@ -2,8 +2,10 @@
 # 재현: cd apps/api/extractor && uv venv .venv --python 3.12 && \
 #       uv pip install --python .venv/bin/python -r requirements.txt
 # (시스템: tesseract-ocr + kor/eng 언어팩 필요 — apt install tesseract-ocr tesseract-ocr-kor)
-pymupdf>=1.28
-pymupdf4llm>=1.28
+#
+# 표/레이아웃 markdown은 pymupdf 본체 find_tables()+get_text("blocks")로 직접 구현.
+# pymupdf4llm은 미출시 pymupdf_layout을 하드핀해 설치 불가 → 의존하지 않음.
+pymupdf==1.28.0
 pdfplumber>=0.11
 pdfminer.six>=20251230
 pytesseract>=0.3.13

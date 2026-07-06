@@ -25,7 +25,7 @@ const EXT: Record<string, string> = {
  * Shiki 구문 하이라이트(lazy). 하이라이트 로드 전/실패 시 plain <pre> 폴백이라
  * 스트리밍/미지원 언어에서도 안전.
  */
-export function CodeBlock({ className, children }: { className?: string | undefined; children?: ReactNode }) {
+export function CodeBlock({ className, children, streaming }: { className?: string | undefined; children?: ReactNode; streaming?: boolean }) {
   // react-markdown은 ``` 코드에 `language-xxx` className을 붙인다.
   const langMatch = /language-([\w+-]+)/.exec(className ?? '');
   const rawLang = langMatch?.[1];
@@ -36,7 +36,10 @@ export function CodeBlock({ className, children }: { className?: string | undefi
   const alive = useRef(true);
 
   useEffect(() => {
-    if (lang === 'mermaid') return;
+    // 스트리밍 중에는 하이라이트를 돌리지 않는다 — 매 델타마다 미완 코드에 Shiki를
+    // 재실행하면 성능이 나빠지고 결과도 불안정. 완료 후 <Markdown>이 재렌더하며
+    // 하이라이트가 입혀진다(성능 저하 없이 최종 품질 확보).
+    if (streaming || lang === 'mermaid') return;
     alive.current = true;
     let cancelled = false;
     void highlightCode(code, lang)
@@ -75,7 +78,7 @@ export function CodeBlock({ className, children }: { className?: string | undefi
     URL.revokeObjectURL(url);
   }
 
-  if (lang === 'mermaid') {
+  if (lang === 'mermaid' && !streaming) {
     return <Mermaid code={code} />;
   }
 

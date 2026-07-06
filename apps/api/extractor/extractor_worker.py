@@ -43,7 +43,7 @@ def score_text(status: str, extractor: str, chars: int, structured: bool, warnin
     if status == "failed":
         return 10
     score = 86 if chars >= 1000 else 78 if chars >= 200 else 70 if chars >= 80 else 60 if chars >= 10 else 30
-    if extractor in ("pymupdf4llm", "pdfplumber-table"):
+    if extractor in ("pymupdf-layout", "pdfplumber-table"):
         score += 6  # 레이아웃/표 구조 보존
     if extractor in ("pymupdf", "pdftotext", "hwpx-xml", "text/plain"):
         score += 4
@@ -63,18 +63,51 @@ def score_text(status: str, extractor: str, chars: int, structured: bool, warnin
 def pdf_candidates(data: bytes):
     """여러 텍스트-레이어 파서를 돌려 (extractor, text, structured) 후보 리스트 반환."""
     out = []
-    # 1) pymupdf4llm — 레이아웃/표를 markdown으로(표가 |---|로 보존).
+    # 1) pymupdf 네이티브 레이아웃+표 markdown — find_tables()로 표를 복원해
+    #    본문 텍스트와 함께 markdown 표(|---|)로 낸다. pymupdf4llm 래퍼에 의존하지
+    #    않고 본체 API만 사용(문제의 pymupdf_layout 하드핀 제거, 성능 동일/안정성↑).
     try:
         import pymupdf
-        import pymupdf4llm
         doc = pymupdf.open(stream=data, filetype="pdf")
-        md = pymupdf4llm.to_markdown(doc, show_progress=False)
-        if md and md.strip():
-            structured = "|" in md and "---" in md  # 표 검출
-            out.append(("pymupdf4llm", md, structured))
+        md_parts, any_table = [], False
+        for page in doc:
+            # 표 영역을 먼저 잡아 markdown 표로, 나머지 텍스트는 블록 순서대로.
+            table_bboxes = []
+            try:
+                tabs = page.find_tables()
+                for tab in tabs.tables:
+                    grid = tab.extract()
+                    if not grid:
+                        continue
+                    any_table = True
+                    table_bboxes.append(pymupdf.Rect(tab.bbox))
+                    header = grid[0]
+                    md_parts.append("| " + " | ".join((c or "").strip().replace("\n", " ") for c in header) + " |")
+                    md_parts.append("| " + " | ".join("---" for _ in header) + " |")
+                    for row in grid[1:]:
+                        md_parts.append("| " + " | ".join((c or "").strip().replace("\n", " ") for c in row) + " |")
+                    md_parts.append("")
+            except Exception:
+                pass
+            # 표 밖 텍스트 블록(표 bbox와 겹치지 않는 것만).
+            try:
+                blocks = page.get_text("blocks")
+                for b in blocks:
+                    bx = pymupdf.Rect(b[:4])
+                    btext = (b[4] or "").strip()
+                    if not btext:
+                        continue
+                    if any(bx.intersects(tb) for tb in table_bboxes):
+                        continue
+                    md_parts.append(btext)
+            except Exception:
+                pass
+        md = "\n".join(md_parts)
+        if md.strip():
+            out.append(("pymupdf-layout", md, any_table))
     except Exception:
         pass
-    # 2) pymupdf 순수 텍스트.
+    # 2) pymupdf 순수 텍스트(레이아웃 실패 시 안전망).
     try:
         import pymupdf
         doc = pymupdf.open(stream=data, filetype="pdf")
