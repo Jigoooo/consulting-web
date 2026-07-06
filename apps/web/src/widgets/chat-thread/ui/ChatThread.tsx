@@ -22,6 +22,8 @@ import { Icon } from '../../../shared/icons/Icon';
 import { Button } from '../../../shared/ui/button/Button';
 import { Textarea } from '../../../shared/ui/input/Input';
 import { EmptyState, Spinner } from '../../../shared/ui/feedback/EmptyState';
+import { SkeletonMessage } from '../../../shared/ui/skeleton/Skeleton';
+import { useDelayedFlag } from '../../../shared/lib/useDelayedFlag';
 import s from '../../thread-view/ui/ThreadView.module.css';
 
 interface LiveTurn {
@@ -350,6 +352,8 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
   const userName = user?.displayName ?? '나';
   const persisted = history.messages;
   const files = attachments.data?.attachments ?? [];
+  // 300ms 이후에도 최초 로딩이면 스켈레톤 노출 — 즉시 로드는 깜빡임 없이 통과.
+  const showHistorySkeleton = useDelayedFlag(history.isLoading, 300);
 
   const slashQuery = input.startsWith('/') && !input.includes('\n') ? input.slice(1).trim().toLocaleLowerCase() : '';
   const showSlashMenu = input.startsWith('/') && !input.includes('\n');
@@ -467,10 +471,10 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
 
       <div style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div className={s.stream} ref={streamRef} style={{ flex: 1 }}>
-          {history.isLoading ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              {[0.9, 0.6, 0.75].map((w, i) => (
-                <div key={i} className={s.skelMsg} style={{ width: `${w * 100}%` }} />
+          {showHistorySkeleton ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+              {[0, 1, 2].map((i) => (
+                <SkeletonMessage key={i} />
               ))}
             </div>
           ) : null}

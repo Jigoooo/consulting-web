@@ -340,6 +340,12 @@
   font-weight: 560;
   backdrop-filter: blur(8px);
 }
+.scrollSentinel {
+  height: 1px;
+  width: 100%;
+  flex: 0 0 auto;
+  pointer-events: none;
+}
 .virtualCanvas {
   position: relative;
   width: 100%;

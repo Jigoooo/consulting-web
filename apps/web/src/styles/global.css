@@ -33,12 +33,62 @@ a {
 button {
   font-family: inherit;
 }
+/* 전역 버튼 상호작용 안전망 — cwButton(공용 컴포넌트)은 자체 규칙이 우선하므로
+   제외. 여기서는 모듈 CSS raw <button>이 transition 없이 스냅하지 않도록 최소
+   타이밍만 보장한다(사용자 지적: 버튼 애니메이션 불일치). 개별 클래스에 정의된
+   transition이 있으면 그쪽이 우선(specificity)한다. */
+button:not(.cwButton) {
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
+}
+/* 누름 피드백: rotate 등 transform을 레이아웃에 쓰는 토글(aria-expanded)은
+   충돌 방지를 위해 제외. 명시 opt-out은 [data-no-press]. */
+button:not(.cwButton):not([aria-expanded]):not([data-no-press]):active:not(:disabled):not([aria-disabled='true']) {
+  transform: scale(0.96);
+}
+@media (prefers-reduced-motion: reduce) {
+  button:not(.cwButton):active {
+    transform: none;
+  }
+}
 
 /* 줄바꿈 유틸리티 — 한글 keep-all 전역 정책의 예외 처리용.
    URL·토큰·해시·초대링크처럼 공백 없는 긴 문자열에 사용. */
 .cwBreakLong {
   word-break: normal;
   overflow-wrap: anywhere;
+}
+
+/* 공통 탭/버튼 상호작용 — 앱 전역 원시 <button>에 부여해 transition 타이밍과
+   누름(press) 피드백을 통일한다. 배경/색상은 각 컴포넌트 CSS가 유지하고,
+   여기서는 "동작감"만 표준화한다(사용자 지적: 버튼 애니메이션 불일치). */
+.cwTap {
+  cursor: pointer;
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
+}
+.cwTap:active:not(:disabled):not([data-disabled='true']):not([aria-disabled='true']) {
+  transform: scale(0.96);
+}
+.cwTap:disabled,
+.cwTap[data-disabled='true'],
+.cwTap[aria-disabled='true'] {
+  cursor: not-allowed;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cwTap:active:not(:disabled):not([data-disabled='true']):not([aria-disabled='true']) {
+    transform: none;
+  }
 }
 code,
 pre,

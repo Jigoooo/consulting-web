@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useLocation, useRouter } from '@tanstack/react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { useAuth } from '../../../lib/useAuth';
 import {
   useWorkspaces,
@@ -25,6 +25,8 @@ import { Icon } from '../../../shared/icons/Icon';
 import type { IconName } from '../../../shared/icons/registry';
 import { Button } from '../../../shared/ui/button/Button';
 import { Input } from '../../../shared/ui/input/Input';
+import { Skeleton } from '../../../shared/ui/skeleton/Skeleton';
+import { useDelayedFlag } from '../../../shared/lib/useDelayedFlag';
 import { EvidencePanel } from '../../evidence-panel/ui/EvidencePanel';
 import { OfflineBadge } from '../../../shared/ui/offline/OfflineBadge';
 import s from './AppShell.module.css';
@@ -280,6 +282,9 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
     queryKey: ['thread', activeThread],
     queryFn: () => api.threadDetail(activeThread!),
     enabled: activeThread !== null,
+    // 스레드 전환 순간 data가 undefined로 떨어지면 currentTopicId가 null이 되어
+    // 좌측 선택 채널 하이라이트가 깜빡인다. 이전 값을 유지해 깜빡임을 없앤다.
+    placeholderData: keepPreviousData,
   });
   const createProject = useCreateProject(selected ?? undefined);
   const createChannel = useCreateChannel(selected ?? undefined);
@@ -293,6 +298,8 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
 
   const routeTopicId = location.pathname.match(/^\/t\/([^/]+)/)?.[1] ?? null;
   const currentTopicId = activeThreadDetail.data?.topicId ?? routeTopicId;
+  // 300ms 넘게 로딩일 때만 스켈레톤 — 즉시 로드는 깜빡임 없이 통과.
+  const showTreeSkeleton = useDelayedFlag(isLoading, 300);
 
   const ws = wsData?.workspaces.find((w) => w.id === selected);
   const wsName = ws?.name ?? user?.displayName ?? '…';
@@ -391,11 +398,11 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
       </Link>
       <div className={s.tree}>
         <div className={s.secLabel}>프로젝트</div>
-        {isLoading ? (
-          <div style={{ padding: '8px' }}>
-            <div className={s.skel} />
-            <div className={s.skel} style={{ width: '70%' }} />
-            <div className={s.skel} style={{ width: '85%' }} />
+        {showTreeSkeleton ? (
+          <div style={{ padding: '8px', display: 'flex', flexDirection: 'column', gap: 9 }}>
+            <Skeleton width="100%" height={14} />
+            <Skeleton width="70%" height={14} />
+            <Skeleton width="85%" height={14} />
           </div>
         ) : null}
         {tree?.projects.map((p) => {

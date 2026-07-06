@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ChatMessage } from '@consulting/contracts';
 import { Markdown } from '../../../shared/ui/markdown/Markdown';
@@ -168,7 +168,7 @@ function LiveRow({
           <div className={s.liveError}>
             {turn.error}
             {!busy ? (
-              <button type="button" className={s.retryBtn} onClick={() => void onRetryLast()}>
+              <button type="button" className={`${s.retryBtn} cwTap`} onClick={() => void onRetryLast()}>
                 <Icon name="retry" size="xs" decorative /> 다시 시도
               </button>
             ) : null}
@@ -200,8 +200,11 @@ export function VirtualMessageStream({
   onRetryLast,
 }: Props) {
   const didInitialScroll = useRef(false);
-  const allowTopAutoLoad = useRef(false);
-  const pendingAnchor = useRef<{ id: string; top: number } | null>(null);
+  const allowAutoLoad = useRef(false);
+  const pendingAnchor = useRef<{ index: number; offset: number } | null>(null);
+  const previousLength = useRef(messages.length);
+  const topSentinelRef = useRef<HTMLDivElement | null>(null);
+  const bottomSentinelRef = useRef<HTMLDivElement | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
 
   const virtualizer = useVirtualizer({
@@ -209,68 +212,110 @@ export function VirtualMessageStream({
     getScrollElement: () => scrollRef.current,
     getItemKey: (index) => messages[index]?.id ?? index,
     estimateSize: () => 132,
-    overscan: 10,
+    overscan: 12,
   });
 
   const virtualItems = virtualizer.getVirtualItems();
-  const firstVirtualIndex = virtualItems[0]?.index ?? 0;
-  const lastVirtualIndex = virtualItems.at(-1)?.index ?? 0;
-  const previousLength = useRef(messages.length);
+  const totalSize = virtualizer.getTotalSize();
 
+  // Keep the latest guard state in a ref so the IntersectionObserver callback
+  // reads fresh values without re-subscribing on every scroll frame.
+  const guards = useRef({ hasOlder, hasNewer, isLoadingOlder, isLoadingNewer });
+  guards.current = { hasOlder, hasNewer, isLoadingOlder, isLoadingNewer };
+  const loadOlderRef = useRef(onLoadOlder);
+  loadOlderRef.current = onLoadOlder;
+  const loadNewerRef = useRef(onLoadNewer);
+  loadNewerRef.current = onLoadNewer;
+
+  // Older-page trigger: record a scroll anchor (first rendered row + its pixel
+  // offset from the scroller top) so we can restore the visual position after
+  // messages prepend, then request the page.
+  const requestOlder = useCallback(() => {
+    if (!allowAutoLoad.current) return;
+    const g = guards.current;
+    if (!g.hasOlder || g.isLoadingOlder) return;
+    const scroller = scrollRef.current;
+    const first = virtualizer.getVirtualItems()[0];
+    if (scroller && first) {
+      const el = scroller.querySelector<HTMLElement>(`[data-index="${first.index}"]`);
+      const offset = el ? el.getBoundingClientRect().top - scroller.getBoundingClientRect().top : 0;
+      pendingAnchor.current = { index: first.index, offset };
+    }
+    void loadOlderRef.current();
+  }, [scrollRef, virtualizer]);
+
+  const requestNewer = useCallback(() => {
+    if (!allowAutoLoad.current) return;
+    const g = guards.current;
+    if (!g.hasNewer || g.isLoadingNewer) return;
+    void loadNewerRef.current();
+  }, []);
+
+  // Initial mount: pin to the newest message, then arm auto-loading.
   useEffect(() => {
     if (messages.length === 0) {
       didInitialScroll.current = false;
-      allowTopAutoLoad.current = false;
+      allowAutoLoad.current = false;
       previousLength.current = 0;
       return;
     }
     if (didInitialScroll.current) return;
     didInitialScroll.current = true;
-    allowTopAutoLoad.current = false;
+    allowAutoLoad.current = false;
+    previousLength.current = messages.length;
     requestAnimationFrame(() => {
       virtualizer.scrollToIndex(messages.length - 1, { align: 'end' });
       requestAnimationFrame(() => {
-        allowTopAutoLoad.current = true;
+        allowAutoLoad.current = true;
       });
     });
   }, [messages.length, virtualizer]);
 
+  // After an older page prepends, restore the anchor's on-screen position.
+  // scrollToIndex(newIndex) + offset is virtualization-safe: it does not rely on
+  // the pre-prepend DOM node still being rendered.
   useEffect(() => {
     const anchor = pendingAnchor.current;
-    if (!anchor || messages.length === previousLength.current) {
-      previousLength.current = messages.length;
-      return;
-    }
-    pendingAnchor.current = null;
+    const prev = previousLength.current;
+    if (messages.length === prev) return;
     previousLength.current = messages.length;
+    if (!anchor || messages.length <= prev) return;
+    pendingAnchor.current = null;
+    const added = messages.length - prev;
+    const newIndex = anchor.index + added;
     requestAnimationFrame(() => {
-      const scroller = scrollRef.current;
-      const el = scroller?.querySelector<HTMLElement>(`[data-message-id="${anchor.id}"]`);
-      if (!scroller || !el) return;
-      const nextTop = el.getBoundingClientRect().top;
-      scroller.scrollTop += nextTop - anchor.top;
+      virtualizer.scrollToIndex(newIndex, { align: 'start' });
+      requestAnimationFrame(() => {
+        const scroller = scrollRef.current;
+        if (scroller) scroller.scrollTop = Math.max(0, scroller.scrollTop - anchor.offset);
+      });
     });
-  }, [messages.length, scrollRef]);
+  }, [messages.length, virtualizer, scrollRef]);
 
+  // Sentinel-driven infinite scroll. Position-independent and auto-rearming:
+  // whenever the top/bottom sentinel re-enters the viewport it fires again, so
+  // repeated scrolls keep loading (the old scrollTop<=120 heuristic did not).
   useEffect(() => {
-    if (!hasOlder || isLoadingOlder || firstVirtualIndex > 2 || messages.length === 0) return;
-    if (!allowTopAutoLoad.current) return;
     const scroller = scrollRef.current;
-    if (!scroller || scroller.scrollTop > 120) return;
-    const anchorMessage = messages[firstVirtualIndex];
-    const anchorEl = anchorMessage ? scroller?.querySelector<HTMLElement>(`[data-message-id="${anchorMessage.id}"]`) : null;
-    if (anchorMessage && anchorEl) {
-      pendingAnchor.current = { id: anchorMessage.id, top: anchorEl.getBoundingClientRect().top };
-    }
-    void onLoadOlder();
-  }, [firstVirtualIndex, hasOlder, isLoadingOlder, messages, onLoadOlder, scrollRef]);
+    const topEl = topSentinelRef.current;
+    const bottomEl = bottomSentinelRef.current;
+    if (!scroller) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          if (entry.target === topEl) requestOlder();
+          else if (entry.target === bottomEl) requestNewer();
+        }
+      },
+      { root: scroller, rootMargin: '320px 0px 320px 0px', threshold: 0 },
+    );
+    if (topEl) io.observe(topEl);
+    if (bottomEl) io.observe(bottomEl);
+    return () => io.disconnect();
+  }, [requestOlder, requestNewer, scrollRef]);
 
-  useEffect(() => {
-    if (!hasNewer || isLoadingNewer || messages.length === 0) return;
-    if (lastVirtualIndex < messages.length - 3) return;
-    void onLoadNewer();
-  }, [hasNewer, isLoadingNewer, lastVirtualIndex, messages.length, onLoadNewer]);
-
+  // Jump-to-search-hit: center the target row and pulse-highlight it.
   useEffect(() => {
     if (!targetMessageId) return;
     const index = messages.findIndex((message) => message.id === targetMessageId);
@@ -283,7 +328,6 @@ export function VirtualMessageStream({
     return () => window.clearTimeout(timer);
   }, [messages, targetMessageId, virtualizer]);
 
-  const totalSize = virtualizer.getTotalSize();
   const liveRows = useMemo(
     () => live.map((turn) => (
       <LiveRow
@@ -302,8 +346,12 @@ export function VirtualMessageStream({
 
   return (
     <>
-      {!isLoadingOlder && hasOlder ? <div className={s.scrollProbe}>위로 올리면 이전 메시지를 불러옵니다</div> : null}
-      {isLoadingOlder ? <div className={s.scrollProbe}>이전 메시지 불러오는 중…</div> : null}
+      <div ref={topSentinelRef} className={s.scrollSentinel} aria-hidden="true" />
+      {isLoadingOlder ? (
+        <div className={s.scrollProbe}>이전 메시지 불러오는 중…</div>
+      ) : hasOlder ? (
+        <div className={s.scrollProbe}>위로 올리면 이전 메시지를 불러옵니다</div>
+      ) : null}
       <div className={s.virtualCanvas} style={{ height: totalSize }}>
         {virtualItems.map((virtualRow) => {
           const message = messages[virtualRow.index];
@@ -328,8 +376,12 @@ export function VirtualMessageStream({
           );
         })}
       </div>
-      {isLoadingNewer ? <div className={s.scrollProbe}>이후 메시지 불러오는 중…</div> : null}
-      {!isLoadingNewer && hasNewer ? <div className={s.scrollProbe}>아래로 내리면 이후 메시지를 불러옵니다</div> : null}
+      {isLoadingNewer ? (
+        <div className={s.scrollProbe}>이후 메시지 불러오는 중…</div>
+      ) : hasNewer ? (
+        <div className={s.scrollProbe}>아래로 내리면 이후 메시지를 불러옵니다</div>
+      ) : null}
+      <div ref={bottomSentinelRef} className={s.scrollSentinel} aria-hidden="true" />
       {liveRows}
       <div ref={bottomRef} />
     </>
