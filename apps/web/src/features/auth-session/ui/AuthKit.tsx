@@ -60,7 +60,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
           </div>
         </div>
         <div className={s.panelBody}>
-          <div className={s.panelHeadline}>근거로 말하는 컨설팅, 한 워크스페이스에서.</div>
+          <div className={s.panelHeadline}>근거로 말하는 컨설팅, 하나의 워크스페이스에서.</div>
           <div className={s.panelLede}>검토·진단·산출물을 한 흐름으로 잇고, AI가 근거를 함께 정리합니다.</div>
         </div>
         <div className={s.panelPoints}>

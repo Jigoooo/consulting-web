@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
 import {
+  ArrowLeft,
   Bell,
   Bot,
   Brain,
@@ -26,6 +27,7 @@ import {
   Navigation,
   Paperclip,
   Pin,
+  Plus,
   RefreshCcw,
   Send,
   Square,
@@ -38,6 +40,7 @@ import {
 } from 'lucide-react';
 
 export const iconRegistry = {
+  'arrow-left': ArrowLeft,
   bell: Bell,
   bot: Bot,
   brain: Brain,
@@ -64,6 +67,7 @@ export const iconRegistry = {
   navigation: Navigation,
   paperclip: Paperclip,
   pin: Pin,
+  plus: Plus,
   retry: RefreshCcw,
   send: Send,
   stop: Square,

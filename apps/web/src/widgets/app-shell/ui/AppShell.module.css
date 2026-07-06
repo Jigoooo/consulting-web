@@ -68,6 +68,52 @@
   text-transform: uppercase;
   margin: 8px 0 2px;
 }
+/* 워크스페이스 추가(+) — rail의 점선 버튼, Slack 관례 */
+.wsAdd {
+  width: 40px;
+  height: 40px;
+  margin-top: 4px;
+  border-radius: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  color: rgba(255, 255, 255, 0.45);
+  background: transparent;
+  border: 1px dashed rgba(255, 255, 255, 0.22);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.wsAdd:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.07);
+}
+.wsAdd:focus-visible {
+  outline: 2px solid var(--accent-hi);
+  outline-offset: 2px;
+}
+/* 새 워크스페이스 modal 내부 폼 */
+.wsCreateForm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.wsCreateHint {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--surface-panel);
+  border: 1px solid var(--border-hair);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  line-height: 1.5;
+}
+.wsCreateActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
 .spamcer,
 .spacer {
   flex: 1;
@@ -129,8 +175,15 @@
 .inlineCreate {
   margin: 6px 8px;
 }
+.inlineCreateRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
 .inlineCreateInput {
   width: 100%;
+  flex: 1;
+  min-width: 0;
   font: inherit;
   font-size: 13px;
   padding: 6px 9px;
@@ -138,6 +191,44 @@
   border-radius: 7px;
   outline: none;
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.inlineCreateOk,
+.inlineCreateCancel {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.inlineCreateOk {
+  border: none;
+  background: var(--accent);
+  color: var(--primary-foreground);
+}
+.inlineCreateOk:hover:not(:disabled) {
+  background: var(--accent-hi);
+}
+.inlineCreateOk:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.inlineCreateCancel {
+  border: 1px solid var(--border-whisper);
+  background: transparent;
+  color: var(--text-muted);
+}
+.inlineCreateCancel:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.inlineCreateHint {
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--text-muted);
 }
 .sidebar {
   background: var(--bg-sidebar);
@@ -292,8 +383,14 @@
   color: var(--text-secondary);
   border: 1px dashed var(--border-whisper);
   border-radius: 8px;
-  text-align: center;
   cursor: pointer;
+  font-family: inherit;
+  background: transparent;
+  width: calc(100% - 16px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
 }
 .newProj:hover {
   border-color: var(--accent);
@@ -405,6 +502,38 @@
   background: var(--surface-card);
   color: var(--text-secondary);
   cursor: pointer;
+}
+/* 초대 권한 segmented control — 트랙 하나에 pill 하이라이트 (transform 애니메이션 없음) */
+.roleSeg {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 10px;
+  padding: 3px;
+  background: var(--surface-panel);
+  border: 1px solid var(--border-hair);
+  border-radius: 9px;
+}
+.roleSegItem {
+  flex: 1;
+  font: inherit;
+  font-size: 12px;
+  font-weight: var(--fw-ui);
+  padding: 5px 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+.roleSegItem:hover:not(.roleSegOn) {
+  color: var(--text-primary);
+}
+.roleSegOn {
+  background: var(--surface-card);
+  color: var(--text-primary);
+  font-weight: var(--fw-strong);
+  box-shadow: 0 0 0 1px var(--border-whisper), 0 1px 3px rgba(31, 33, 36, 0.08);
 }
 .rolePickOn {
   border-color: var(--accent);

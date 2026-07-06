@@ -12,6 +12,12 @@ export const CreateProjectRequestSchema = z.object({
 }).strict();
 export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>;
 
+export const CreateWorkspaceRequestSchema = z.object({
+  name: NameSchema,
+  slug: SlugSchema,
+}).strict();
+export type CreateWorkspaceRequest = z.infer<typeof CreateWorkspaceRequestSchema>;
+
 export const CreateChannelRequestSchema = z.object({
   projectId: UuidSchema,
   name: NameSchema,
@@ -35,6 +41,8 @@ export type CreateThreadRequest = z.infer<typeof CreateThreadRequestSchema>;
 const IdResponseSchema = z.object({ id: UuidSchema }).strict();
 export const CreateProjectResponseSchema = IdResponseSchema;
 export type CreateProjectResponse = z.infer<typeof CreateProjectResponseSchema>;
+export const CreateWorkspaceResponseSchema = IdResponseSchema;
+export type CreateWorkspaceResponse = z.infer<typeof CreateWorkspaceResponseSchema>;
 export const CreateChannelResponseSchema = IdResponseSchema;
 export type CreateChannelResponse = z.infer<typeof CreateChannelResponseSchema>;
 export const CreateTopicResponseSchema = IdResponseSchema;

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, useRouter } from '@tanstack/react-router';
 import { useSelectedWorkspace } from '../lib/wsStore';
 import { useWorkspaceTree } from '../lib/spaces';
 import { useArtifacts, useArtifactDetail, useCreateArtifact, useAddArtifactVersion, saveArtifactExport } from '../lib/collab';
@@ -17,6 +17,7 @@ export const Route = createFileRoute('/_app/artifacts')({
 /** Phase 2-B A-3 — artifact library + version timeline + markdown viewer. */
 function ArtifactsPage() {
   const workspaceId = useSelectedWorkspace();
+  const router = useRouter();
   const { data: tree } = useWorkspaceTree(workspaceId ?? undefined);
   const { data, isLoading } = useArtifacts(workspaceId ?? undefined);
   const [selected, setSelected] = useState<string | null>(null);
@@ -93,7 +94,20 @@ function ArtifactsPage() {
     <div className={s.page}>
       <div className={s.list}>
         <div className={s.listHead}>
-          <span>산출물</span>
+          <span className={s.listHeadTitle}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              leadingIcon="arrow-left"
+              className={s.backBtn}
+              title="워크스페이스로 돌아가기"
+              onClick={() => void router.navigate({ to: '/' })}
+            >
+              돌아가기
+            </Button>
+            산출물
+          </span>
           <Button type="button" variant="primary" size="sm" className={s.newBtn} leadingIcon="file-text" onClick={() => setCreating(true)}>
             새 산출물
           </Button>
@@ -181,6 +195,21 @@ function ArtifactsPage() {
                 </Button>
                 <Button type="button" variant="primary" size="sm" className={s.newBtn} leadingIcon="file-text" onClick={() => setVersionOpen(true)}>
                   새 버전
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className={s.ghost}
+                  leadingIcon="x"
+                  title="문서 닫기"
+                  onClick={() => {
+                    setSelected(null);
+                    setViewVersion(null);
+                    setVersionOpen(false);
+                  }}
+                >
+                  닫기
                 </Button>
               </div>
             </div>

@@ -7,6 +7,7 @@ import {
   useCreateProject,
   useCreateChannel,
   useCreateTopic,
+  useCreateWorkspace,
   useRenameNode,
   useDeleteNode,
   useMembers,
@@ -17,7 +18,7 @@ import { useTheme, themeStore } from '../../../lib/themeStore';
 import { api } from '../../../lib/api';
 import { useToast } from '../../../shared/ui/toast/Toast';
 import { RowMenu, useTextPrompt } from '../../../shared/ui/menu/Menu';
-import { ConfirmDialog } from '../../../shared/ui/dialog/Dialog';
+import { ConfirmDialog, DialogRoot, DialogContent } from '../../../shared/ui/dialog/Dialog';
 import { NotificationBell } from '../../notification-center/ui/NotificationBell';
 import { Icon } from '../../../shared/icons/Icon';
 import type { IconName } from '../../../shared/icons/registry';
@@ -59,6 +60,24 @@ function Rail() {
   const selected = useSelectedWorkspace();
   const theme = useTheme();
   const [logoutOpen, setLogoutOpen] = useState(false);
+  const [wsCreateOpen, setWsCreateOpen] = useState(false);
+  const [wsName, setWsName] = useState('');
+  const createWorkspace = useCreateWorkspace();
+  const toast = useToast();
+
+  async function submitCreateWorkspace() {
+    const name = wsName.trim();
+    if (!name || createWorkspace.isPending) return;
+    try {
+      const res = await createWorkspace.mutateAsync(name);
+      wsStore.set(res.id);
+      setWsCreateOpen(false);
+      setWsName('');
+      toast('success', `"${name}" 워크스페이스를 만들었어요.`);
+    } catch {
+      toast('error', '워크스페이스 생성에 실패했어요.');
+    }
+  }
 
   useEffect(() => {
     if (!data) return;
@@ -73,6 +92,7 @@ function Rail() {
 
   return (
     <div className={s.rail}>
+      {personal.length > 0 ? <div className={s.grpLabel}>개인</div> : null}
       {personal.map((w) => (
         <RailItem key={w.id} id={w.id} name={w.name} active={w.id === selected} />
       ))}
@@ -80,6 +100,15 @@ function Rail() {
       {shared.map((w) => (
         <RailItem key={w.id} id={w.id} name={w.name} active={w.id === selected} />
       ))}
+      <button
+        type="button"
+        className={s.wsAdd}
+        title="새 워크스페이스"
+        aria-label="새 워크스페이스 만들기"
+        onClick={() => setWsCreateOpen(true)}
+      >
+        <Icon name="plus" size="sm" decorative />
+      </button>
       <div className={s.spacer} />
       <Link
         to="/artifacts"
@@ -124,6 +153,40 @@ function Rail() {
           void router.navigate({ to: '/login', search: { redirect: '/' } });
         }}
       />
+      <DialogRoot open={wsCreateOpen} onOpenChange={(open) => { setWsCreateOpen(open); if (!open) setWsName(''); }}>
+        <DialogContent
+          title="새 워크스페이스"
+          description="워크스페이스는 팀·고객사 단위의 가장 큰 공간이에요. 안에 프로젝트와 채널을 만들 수 있습니다."
+        >
+          <form
+            className={s.wsCreateForm}
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submitCreateWorkspace();
+            }}
+          >
+            <Input
+              autoFocus
+              value={wsName}
+              onChange={(e) => setWsName(e.target.value)}
+              placeholder="예: 창원시 컨설팅"
+              disabled={createWorkspace.isPending}
+              maxLength={120}
+            />
+            <div className={s.wsCreateHint}>
+              구조: 워크스페이스 → 프로젝트 → 채널 → 토픽(대화)
+            </div>
+            <div className={s.wsCreateActions}>
+              <Button type="button" variant="secondary" onClick={() => setWsCreateOpen(false)} disabled={createWorkspace.isPending}>
+                취소
+              </Button>
+              <Button type="submit" variant="primary" loading={createWorkspace.isPending} disabled={!wsName.trim()}>
+                만들기
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </DialogRoot>
     </div>
   );
 }
@@ -146,14 +209,21 @@ function RailItem({ id, name, active }: { id: string; name: string; active: bool
   );
 }
 
+/** 트리 안에서 바로 만드는 인라인 생성기 — 모달 없이 맥락 유지(사용자 선호),
+ *  대신 확정/취소 버튼과 Enter/Esc 안내로 어포던스를 명확히. */
 function InlineCreate({ placeholder, onSubmit, busy }: { placeholder: string; onSubmit: (name: string) => void; busy: boolean }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
+
+  function cancel() {
+    setName('');
+    setOpen(false);
+  }
   if (!open) {
     return (
-      <div className={s.newProj} onClick={() => setOpen(true)}>
-        + {placeholder}
-      </div>
+      <button type="button" className={s.newProj} onClick={() => setOpen(true)}>
+        <Icon name="plus" size="xs" decorative /> {placeholder}
+      </button>
     );
   }
   return (
@@ -168,15 +238,27 @@ function InlineCreate({ placeholder, onSubmit, busy }: { placeholder: string; on
         setOpen(false);
       }}
     >
-      <Input
-        autoFocus
-        disabled={busy}
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        onBlur={() => !name.trim() && setOpen(false)}
-        placeholder={placeholder}
-        className={s.inlineCreateInput}
-      />
+      <div className={s.inlineCreateRow}>
+        <Input
+          autoFocus
+          disabled={busy}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') cancel();
+          }}
+          placeholder={placeholder}
+          className={s.inlineCreateInput}
+          aria-label={placeholder}
+        />
+        <button type="submit" className={s.inlineCreateOk} disabled={busy || !name.trim()} aria-label="만들기" title="만들기 (Enter)">
+          {busy ? <Icon name="loader" size="xs" className="cwSpin" decorative /> : <Icon name="check" size="xs" decorative />}
+        </button>
+        <button type="button" className={s.inlineCreateCancel} onClick={cancel} disabled={busy} aria-label="취소" title="취소 (Esc)">
+          <Icon name="x" size="xs" decorative />
+        </button>
+      </div>
+      <div className={s.inlineCreateHint}>Enter 생성 · Esc 취소</div>
     </form>
   );
 }
@@ -415,18 +497,18 @@ function ContextPanel() {
 
           <div className={s.ctxSection}>
             <div className={s.ctxTitle}>초대</div>
-        <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+        <div className={s.roleSeg} role="radiogroup" aria-label="초대 권한 선택">
           {(['editor', 'viewer', 'admin'] as const).map((r) => (
-            <Button
+            <button
               key={r}
               type="button"
-              variant={inviteRole === r ? 'primary' : 'ghost'}
-              size="xs"
-              className={`${s.rolePick} ${inviteRole === r ? s.rolePickOn : ''}`}
+              role="radio"
+              aria-checked={inviteRole === r}
+              className={`${s.roleSegItem} ${inviteRole === r ? s.roleSegOn : ''}`}
               onClick={() => setInviteRole(r)}
             >
               {roleLabel[r]}
-            </Button>
+            </button>
           ))}
         </div>
         <Button type="button" variant="primary" size="sm" className={s.inviteBtn} disabled={inviteBusy || !selected} onClick={() => void createInvite()}>

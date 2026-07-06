@@ -5,6 +5,7 @@ import {
   InvitationPreviewResponseSchema,
   AcceptInvitationResponseSchema,
   CreateProjectResponseSchema,
+  CreateWorkspaceResponseSchema,
   CreateChannelResponseSchema,
   CreateTopicResponseSchema,
   CreateThreadResponseSchema,
@@ -17,10 +18,12 @@ import {
   type InvitationPreviewResponse,
   type AcceptInvitationResponse,
   type CreateProjectRequest,
+  type CreateWorkspaceRequest,
   type CreateChannelRequest,
   type CreateTopicRequest,
   type CreateThreadRequest,
   type CreateProjectResponse,
+  type CreateWorkspaceResponse,
   type CreateChannelResponse,
   type CreateTopicResponse,
   type CreateThreadResponse,
@@ -176,6 +179,12 @@ export class ConsultingApiClient {
   createProject(body: CreateProjectRequest): Promise<CreateProjectResponse> {
     return this.http.request('/spaces/projects', { method: 'POST', body }, (d) =>
       CreateProjectResponseSchema.parse(d),
+    );
+  }
+
+  createWorkspace(body: CreateWorkspaceRequest): Promise<CreateWorkspaceResponse> {
+    return this.http.request('/spaces/workspaces', { method: 'POST', body }, (d) =>
+      CreateWorkspaceResponseSchema.parse(d),
     );
   }
 

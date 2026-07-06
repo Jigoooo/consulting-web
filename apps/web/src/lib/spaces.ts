@@ -52,6 +52,19 @@ export function useCreateProject(workspaceId: string | undefined) {
   });
 }
 
+export function useCreateWorkspace() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => api.createWorkspace({ name, slug: toSlug(name) }),
+    // await: mutateAsync 가 refetch 완료까지 기다려야 호출측에서 wsStore.set(new id)
+    // 했을 때 목록에 이미 존재 → AppShell의 "목록에 없으면 첫 번째로 리셋" 가드에
+    // 걸리지 않는다 (생성 직후 active 전환 race 방지).
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: spaceKeys.workspaces });
+    },
+  });
+}
+
 export function useCreateChannel(workspaceId: string | undefined) {
   const qc = useQueryClient();
   return useMutation({

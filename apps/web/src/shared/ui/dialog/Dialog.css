@@ -2,8 +2,9 @@
   position: fixed;
   inset: 0;
   z-index: 900;
-  background: rgba(15, 16, 17, 0.35);
-  backdrop-filter: blur(4px);
+  /* blur 미사용 — backdrop-filter가 뒤 텍스트를 뭉개진 블록처럼 왜곡 렌더링하는 문제.
+     Linear/Vercel식 단순 dim 오버레이가 더 안정적이고 절제됨. */
+  background: rgba(20, 21, 22, 0.44);
 }
 .cwDialogOverlay[data-state='open'] { animation: cwOverlayIn var(--dur-fast) var(--ease-standard); }
 .cwDialogOverlay[data-state='closed'] { animation: cwOverlayOut var(--dur-fast) var(--ease-standard); }

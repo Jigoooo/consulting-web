@@ -2,6 +2,8 @@ import { Body, Controller, Delete, ForbiddenException, Get, Inject, NotFoundExce
 import {
   CreateProjectRequestSchema,
   CreateProjectResponseSchema,
+  CreateWorkspaceRequestSchema,
+  CreateWorkspaceResponseSchema,
   CreateChannelRequestSchema,
   CreateChannelResponseSchema,
   CreateTopicRequestSchema,
@@ -20,6 +22,7 @@ import {
 import { AccessTokenGuard, requireAuthUserId, type AuthenticatedRequest } from '../auth/access-token.guard.js';
 import { parseBody, parseResponse, throwDomainError } from '../http/contract-adapter.js';
 import { CreateProjectUseCase } from './create-project.usecase.js';
+import { CreateWorkspaceUseCase } from './create-workspace.usecase.js';
 import { CreateChannelUseCase } from './create-channel.usecase.js';
 import { CreateTopicUseCase } from './create-topic.usecase.js';
 import { CreateThreadUseCase } from './create-thread.usecase.js';
@@ -35,6 +38,7 @@ export class SpacesController {
     @Inject(SpaceReadService) private readonly reads: SpaceReadService,
     @Inject(SpaceMutateService) private readonly mutate: SpaceMutateService,
     @Inject(CreateProjectUseCase) private readonly createProject: CreateProjectUseCase,
+    @Inject(CreateWorkspaceUseCase) private readonly createWorkspace: CreateWorkspaceUseCase,
     @Inject(CreateChannelUseCase) private readonly createChannel: CreateChannelUseCase,
     @Inject(CreateTopicUseCase) private readonly createTopic: CreateTopicUseCase,
     @Inject(CreateThreadUseCase) private readonly createThread: CreateThreadUseCase,
@@ -158,6 +162,15 @@ export class SpacesController {
     const result = await this.createProject.execute({ ...cmd, actorUserId: userId });
     if (!result.ok) return throwDomainError(result.error);
     return parseResponse(CreateProjectResponseSchema, { id: result.value.projectId });
+  }
+
+  @Post('workspaces')
+  async workspace(@Body() body: unknown, @Req() req: AuthenticatedRequest) {
+    const cmd = parseBody(CreateWorkspaceRequestSchema, body);
+    const userId = requireAuthUserId(req);
+    const result = await this.createWorkspace.execute({ ...cmd, actorUserId: userId });
+    if (!result.ok) return throwDomainError(result.error);
+    return parseResponse(CreateWorkspaceResponseSchema, { id: result.value.workspaceId });
   }
 
   @Post('channels')
