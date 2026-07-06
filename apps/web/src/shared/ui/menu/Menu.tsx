@@ -50,7 +50,7 @@ export function RowMenu({ actions }: { actions: MenuAction[] }) {
           setOpen((v) => !v);
         }}
       >
-        <Icon name="command" size="xs" decorative />
+        <Icon name="more" size="xs" decorative />
       </button>
       {open ? (
         <div className={s.pop} ref={popRef} role="menu">

@@ -578,6 +578,202 @@
   line-height: 1.5;
 }
 
+/* Workspace-local tools: 산출물은 전역 앱 버튼이 아니라 현재 워크스페이스의 문서 보관함 */
+.workspaceTool {
+  margin: 10px 12px 4px;
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border-hair);
+  border-radius: 11px;
+  background: var(--surface-card);
+  color: var(--text-primary);
+  text-decoration: none;
+  box-shadow: var(--shadow-card);
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.workspaceTool:hover,
+.workspaceToolOn {
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border-hair));
+  background: var(--accent-soft);
+}
+.workspaceTool span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.workspaceTool strong {
+  font-size: 13px;
+  font-weight: var(--fw-strong);
+}
+.workspaceTool small {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Tree hierarchy: 프로젝트 카드 → 채널 블록 → 토픽 행 */
+.treeIntro {
+  margin: 4px 4px 10px;
+  padding: 10px;
+  border: 1px solid var(--border-hair);
+  border-radius: 10px;
+  background: var(--surface-panel);
+}
+.treeIntroTitle {
+  font-size: 11px;
+  font-weight: var(--fw-strong);
+  color: var(--text-primary);
+}
+.treeIntroText {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+.projectBlock {
+  margin: 8px 2px 12px;
+  border: 1px solid var(--border-hair);
+  border-radius: 12px;
+  background: var(--surface-card);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+.projRow {
+  padding: 9px 10px;
+  background: color-mix(in srgb, var(--surface-panel) 70%, transparent);
+  border-bottom: 1px solid var(--border-hair);
+}
+.projMain,
+.chanMain {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.rowKicker {
+  flex: none;
+  font-size: 9.5px;
+  font-weight: var(--fw-ui);
+  color: var(--text-muted);
+  letter-spacing: 0.03em;
+}
+.channelList {
+  padding: 8px;
+}
+.channelBlock {
+  margin: 0 0 8px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 28%, var(--border-hair));
+  padding-left: 8px;
+}
+.chanRow {
+  padding: 7px 8px;
+  background: var(--surface-panel);
+  border: 1px solid var(--border-hair);
+  border-radius: 9px;
+}
+.topicList {
+  margin: 4px 0 0 8px;
+  padding-left: 9px;
+  border-left: 1px solid var(--border-hair);
+}
+.topicRow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.topic {
+  flex: 1;
+  margin-left: 0;
+  padding: 6px 8px;
+}
+.topicDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--text-muted);
+  opacity: 0.65;
+}
+.topic.active .topicDot {
+  background: var(--accent);
+  opacity: 1;
+}
+.newProj {
+  margin: 6px 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+.createTrigger {
+  width: 100%;
+  min-height: 30px;
+  padding: 7px 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px dashed var(--border-whisper);
+  border-radius: 9px;
+  color: var(--text-secondary);
+  background: transparent;
+  transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.createTrigger:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-whisper));
+  background: var(--accent-soft);
+}
+.createProject {
+  margin: 10px 2px 0;
+}
+.createChannel {
+  margin: 4px 0 0;
+}
+.createTopic {
+  margin: 4px 0 0;
+}
+.createTopic.createTrigger {
+  min-height: 26px;
+  justify-content: flex-start;
+  padding-left: 8px;
+  font-size: 11.5px;
+}
+
+/* Invite role selector: thumb moves between three choices */
+.roleSeg {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+.roleSegThumb {
+  position: absolute;
+  z-index: 0;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc((100% - 6px) / 3);
+  border-radius: 7px;
+  background: var(--surface-card);
+  box-shadow: 0 0 0 1px var(--border-whisper), 0 1px 3px rgba(31, 33, 36, 0.08);
+  transform: translateX(calc(var(--role-index, 0) * 100%));
+  transition: transform var(--dur-base) cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.roleSegItem {
+  position: relative;
+  z-index: 1;
+}
+.roleSegOn {
+  background: transparent;
+  box-shadow: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .roleSegThumb {
+    transition: none;
+  }
+}
+
 /* responsive: collapse context then sidebar */
 @media (max-width: 1120px) {
   .app {

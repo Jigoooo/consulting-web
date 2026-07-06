@@ -1,13 +1,14 @@
 import { useSyncExternalStore } from 'react';
 
-/** Theme choice (Phase 2-D G-1). 'system' follows the OS preference. */
-export type Theme = 'light' | 'dark' | 'system';
+/** Theme choice. System is used only as the first-load default; user toggles light/dark only. */
+export type Theme = 'light' | 'dark';
 const KEY = 'consulting.theme.v1';
 
 let theme: Theme = (() => {
   try {
     const v = localStorage.getItem(KEY);
-    return v === 'dark' || v === 'light' || v === 'system' ? v : 'light';
+    if (v === 'dark' || v === 'light') return v;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   } catch {
     return 'light';
   }
@@ -15,16 +16,11 @@ let theme: Theme = (() => {
 const listeners = new Set<() => void>();
 
 function apply(next: Theme): void {
-  const dark = next === 'dark' || (next === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-  if (dark) document.documentElement.setAttribute('data-theme', 'dark');
+  if (next === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
   else document.documentElement.removeAttribute('data-theme');
 }
 
-// React to OS theme flips while in 'system' mode.
 if (typeof window !== 'undefined') {
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-    if (theme === 'system') apply(theme);
-  });
   apply(theme);
 }
 
@@ -41,8 +37,7 @@ export const themeStore = {
     for (const l of listeners) l();
   },
   cycle: (): void => {
-    const order: Theme[] = ['light', 'dark', 'system'];
-    themeStore.set(order[(order.indexOf(theme) + 1) % order.length]!);
+    themeStore.set(theme === 'dark' ? 'light' : 'dark');
   },
   subscribe: (fn: () => void): (() => void) => {
     listeners.add(fn);

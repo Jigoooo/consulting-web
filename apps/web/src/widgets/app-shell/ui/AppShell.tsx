@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useRouter } from '@tanstack/react-router';
 import { useAuth } from '../../../lib/useAuth';
 import {
@@ -87,8 +87,8 @@ function Rail() {
 
   const personal = data?.workspaces.filter((w) => w.isPersonal) ?? [];
   const shared = data?.workspaces.filter((w) => !w.isPersonal) ?? [];
-  const themeIcon: IconName = theme === 'dark' ? 'moon' : theme === 'light' ? 'sun' : 'monitor';
-  const themeLabel = theme === 'dark' ? '다크' : theme === 'light' ? '라이트' : '시스템';
+  const themeIcon: IconName = theme === 'dark' ? 'moon' : 'sun';
+  const themeLabel = theme === 'dark' ? '다크' : '라이트';
 
   return (
     <div className={s.rail}>
@@ -110,20 +110,10 @@ function Rail() {
         <Icon name="plus" size="sm" decorative />
       </button>
       <div className={s.spacer} />
-      <Link
-        to="/artifacts"
-        className={s.railAction}
-        title="산출물 보관함"
-        aria-label="산출물 보관함"
-        activeProps={{ className: `${s.railAction} ${s.rbtnOn}` }}
-      >
-        <Icon name="file-text" size="sm" decorative />
-        <span className={s.railActionLabel}>산출물</span>
-      </Link>
       <button
         type="button"
         className={s.railAction}
-        title={`테마: ${themeLabel} (클릭하여 변경)`}
+        title={`테마: ${themeLabel} (라이트/다크 전환)`}
         aria-label={`테마 변경 — 현재 ${themeLabel}`}
         onClick={() => themeStore.cycle()}
       >
@@ -211,9 +201,20 @@ function RailItem({ id, name, active }: { id: string; name: string; active: bool
 
 /** 트리 안에서 바로 만드는 인라인 생성기 — 모달 없이 맥락 유지(사용자 선호),
  *  대신 확정/취소 버튼과 Enter/Esc 안내로 어포던스를 명확히. */
-function InlineCreate({ placeholder, onSubmit, busy }: { placeholder: string; onSubmit: (name: string) => void; busy: boolean }) {
+function InlineCreate({
+  placeholder,
+  onSubmit,
+  busy,
+  level,
+}: {
+  placeholder: string;
+  onSubmit: (name: string) => void;
+  busy: boolean;
+  level: 'project' | 'channel' | 'topic';
+}) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
+  const levelClass = level === 'project' ? s.createProject : level === 'channel' ? s.createChannel : s.createTopic;
 
   function cancel() {
     setName('');
@@ -222,13 +223,15 @@ function InlineCreate({ placeholder, onSubmit, busy }: { placeholder: string; on
   if (!open) {
     return (
       <button type="button" className={s.newProj} onClick={() => setOpen(true)}>
-        <Icon name="plus" size="xs" decorative /> {placeholder}
+        <span className={`${s.createTrigger} ${levelClass}`}>
+          <Icon name="plus" size="xs" decorative /> {placeholder}
+        </span>
       </button>
     );
   }
   return (
     <form
-      className={s.inlineCreate}
+      className={`${s.inlineCreate} ${levelClass}`}
       onSubmit={(e) => {
         e.preventDefault();
         const trimmed = name.trim();
@@ -331,7 +334,23 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
         </div>
         <NotificationBell />
       </div>
+      <Link
+        to="/artifacts"
+        className={s.workspaceTool}
+        activeProps={{ className: `${s.workspaceTool} ${s.workspaceToolOn}` }}
+        onClick={() => onNavigate?.()}
+      >
+        <Icon name="file-text" size="sm" decorative />
+        <span>
+          <strong>산출물 보관함</strong>
+          <small>대화에서 확정한 보고서·문서</small>
+        </span>
+      </Link>
       <div className={s.tree}>
+        <div className={s.treeIntro}>
+          <div className={s.treeIntroTitle}>작업 구조</div>
+          <div className={s.treeIntroText}>프로젝트 → 채널 → 토픽 순서로 정리됩니다.</div>
+        </div>
         <div className={s.secLabel}>프로젝트</div>
         {isLoading ? (
           <div style={{ padding: '8px' }}>
@@ -341,9 +360,13 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
           </div>
         ) : null}
         {tree?.projects.map((p) => (
-          <div key={p.id}>
+          <div key={p.id} className={s.projectBlock}>
             <div className={s.projRow}>
-              <Icon name="chevron-down" size="xs" tone="muted" decorative /> {p.name}
+              <span className={s.projMain}>
+                <Icon name="folder" size="xs" tone="muted" decorative />
+                <span className={s.rowKicker}>프로젝트</span>
+                {p.name}
+              </span>
               <RowMenu
                 actions={[
                   { label: '이름 변경', onSelect: () => void onRename('projects', p.id, p.name) },
@@ -351,53 +374,65 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
                 ]}
               />
             </div>
-            {p.channels.map((c) => (
-              <div key={c.id}>
-                <div className={s.chanRow}>
-                  # {c.name}
-                  <RowMenu
-                    actions={[
-                      { label: '이름 변경', onSelect: () => void onRename('channels', c.id, c.name) },
-                      { label: '삭제', danger: true, onSelect: () => void onDelete('channels', c.id, c.name) },
-                    ]}
-                  />
-                </div>
-                {c.topics.map((t) => (
-                  <div key={t.id} style={{ display: 'flex', alignItems: 'center' }}>
-                    <Link
-                      to="/t/$topicId"
-                      params={{ topicId: t.id }}
-                      className={s.topic}
-                      style={{ flex: 1 }}
-                      activeProps={{ className: `${s.topic} ${s.active}` }}
-                      onClick={() => onNavigate?.()}
-                    >
-                      <span className={s.hash}>#</span> {t.name}
-                    </Link>
+            <div className={s.channelList}>
+              {p.channels.map((c) => (
+                <div key={c.id} className={s.channelBlock}>
+                  <div className={s.chanRow}>
+                    <span className={s.chanMain}>
+                      <Icon name="hash" size="xs" tone="muted" decorative />
+                      <span className={s.rowKicker}>채널</span>
+                      {c.name}
+                    </span>
                     <RowMenu
                       actions={[
-                        { label: '이름 변경', onSelect: () => void onRename('topics', t.id, t.name) },
-                        { label: '삭제', danger: true, onSelect: () => void onDelete('topics', t.id, t.name) },
+                        { label: '이름 변경', onSelect: () => void onRename('channels', c.id, c.name) },
+                        { label: '삭제', danger: true, onSelect: () => void onDelete('channels', c.id, c.name) },
                       ]}
                     />
                   </div>
-                ))}
-                <InlineCreate
-                  placeholder="새 토픽"
-                  busy={createTopic.isPending}
-                  onSubmit={(name) => createTopic.mutate({ channelId: c.id, name })}
-                />
-              </div>
-            ))}
-            <InlineCreate
-              placeholder="새 채널"
-              busy={createChannel.isPending}
-              onSubmit={(name) => createChannel.mutate({ projectId: p.id, name })}
-            />
+                  <div className={s.topicList}>
+                    {c.topics.map((t) => (
+                      <div key={t.id} className={s.topicRow}>
+                        <Link
+                          to="/t/$topicId"
+                          params={{ topicId: t.id }}
+                          className={s.topic}
+                          activeProps={{ className: `${s.topic} ${s.active}` }}
+                          onClick={() => onNavigate?.()}
+                        >
+                          <span className={s.topicDot} />
+                          <span className={s.rowKicker}>토픽</span>
+                          {t.name}
+                        </Link>
+                        <RowMenu
+                          actions={[
+                            { label: '이름 변경', onSelect: () => void onRename('topics', t.id, t.name) },
+                            { label: '삭제', danger: true, onSelect: () => void onDelete('topics', t.id, t.name) },
+                          ]}
+                        />
+                      </div>
+                    ))}
+                    <InlineCreate
+                      level="topic"
+                      placeholder="토픽 추가"
+                      busy={createTopic.isPending}
+                      onSubmit={(name) => createTopic.mutate({ channelId: c.id, name })}
+                    />
+                  </div>
+                </div>
+              ))}
+              <InlineCreate
+                level="channel"
+                placeholder="채널 추가"
+                busy={createChannel.isPending}
+                onSubmit={(name) => createChannel.mutate({ projectId: p.id, name })}
+              />
+            </div>
           </div>
         ))}
         <InlineCreate
-          placeholder="새 프로젝트"
+          level="project"
+          placeholder="프로젝트 추가"
           busy={createProject.isPending}
           onSubmit={(name) => createProject.mutate(name)}
         />
@@ -423,6 +458,7 @@ function ContextPanel() {
   const [inviteRole, setInviteRole] = useState<'editor' | 'viewer' | 'admin'>('editor');
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const inviteRoleIndex = inviteRole === 'editor' ? 0 : inviteRole === 'viewer' ? 1 : 2;
 
   // Auto-switch to evidence when a thread opens (2-A E-4).
   useEffect(() => {
@@ -497,7 +533,13 @@ function ContextPanel() {
 
           <div className={s.ctxSection}>
             <div className={s.ctxTitle}>초대</div>
-        <div className={s.roleSeg} role="radiogroup" aria-label="초대 권한 선택">
+            <div
+              className={s.roleSeg}
+              role="radiogroup"
+              aria-label="초대 권한 선택"
+              style={{ '--role-index': inviteRoleIndex } as CSSProperties}
+            >
+              <span className={s.roleSegThumb} aria-hidden="true" />
           {(['editor', 'viewer', 'admin'] as const).map((r) => (
             <button
               key={r}
