@@ -42,3 +42,24 @@ export const hoveredMessageStore = {
 export function useHoveredMessage(): string | null {
   return useSyncExternalStore(hoveredMessageStore.subscribe, hoveredMessageStore.get, hoveredMessageStore.get);
 }
+
+/** Imperative-ish, but external-store backed: sidebar active-channel clicks can
+ * request the open chat to re-pin to the live tail without route churn. */
+let tailRequestSeq = 0;
+const tailListeners = new Set<() => void>();
+
+export const tailScrollRequestStore = {
+  get: (): number => tailRequestSeq,
+  request: (): void => {
+    tailRequestSeq += 1;
+    for (const l of tailListeners) l();
+  },
+  subscribe: (fn: () => void): (() => void) => {
+    tailListeners.add(fn);
+    return () => tailListeners.delete(fn);
+  },
+};
+
+export function useTailScrollRequest(): number {
+  return useSyncExternalStore(tailScrollRequestStore.subscribe, tailScrollRequestStore.get, tailScrollRequestStore.get);
+}

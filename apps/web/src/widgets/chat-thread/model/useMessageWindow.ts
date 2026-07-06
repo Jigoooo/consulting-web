@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../lib/api';
 import { mergeMessagePage, type MessageWindow } from './messageWindow';
+import { getCachedMessageWindow, setCachedMessageWindow } from './messageCache';
 
 const PAGE_SIZE = 50;
 
@@ -9,8 +10,13 @@ export const messageWindowKeys = {
   latest: (threadId: string) => ['messages-page', threadId, 'latest'] as const,
 };
 
+function cachedLatest(threadId: string): MessageWindow | undefined {
+  const cached = getCachedMessageWindow(threadId);
+  return cached?.mode === 'latest' ? cached : undefined;
+}
+
 export function useMessageWindow(threadId: string) {
-  const [windowState, setWindowState] = useState<MessageWindow | undefined>(undefined);
+  const [windowState, setWindowState] = useState<MessageWindow | undefined>(() => cachedLatest(threadId));
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [isLoadingNewer, setIsLoadingNewer] = useState(false);
   const [isJumping, setIsJumping] = useState(false);
@@ -26,7 +32,10 @@ export function useMessageWindow(threadId: string) {
   });
 
   useEffect(() => {
-    setWindowState(undefined);
+    // G8: restore the per-thread in-memory window instantly when revisiting a
+    // channel. Search-jump ('around') windows are intentionally not restored:
+    // channel entry must always show the live tail.
+    setWindowState(cachedLatest(threadId));
     setIsLoadingOlder(false);
     setIsLoadingNewer(false);
     setIsJumping(false);
@@ -36,8 +45,12 @@ export function useMessageWindow(threadId: string) {
 
   useEffect(() => {
     if (!latest.data) return;
-    setWindowState(mergeMessagePage(undefined, latest.data, 'latest'));
-  }, [latest.data]);
+    setWindowState((prev) => {
+      const next = mergeMessagePage(prev?.mode === 'latest' ? prev : undefined, latest.data, 'latest');
+      setCachedMessageWindow(threadId, next);
+      return next;
+    });
+  }, [latest.data, threadId]);
 
   // React Compiler stabilizes these — no useCallback needed.
   const loadOlder = async () => {
@@ -47,7 +60,11 @@ export function useMessageWindow(threadId: string) {
     setOlderError(false);
     try {
       const page = await api.listMessagesPage(threadId, { limit: PAGE_SIZE, before: cursor, direction: 'older' });
-      setWindowState((prev) => mergeMessagePage(prev, page, 'older'));
+      setWindowState((prev) => {
+        const next = mergeMessagePage(prev, page, 'older');
+        setCachedMessageWindow(threadId, next);
+        return next;
+      });
     } catch {
       setOlderError(true);
     } finally {
@@ -62,7 +79,11 @@ export function useMessageWindow(threadId: string) {
     setNewerError(false);
     try {
       const page = await api.listMessagesPage(threadId, { limit: PAGE_SIZE, after: cursor, direction: 'newer' });
-      setWindowState((prev) => mergeMessagePage(prev, page, 'newer'));
+      setWindowState((prev) => {
+        const next = mergeMessagePage(prev, page, 'newer');
+        setCachedMessageWindow(threadId, next);
+        return next;
+      });
     } catch {
       setNewerError(true);
     } finally {
@@ -74,7 +95,11 @@ export function useMessageWindow(threadId: string) {
     setIsJumping(true);
     try {
       const page = await api.listMessagesPage(threadId, { limit: PAGE_SIZE, around: messageId });
-      setWindowState((prev) => mergeMessagePage(prev, page, 'around'));
+      setWindowState((prev) => {
+        const next = mergeMessagePage(prev, page, 'around');
+        setCachedMessageWindow(threadId, next);
+        return next;
+      });
       return page.anchorMessageId ?? messageId;
     } finally {
       setIsJumping(false);
@@ -87,7 +112,9 @@ export function useMessageWindow(threadId: string) {
     setIsJumping(true);
     try {
       const page = await api.listMessagesPage(threadId, { limit: PAGE_SIZE });
-      setWindowState(mergeMessagePage(undefined, page, 'latest'));
+      const next = mergeMessagePage(undefined, page, 'latest');
+      setCachedMessageWindow(threadId, next);
+      setWindowState(next);
       return page.messages.at(-1)?.id ?? null;
     } finally {
       setIsJumping(false);

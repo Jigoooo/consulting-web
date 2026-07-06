@@ -1,4 +1,4 @@
-import { useEffect, useState, useTransition, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, useState, useTransition, type CSSProperties, type ReactNode } from 'react';
 import { Link, useLocation, useRouter } from '@tanstack/react-router';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { useAuth } from '../../../lib/useAuth';
@@ -14,7 +14,7 @@ import {
   useMembers,
 } from '../../../lib/spaces';
 import { useSelectedWorkspace, wsStore } from '../../../lib/wsStore';
-import { useActiveThread } from '../../../lib/threadCtx';
+import { tailScrollRequestStore, useActiveThread } from '../../../lib/threadCtx';
 import { useTheme, themeStore } from '../../../lib/themeStore';
 import { api } from '../../../lib/api';
 import { useToast } from '../../../shared/ui/toast/Toast';
@@ -302,6 +302,7 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
   // holds the OLD highlight until the new topic loads, which reads as lag).
   const [pendingTopicId, setPendingTopicId] = useState<string | null>(null);
   const [isNavPending, startNav] = useTransition();
+  const lastClickedTopicRef = useRef<string | null>(null);
   const navSpinner = useDelayedFlag(isNavPending, 150);
 
   const routeTopicId = location.pathname.match(/^\/t\/([^/]+)/)?.[1] ?? null;
@@ -347,13 +348,21 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
   async function openChannel(channel: { id: string; name: string; topics: Array<{ id: string; name: string }> }) {
     try {
       const topicId = channel.topics[0]?.id ?? (await createTopic.mutateAsync({ channelId: channel.id, name: '대화' })).id;
-      if (topicId === currentTopicId) return;
+      lastClickedTopicRef.current = topicId;
+      if (topicId === currentTopicId) {
+        tailScrollRequestStore.request();
+        onNavigate?.();
+        return;
+      }
       // A3: optimistic highlight now; defer the (heavier) route swap so the click
       // feedback is never blocked by rendering the new thread.
       setPendingTopicId(topicId);
       onNavigate?.();
       startNav(() => {
-        void router.navigate({ to: '/t/$topicId', params: { topicId } });
+        void router.navigate({ to: '/t/$topicId', params: { topicId } }).then(() => {
+          const latest = lastClickedTopicRef.current;
+          if (latest && latest !== topicId) void router.navigate({ to: '/t/$topicId', params: { topicId: latest } });
+        });
       });
     } catch {
       setPendingTopicId(null);
@@ -465,7 +474,6 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
                             type="button"
                             className={s.chanMain}
                             aria-current={channelActive ? 'page' : undefined}
-                            disabled={channelActive}
                             tabIndex={collapsed ? -1 : undefined}
                             onClick={() => void openChannel(c)}
                           >

@@ -4,7 +4,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { api } from '../../../lib/api';
 import { useAuth } from '../../../lib/useAuth';
 import { useToast } from '../../../shared/ui/toast/Toast';
-import { activeThreadStore } from '../../../lib/threadCtx';
+import { activeThreadStore, useTailScrollRequest } from '../../../lib/threadCtx';
 import { useSelectedWorkspace } from '../../../lib/wsStore';
 import { useWorkspaceTree } from '../../../lib/spaces';
 import {
@@ -79,6 +79,7 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
   const workspaceId = useSelectedWorkspace();
   const { data: tree } = useWorkspaceTree(workspaceId ?? undefined);
   const history = useMessageWindow(threadId);
+  const tailScrollRequest = useTailScrollRequest();
   const attachments = useAttachments(threadId);
   const uploadAttachment = useUploadAttachment(threadId);
   const search = useSearchState();
@@ -103,6 +104,8 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
   const atBottomRef = useRef(true);
   const deltaBuf = useRef('');
   const rafId = useRef(0);
+  const latestJumpRef = useRef<() => Promise<void>>(async () => {});
+  const seenTailScrollRequest = useRef(tailScrollRequest);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -410,6 +413,13 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
     setUnseen(0);
     requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' }));
   }
+  latestJumpRef.current = jumpToLatest;
+
+  useEffect(() => {
+    if (tailScrollRequest === seenTailScrollRequest.current) return;
+    seenTailScrollRequest.current = tailScrollRequest;
+    void latestJumpRef.current();
+  }, [tailScrollRequest]);
 
   const userName = user?.displayName ?? '나';
   const persisted = history.messages;
