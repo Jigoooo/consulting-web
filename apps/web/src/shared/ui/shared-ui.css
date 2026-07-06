@@ -110,6 +110,17 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 20%, transparent);
 }
 .cwTextarea { min-height: 96px; resize: vertical; }
+/* B1: chrome-less textarea — host container owns the surface (composer). */
+.cwInputBare {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  resize: none;
+}
+.cwInputBare::placeholder { color: var(--text-muted); }
 .cwField { display: grid; gap: 6px; }
 .cwFieldLabel { color: var(--text-secondary); font-size: 12.5px; font-weight: 650; }
 .cwFieldHint { color: var(--text-muted); font-size: 12px; }

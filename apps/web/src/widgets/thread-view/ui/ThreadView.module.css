@@ -6,8 +6,9 @@
   display: flex;
   align-items: center;
   gap: 14px;
-  backdrop-filter: blur(8px);
-  background: rgba(255, 255, 255, 0.75);
+  /* B3/F6: token-based so dark mode works; opaque canvas (no blur) for cheap
+     scroll repaints. Was hardcoded rgba(255,255,255,.75) + backdrop blur. */
+  background: var(--bg-canvas);
 }
 .crumb {
   font-size: 11.5px;
@@ -520,10 +521,8 @@
   padding: 0 12px;
   border: 1px solid var(--border-hair);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
   color: var(--text-secondary);
-  box-shadow: 0 10px 24px -22px rgba(15, 23, 42, 0.35);
-  backdrop-filter: blur(8px);
 }
 .historyMoreBtn:hover:not(:disabled) {
   background: var(--bg-warm);
@@ -535,11 +534,10 @@
   padding: 5px 11px;
   border: 1px solid var(--border-hair);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
   color: var(--text-muted);
   font-size: 11.5px;
   font-weight: 560;
-  backdrop-filter: blur(8px);
 }
 .scrollSentinel {
   height: 1px;
@@ -767,8 +765,8 @@
   margin-bottom: 8px;
   border: 1px solid var(--border-hair);
   border-radius: 16px;
-  background: color-mix(in srgb, var(--bg-surface) 96%, white);
-  box-shadow: 0 24px 70px -48px rgba(15, 23, 42, 0.42);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-pop);
   overflow: hidden;
 }
 .slashItem {
@@ -845,9 +843,10 @@
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
+/* B1: inner regions are transparent — .box owns the single surface. */
 .boxTop {
   padding: 12px 14px 6px;
-  background: var(--bg-canvas);
+  background: transparent;
   border-radius: var(--radius-card) var(--radius-card) 0 0;
 }
 .textarea {
@@ -858,14 +857,14 @@
   font: inherit;
   font-size: 15px;
   color: var(--text-primary);
-  background: var(--bg-canvas);
+  background: transparent;
 }
 .bar {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 6px 12px 10px;
-  background: var(--bg-canvas);
+  background: transparent;
   border-radius: 0 0 var(--radius-card) var(--radius-card);
 }
 .hint {

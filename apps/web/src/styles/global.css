@@ -6,6 +6,13 @@
   margin: 0;
   padding: 0;
 }
+/* B2: during a theme swap, kill every transition so all elements recolor in the
+   same frame (no staggered flash). themeStore toggles the attribute for 2 frames. */
+html[data-theme-switching] *,
+html[data-theme-switching] *::before,
+html[data-theme-switching] *::after {
+  transition: none !important;
+}
 html,
 body,
 #root {

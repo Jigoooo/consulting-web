@@ -606,6 +606,7 @@ export function ChatThread({ threadId, title }: { threadId: string; title: strin
         <div className={s.box}>
           <div className={s.boxTop}>
             <Textarea
+              unstyled
               className={s.textarea}
               rows={1}
               value={input}

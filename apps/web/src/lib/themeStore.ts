@@ -16,8 +16,17 @@ let theme: Theme = (() => {
 const listeners = new Set<() => void>();
 
 function apply(next: Theme): void {
-  if (next === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
-  else document.documentElement.removeAttribute('data-theme');
+  const root = document.documentElement;
+  // B2: suppress every transition for the duration of the swap so all elements
+  // recolor in the same frame — kills the partial/staggered flash (composer,
+  // buttons, sidebar all flipping at slightly different times). VSCode/Linear pattern.
+  root.setAttribute('data-theme-switching', '');
+  if (next === 'dark') root.setAttribute('data-theme', 'dark');
+  else root.removeAttribute('data-theme');
+  // Release after two frames so the style recalculation has fully committed.
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => root.removeAttribute('data-theme-switching')),
+  );
 }
 
 if (typeof window !== 'undefined') {
