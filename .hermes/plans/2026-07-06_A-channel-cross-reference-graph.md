@@ -2,9 +2,9 @@
 
 > **For Hermes:** 구현 시 subagent-driven-development 스킬로 task 단위 실행. 이 문서는 설계/계획 전용, 실행 아님.
 
-**Goal:** 이미 존재하는 `context_edges` 그래프 레이어에 `related_to`/`references`/`shares_memory_with` 엣지의 **쓰기(수동+자동추론)와 읽기(채팅 컨텍스트 주입)** 를 얹어, 같은 프로젝트 안의 채널들이 서로를 참조·인지하게 만든다.
+**Goal:** 이미 존재하는 `context_edges` 그래프 레이어에 `related_to`/`references`/`shares_memory_with` 엣지의 **쓰기(수동+자동추론)와 읽기(채팅 컨텍스트 주입)** 를 얹어, 같은 워크스페이스 안의 프로젝트·채널들이 서로를 참조·인지하게 만든다. `consulting-web`은 기존 텔레그램 컨설팅의 대체판이므로, 이 graph는 문서 C/D의 기존 `consulting.db` GraphRAG 브릿지와 함께 동작해야 한다.
 
-**Architecture:** 신규 테이블 없음. `edge_type` enum(`related_to`/`references`/`derived_from`/`shares_memory_with`/`supersedes`)과 `context_edges` 테이블은 이미 있으나 현재 `parent_of`만 쓰인다(실측 42/42). (1) 엣지 쓰기 유스케이스·API, (2) 태그 겹침 기반 자동추론 잡, (3) 채팅 스트림 시작 시 1-hop traverse로 연관 채널의 요약/아티팩트를 프롬프트에 주입하는 리더를 추가한다. 프로젝트 경계는 넘지 않으며(기본), 명시 엣지가 있을 때만 참조한다.
+**Architecture:** `edge_type` enum(`related_to`/`references`/`derived_from`/`shares_memory_with`/`supersedes`)과 `context_edges` 테이블은 이미 있으나 현재 `parent_of`만 쓰인다(실측 45/45). (1) 엣지 쓰기 유스케이스·API, (2) 태그 seed/extract 후 태그 겹침 기반 자동추론 잡, (3) 채팅 스트림 시작 시 1-hop traverse로 연관 scope를 찾고, 실제 의미검색은 문서 C의 `ConsultingGraphRagBridge`가 기존 `consulting.db`에서 수행해 프롬프트에 주입한다. **프로젝트 경계는 소프트 경계**이며 같은 워크스페이스 안에서는 cross-project 자동 참조를 허용하되 감쇠+라벨을 강제한다.
 
 **Tech Stack:** NestJS(useCase/controller) · Drizzle ORM · PostgreSQL · Vitest(`DATABASE_URL` 있을 때만 실행되는 통합테스트 컨벤션) · 기존 outbox/audit 패턴.
 
@@ -14,10 +14,11 @@
 
 | 항목 | 값 | 의미 |
 |---|---|---|
-| context_edges | 42건, 전부 `parent_of/system` | 상호참조(related_to 등) 0건 |
-| projects/channels/topics/threads | 6 / 12 / 15 / 15 | 소규모, 마이그레이션 부담 낮음 |
-| 채팅 컨텍스트 조립 | `chat-stream.usecase.ts`는 `projectId`만 추출→접근검사 | 그래프 traverse 없음 = 옆 채널 못 봄 |
-| memory_topic_id | 15/15 전부 null | dialogue_memory 연동 미배선(문서 B/C에서 다룸) |
+| context_edges | 45건, 전부 `parent_of/system` | 상호참조(related_to 등) 0건 |
+| projects/channels/topics/threads | 7 / 13 / 16 / 16 | 소규모, 마이그레이션 부담 낮음 |
+| 채팅 컨텍스트 조립 | `chat-stream.usecase.ts`는 `projectId`만 추출→접근검사 | 그래프 traverse 없음 = 옆 채널/프로젝트 못 봄 |
+| scope_tags | 0건 | A6 태그 기반 classifier가 즉시 작동 불가 → A0 태그 seed/extract 필요 |
+| memory_topic_id | 16/16 전부 null | 기존 `consulting.db` GraphRAG 연동 미배선(문서 C/D에서 브릿지로 다룸) |
 
 **결론:** 뼈대는 완비, "쓰기+읽기"만 없다. 신규 스키마 최소.
 
@@ -91,6 +92,13 @@ schema 파일: `packages/db-schema/src/schema/context-graph.ts`의 `contextEdges
 
 ## 4. 구현 태스크 (bite-sized, TDD)
 
+### Task A0: scope tag seed/extract 선행 (A6 classifier prerequisite)
+- **Files:** Create `apps/api/src/spaces/scope-tag-seed.service.ts` + test
+- **문제:** 실측상 `scope_tags=0`이라 태그 겹침 classifier(A6)가 아무 엣지도 만들 수 없다.
+- **로직:** project/channel/topic 이름·slug·기존 consulting topic link·자료/분석/보고서 같은 도메인 단어에서 기본 태그 생성. 이후 사용자가 UI에서 태그를 편집 가능.
+- **초기 seed 예:** `client:changwon`, `domain:organization-diagnosis`, `phase:data-collection|analysis|report`, `source:telegram`, `topic:budget|field-audit`.
+- **RED tests:** seed 후 창원 project 하위 channel/topic에 최소 1개 이상 scope_tag, 재실행 idempotent, cross-workspace 태그 섞임 없음.
+
 ### Task A1: 엣지 스키마 컬럼 추가
 - **Files:** Modify `packages/db-schema/src/schema/context-graph.ts` · Create `packages/db-schema/drizzle/0009_context_edge_refs.sql`
 - Step1: schema에 컬럼/인덱스 추가 → `pnpm --filter @consulting/db-schema drizzle:generate`로 SQL 생성 확인
@@ -122,19 +130,23 @@ schema 파일: `packages/db-schema/src/schema/context-graph.ts`의 `contextEdges
 - `parent_of`/트리 엣지는 제외(연관≠부모).
 - Step1(RED): 시드 엣지 심고 "related 2건 반환, 삭제된 대상은 제외" 검증.
 
-### Task A5: 채팅 컨텍스트 주입 (읽기 통합 — 핵심)
-- **Files:** Modify `apps/api/src/chat/chat-stream.usecase.ts` + `chat-stream.controller.ts` · new `apps/api/src/chat/related-context.builder.ts` + test
-- **동작:** 스레드→topic→channel 해석 후, 그 **channel**에서 `relatedScopes` 1-hop 조회 → 각 연관 채널의 (a) 이름/경로, (b) 최신 아티팩트 head 제목·note, (c) 최근 요약 1줄을 모아 **컨텍스트 블록** 생성:
+### Task A5: 채팅 컨텍스트 주입 (C 브릿지와 통합 — 핵심)
+- **Files:** Modify `apps/api/src/chat/chat-stream.usecase.ts` + `chat-stream.controller.ts` · C문서의 `MemoryContextBuilder`/`ConsultingGraphRagBridge` 사용
+- **동작:** 스레드→topic→channel→project 해석 후, 그 **channel/project**에서 `relatedScopes` 1-hop 조회 → 관련 scope 목록을 C의 `MemoryContextBuilder`에 넘긴다. 실제 의미검색/근거검색은 C의 `ConsultingGraphRagBridge`가 기존 `/home/jigoo/.hermes/workspace/consulting/db/consulting.db`에서 수행한다.
+- **컨텍스트 블록 예:**
   ```
-  [연관 채널 컨텍스트 — 참조용, 이 채널의 사실로 단정 금지]
-  · <채널명> (related_to): 최신 산출물 "…" / 요약 …
-  · <다른프로젝트>/<채널명> (related_to · 다른 프로젝트): 최신 산출물 "…" / 요약 …
+  [컨설팅 검색 기억 — 근거 우선, 참조용]
+  현재 프로젝트:
+  · 검증자료/조건부확인: CL-D5-01 ...
+  · 대화기억: ...
+
+  다른 프로젝트 참고(약한 연결, 현재 사실로 단정 금지):
+  · <다른프로젝트>/<채널명>: ...
   ```
-- **예산 게이트:** 최대 3개 채널, 채널당 ≤400자. 초과 시 confidence(감쇠 반영)·recency 순 컷 → cross-project는 이미 confidence×0.6이라 자연스럽게 뒤로 밀림.
-- **D3 라벨:** 엣지 `cross_project=true`면 라벨에 "· 다른 프로젝트" 명시(오염 방지).
-- Hermes run 프롬프트에 system-context로 prepend(기존 `hermes-runs-client.ts` 주입 지점 재사용).
-- **격리 라벨 필수:** 주입 블록에 "참조용/단정금지" 라벨 → 환각·교차오염 방지(consulting 스킬의 source-tier 원칙과 정합).
-- Step1(RED): "연관엣지 있는 스레드→컨텍스트 블록에 옆 채널명 포함", "엣지 없으면 블록 비어있음", "4개 연관→3개로 컷" 테스트.
+- **예산 게이트:** 최대 3개 scope, scope당 ≤400자. 초과 시 source-tier(검증자료 우선)·confidence(감쇠 반영)·recency 순 컷.
+- **D3 라벨:** 엣지 `cross_project=true`면 라벨에 "다른 프로젝트" 명시(오염 방지). archived scope는 "보관됨" 라벨.
+- **중요:** A는 관련 scope discovery, C는 실제 GraphRAG recall. 중복 builder를 만들지 말고 C의 `MemoryContextBuilder`를 단일 prompt 주입 지점으로 삼는다.
+- Step1(RED): "연관엣지 있는 스레드→C bridge 호출 입력에 옆 scope 포함", "엣지 없으면 current project recall만", "4개 연관→3개로 컷", "cross-project 라벨 없으면 실패" 테스트.
 
 ### Task A6: 태그 겹침 자동추론 잡 (classifier) — D2/D3 반영
 - **Files:** Create `apps/api/src/spaces/infer-related.job.ts` + test · 트리거는 `ChannelCreated`/`ProjectCreated` outbox 소비 or 수동 CLI
@@ -197,7 +209,7 @@ docker exec consulting-web-pg-1 sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_D
 
 ### 고도화 로드맵 (선택)
 - **G1. 엣지 신뢰도 학습 루프:** 채팅에서 실제 참조된 연관 채널을 outbox로 기록 → classifier confidence를 사후 보정(useful/ignored). gbrain volunteer_context "volunteered vs used" 정밀도 패턴과 동형.
-- **G2. 임베딩 유사도 발견(강력):** 태그 겹침만으론 명시 메타에 갇힘. GBrain 임베딩 인프라 재활용해 **의미적 유사도**로 cross-project 연관을 발견(초기 태그 기반 → 이후 임베딩 확장). 단일자산·store 격리 원칙 유지.
+- **G2. 의미검색 발견(필수 브릿지):** 태그 겹침만으론 명시 메타에 갇힘. 새 벡터 DB를 만들기보다 문서 C/D의 기존 `consulting.db` GraphRAG(`dialogue_chunks`/`file_chunks` + Gemini embedding + FTS5 + graph + RRF)를 먼저 web 검색 엔진으로 연결한다. 이후 필요 시 pgvector는 미러/cache로만 검토.
 - **G3. 자동 요약 캐시:** 연관 채널 "최근 요약 1줄"을 매번 계산하지 말고 채널별 rolling summary를 outbox 소비로 캐시(주입 지연 제거).
 - **G4. 워크스페이스 지식그래프 뷰:** 노드=프로젝트/채널, 엣지=related/references, cross-project는 점선. d3/react-flow. 주인님이 원한 "전체 지식그래프 서로 참조" 시각화의 라이브 버전.
 - **G5. 방향성 승계:** `derived_from`(채널/프로젝트 복제) 자동 생성 → 분기된 노드가 원본을 자동 참조.
