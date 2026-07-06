@@ -1,20 +1,25 @@
-import { memo } from 'react';
+import { memo, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize from 'rehype-sanitize';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import { parseChoiceBlock } from './parseChoices';
 import { mdSanitizeSchema } from './sanitizeSchema';
+import { CodeBlock } from './CodeBlock';
 import s from './Markdown.module.css';
 
 function MarkdownBody({ text }: { text: string }) {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={[remarkGfm, remarkMath]}
       // HTML rendering with a strict sanitize boundary (축 A). rehype-raw parses
       // embedded HTML; rehype-sanitize immediately strips anything dangerous.
-      // Order matters: raw first, sanitize second.
-      rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSanitizeSchema]]}
+      // rehype-katex renders $…$/$$…$$ math (remark-math parses it). Order:
+      // raw → sanitize → katex (katex output is trusted math markup).
+      rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSanitizeSchema], rehypeKatex]}
       components={{
         a: ({ href, children }) => (
           <a href={href} target="_blank" rel="noreferrer noopener">
@@ -27,6 +32,20 @@ function MarkdownBody({ text }: { text: string }) {
             <table>{children}</table>
           </div>
         ),
+        // 코드블록(축1-B): 헤더바 + Shiki 하이라이트 + 복사/다운로드.
+        // react-markdown은 fenced code를 <pre><code>로 낸다 → pre를 CodeBlock으로.
+        pre: ({ children }) => {
+          const arr: unknown[] = Array.isArray(children) ? (children as unknown[]) : [children];
+          const child: unknown = arr[0];
+          let codeClass: string | undefined;
+          let codeChildren: ReactNode;
+          if (child && typeof child === 'object' && 'props' in child) {
+            const props = (child as { props: { className?: unknown; children?: unknown } }).props;
+            codeClass = typeof props.className === 'string' ? props.className : undefined;
+            codeChildren = props.children as ReactNode;
+          }
+          return <CodeBlock className={codeClass} children={codeChildren} />;
+        },
       }}
     >
       {text}
