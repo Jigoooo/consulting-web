@@ -774,6 +774,196 @@
   }
 }
 
+/* Slack-style simplification pass: flat navigation, minimal elevation, hierarchy by indent only. */
+.sidebar {
+  background: var(--bg-sidebar);
+}
+.wsHead {
+  padding: 14px 14px 12px;
+  border-bottom-color: var(--border-hair);
+}
+.workspaceTool {
+  margin: 8px 8px 4px;
+  padding: 7px 8px;
+  gap: 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+}
+.workspaceTool:hover,
+.workspaceToolOn {
+  border-color: transparent;
+  background: rgba(15, 16, 17, 0.055);
+}
+.workspaceTool strong {
+  font-size: 13px;
+  font-weight: var(--fw-ui);
+}
+.workspaceTool small {
+  display: none;
+}
+.tree {
+  padding: 4px 8px 20px;
+}
+.treeIntro {
+  display: none;
+}
+.secLabel {
+  padding: 12px 8px 5px;
+  font-size: 11px;
+  font-weight: var(--fw-ui);
+  color: var(--text-muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.projectBlock {
+  margin: 1px 0 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+.projRow,
+.chanRow,
+.topic {
+  min-height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+}
+.projRow {
+  padding: 4px 6px;
+  border-bottom: 0;
+  font-weight: var(--fw-ui);
+}
+.projMain,
+.chanMain {
+  gap: 6px;
+}
+.rowKicker {
+  display: none;
+}
+.channelList {
+  padding: 0 0 0 12px;
+}
+.channelBlock {
+  margin: 1px 0;
+  padding-left: 0;
+  border-left: 0;
+}
+.chanRow {
+  padding: 4px 6px;
+  font-size: 13px;
+  font-weight: var(--fw-ui);
+}
+.topicList {
+  margin: 0;
+  padding-left: 14px;
+  border-left: 0;
+}
+.topicRow {
+  gap: 0;
+}
+.topic {
+  margin-left: 0;
+  padding: 4px 6px;
+  font-size: 13px;
+}
+.projRow:hover,
+.chanRow:hover,
+.topic:hover,
+.workspaceTool:hover {
+  background: rgba(15, 16, 17, 0.055);
+}
+.topic.active {
+  background: rgba(86, 95, 159, 0.12);
+  color: var(--text-primary);
+  font-weight: var(--fw-ui);
+}
+.topicDot {
+  width: 4px;
+  height: 4px;
+  opacity: 0.55;
+}
+.newProj {
+  width: 100%;
+  margin: 1px 0;
+}
+.createTrigger {
+  min-height: 28px;
+  padding: 4px 6px;
+  justify-content: flex-start;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: transparent;
+}
+.createTrigger:hover {
+  border-color: transparent;
+  color: var(--text-secondary);
+  background: rgba(15, 16, 17, 0.055);
+}
+.createProject,
+.createChannel,
+.createTopic {
+  margin: 1px 0;
+}
+.createChannel {
+  margin-left: 12px;
+}
+.createTopic {
+  margin-left: 14px;
+}
+.inlineCreate {
+  margin: 4px 0;
+}
+.inlineCreate.createChannel {
+  margin-left: 12px;
+}
+.inlineCreate.createTopic {
+  margin-left: 14px;
+}
+.inlineCreateInput {
+  min-height: 28px;
+  padding: 4px 8px;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.inlineCreateOk,
+.inlineCreateCancel {
+  width: 24px;
+  height: 24px;
+}
+
+/* Tabs/segmented controls: keep the moving affordance, but make the track belong to the white surface. */
+.ctxTabs {
+  padding: 12px 12px 0;
+  background: var(--bg-canvas);
+}
+.ctxTab,
+.roleSeg {
+  background: var(--surface-card);
+}
+.ctxTabOn {
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  border-color: var(--border-whisper);
+  box-shadow: none;
+}
+.roleSeg {
+  border-color: var(--border-whisper);
+}
+.roleSegThumb {
+  background: var(--bg-canvas);
+  box-shadow: 0 0 0 1px var(--border-whisper);
+}
+.inviteBtn {
+  box-shadow: none;
+}
+
 /* responsive: collapse context then sidebar */
 @media (max-width: 1120px) {
   .app {
