@@ -451,6 +451,18 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
           <small>대화에서 확정한 보고서·문서</small>
         </span>
       </Link>
+      <Link
+        to="/library"
+        className={s.workspaceTool}
+        activeProps={{ className: `${s.workspaceTool} ${s.workspaceToolOn}` }}
+        onClick={() => onNavigate?.()}
+      >
+        <Icon name="files" size="sm" decorative />
+        <span>
+          <strong>자료실</strong>
+          <small>근거·업로드 문서·산출물 모아보기</small>
+        </span>
+      </Link>
       <div className={s.tree}>
         <div className={s.secLabel}>프로젝트</div>
         {showTreeSkeleton ? (

@@ -20,6 +20,7 @@ import {
   MAX_ATTACHMENT_BYTES,
   UploadAttachmentRequestSchema,
   UploadAttachmentResponseSchema,
+  AttachmentExtractionResponseSchema,
 } from '@consulting/contracts';
 import { AccessTokenGuard, requireAuthUserId, type AuthenticatedRequest } from '../auth/access-token.guard.js';
 import { parseBody, parseResponse } from '../http/contract-adapter.js';
@@ -131,6 +132,41 @@ export class AttachmentsController {
         uploaderUserId: r.uploaderUserId,
         createdAt: r.createdAt.toISOString(),
       })),
+    });
+  }
+
+  /** 축3: 파일 뷰어용 추출 텍스트. HWP/HWPX/PDF 원문을 인라인 뷰어에서 표시. */
+  @Get(':id/extraction')
+  async extraction(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    const userId = requireAuthUserId(req);
+    const [row] = await this.db
+      .select({
+        threadId: schema.fileAttachments.threadId,
+        fileName: schema.fileAttachments.fileName,
+        mimeType: schema.fileAttachments.mimeType,
+        status: schema.documentExtractions.status,
+        extractor: schema.documentExtractions.extractor,
+        textContent: schema.documentExtractions.textContent,
+        textChars: schema.documentExtractions.textChars,
+        qualityScore: schema.documentExtractions.qualityScore,
+        warnings: schema.documentExtractions.warnings,
+      })
+      .from(schema.fileAttachments)
+      .leftJoin(schema.documentExtractions, eq(schema.documentExtractions.attachmentId, schema.fileAttachments.id))
+      .where(and(eq(schema.fileAttachments.id, id), isNull(schema.fileAttachments.deletedAt)))
+      .limit(1);
+    if (!row) throw new NotFoundException({ code: 'NOT_FOUND', message: 'attachment not found' });
+    await this.requireThread(userId, row.threadId);
+    return parseResponse(AttachmentExtractionResponseSchema, {
+      attachmentId: id,
+      fileName: row.fileName,
+      mimeType: row.mimeType,
+      status: (row.status as 'indexed' | 'skipped' | 'failed' | null) ?? null,
+      extractor: row.extractor ?? null,
+      textContent: row.textContent ?? '',
+      textChars: row.textChars ?? 0,
+      qualityScore: row.qualityScore ?? 0,
+      warnings: row.warnings ?? [],
     });
   }
 

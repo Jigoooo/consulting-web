@@ -77,13 +77,15 @@
 ```
 drizzle/0009_context_edge_refs.sql
   ALTER TABLE context_edges ADD COLUMN created_by_user_id uuid
-    REFERENCES users(id) ON DELETE SET NULL;   -- manual 엣지 감사
+    REFERENCES users(id) ON DELETE SET NULL;   -- manual/cross 엣지 감사(D5 provenance)
   ALTER TABLE context_edges ADD COLUMN deleted_at timestamptz;  -- tombstone(문서 B와 공유)
   ALTER TABLE context_edges ADD COLUMN note text NOT NULL DEFAULT '';  -- "왜 연결했나"
+  ALTER TABLE context_edges ADD COLUMN cross_project boolean NOT NULL DEFAULT false;   -- D3 라벨 트리거
+  ALTER TABLE context_edges ADD COLUMN cross_workspace boolean NOT NULL DEFAULT false; -- D5 예외 표식
   CREATE INDEX context_edges_to_idx ON context_edges(to_scope_type, to_scope_id);  -- 역방향 traverse
 ```
 
-schema 파일: `packages/db-schema/src/schema/context-graph.ts`의 `contextEdges`에 `createdByUserId`, `deletedAt`, `note` 추가 + `context_edges_to_idx` 인덱스(현재 from_idx만 존재).
+schema 파일: `packages/db-schema/src/schema/context-graph.ts`의 `contextEdges`에 `createdByUserId`, `deletedAt`, `note`, `crossProject`, `crossWorkspace` 추가 + `context_edges_to_idx` 인덱스(현재 from_idx만 존재).
 
 ---
 
@@ -97,15 +99,15 @@ schema 파일: `packages/db-schema/src/schema/context-graph.ts`의 `contextEdges
 
 ### Task A2: 엣지 쓰기 유스케이스 (수동 링크)
 - **Files:** Create `apps/api/src/spaces/link-scopes.usecase.ts` · Test `apps/api/test/link-scopes.test.ts`
-- **입력:** `{workspaceId, fromScopeType, fromScopeId, toScopeType, toScopeId, edgeType, note?, actorUserId}`
-- **검증 규칙(트랜잭션 내):**
-  - 두 scope 모두 존재 + `deleted_at is null`
-  - 같은 workspace
-  - `edgeType != 'shares_memory_with'`이면 같은 project 강제(둘의 project_id 조회 후 비교)
-  - self-loop 금지, 중복은 `onConflictDoNothing`(unique 제약 이미 존재)
+- **입력:** `{workspaceId, fromScopeType, fromScopeId, toScopeType, toScopeId, edgeType, note?, actorUserId, confirmCrossWorkspace?}`
+- **검증 규칙(트랜잭션 내) — D1/D2/D5 반영:**
+  - 두 scope 모두 존재 + `deleted_at is null` (+ status가 live)
+  - **같은 workspace면 project 달라도 허용**(cross-project OK). 두 노드 project_id가 다르면 엣지에 `cross_project=true` 플래그.
+  - **다른 workspace면 기본 거부** → `confirmCrossWorkspace=true`(2단계 모달 통과)일 때만 허용, 엣지에 `cross_workspace=true` + `created_by_user_id` 필수(D5 provenance).
+  - self-loop 금지, 중복은 `onConflictDoNothing`
   - `shares_memory_with`는 이 유스케이스에서 거부 → 별도 승인 경로(Task A7)
-- outbox `ScopesLinked` + audit `scope.link` 기록
-- Step1(RED): "삭제된 채널에 링크 시도→err(NOT_FOUND)", "다른 프로젝트 related_to→err(CROSS_PROJECT_FORBIDDEN)", "정상 related_to→ok+엣지 1건" 테스트 3종
+- outbox `ScopesLinked` + audit `scope.link`(cross 플래그 포함) 기록
+- Step1(RED): "삭제 노드 링크→err(NOT_FOUND)", "**다른 프로젝트 related_to→ok + cross_project=true**", "다른 워크스페이스 confirm 없이→err(CROSS_WORKSPACE_CONFIRM_REQUIRED)", "confirm 있으면→ok + cross_workspace=true" 테스트 4종
 - Step2~4: 최소 구현→GREEN→commit
 
 ### Task A3: 엣지 해제(soft) 유스케이스
@@ -125,19 +127,24 @@ schema 파일: `packages/db-schema/src/schema/context-graph.ts`의 `contextEdges
 - **동작:** 스레드→topic→channel 해석 후, 그 **channel**에서 `relatedScopes` 1-hop 조회 → 각 연관 채널의 (a) 이름/경로, (b) 최신 아티팩트 head 제목·note, (c) 최근 요약 1줄을 모아 **컨텍스트 블록** 생성:
   ```
   [연관 채널 컨텍스트 — 참조용, 이 채널의 사실로 단정 금지]
-  · <프로젝트>/<채널명> (related_to): 최신 산출물 "…" / 요약 …
+  · <채널명> (related_to): 최신 산출물 "…" / 요약 …
+  · <다른프로젝트>/<채널명> (related_to · 다른 프로젝트): 최신 산출물 "…" / 요약 …
   ```
-- **예산 게이트:** 최대 3개 채널, 채널당 ≤400자. 초과 시 confidence·recency 순 컷.
+- **예산 게이트:** 최대 3개 채널, 채널당 ≤400자. 초과 시 confidence(감쇠 반영)·recency 순 컷 → cross-project는 이미 confidence×0.6이라 자연스럽게 뒤로 밀림.
+- **D3 라벨:** 엣지 `cross_project=true`면 라벨에 "· 다른 프로젝트" 명시(오염 방지).
 - Hermes run 프롬프트에 system-context로 prepend(기존 `hermes-runs-client.ts` 주입 지점 재사용).
 - **격리 라벨 필수:** 주입 블록에 "참조용/단정금지" 라벨 → 환각·교차오염 방지(consulting 스킬의 source-tier 원칙과 정합).
 - Step1(RED): "연관엣지 있는 스레드→컨텍스트 블록에 옆 채널명 포함", "엣지 없으면 블록 비어있음", "4개 연관→3개로 컷" 테스트.
 
-### Task A6: 태그 겹침 자동추론 잡 (classifier)
-- **Files:** Create `apps/api/src/spaces/infer-related.job.ts` + test · 트리거는 `ChannelCreated` outbox 소비 or 수동 CLI
-- **로직:** 새 채널 생성 시, 같은 프로젝트 내 다른 채널들과 `scope_tags` 교집합 계산 → 공유 태그 ≥2개(또는 가중 임계) 이면 `related_to/classifier` 엣지 자동 생성, `confidence = jaccard(tagsA, tagsB)`.
-- **안전장치:** 자동 엣지는 `origin='classifier'`로 구분 → 사용자가 언제든 unlink. 임계 미만은 생성 안 함(과연결 방지).
-- **왜 자동인가:** 주인님 요구 "새 채널 만들면 자동으로 연결". 단 트리 부모연결(이미 자동)과 별개로 **형제 연관도 자동 후보 생성**하되 confidence로 약하게.
-- Step1(RED): "태그 3개 공유 채널 2개→related 엣지 1건+confidence>0", "태그 0 공유→엣지 없음".
+### Task A6: 태그 겹침 자동추론 잡 (classifier) — D2/D3 반영
+- **Files:** Create `apps/api/src/spaces/infer-related.job.ts` + test · 트리거는 `ChannelCreated`/`ProjectCreated` outbox 소비 or 수동 CLI
+- **로직:** 새 채널/프로젝트 생성 시, **같은 워크스페이스 내** 다른 채널들과 `scope_tags` 교집합 계산 → 공유 태그 ≥2개면 `related_to/classifier` 엣지 자동 생성.
+  - `confidence = jaccard(tagsA, tagsB)` × **거리 계수**: same-project=1.0, **cross-project=0.6 감쇠**(§1.5 L1).
+  - cross-project 엣지엔 `cross_project=true` 플래그 → 주입 시 "다른 프로젝트" 라벨 트리거.
+- **범위:** 워크스페이스 경계 안에서만(D1). cross-workspace는 절대 자동 생성 안 함.
+- **안전장치:** 자동 엣지는 `origin='classifier'` → 사용자가 언제든 unlink. 임계 미만은 생성 안 함(과연결 방지). 뱃지로 "약한 추천" 표시.
+- **왜 자동인가:** 주인님 요구 "프로젝트 달라도 비슷한 것 자동 참조". 트리 부모연결(이미 자동)과 별개로 형제·타프로젝트 연관을 confidence 약하게 자동 후보 생성.
+- Step1(RED): "같은프로젝트 태그3공유→confidence 그대로", "**다른프로젝트 태그3공유→엣지 생성+cross_project=true+confidence×0.6**", "다른 워크스페이스→엣지 없음", "태그1공유→엣지 없음".
 
 ### Task A7: shares_memory_with 승인 경로 (고위험)
 - **Files:** `apps/api/src/spaces/request-memory-share.usecase.ts` (기존 approval inbox `approvalStatus` enum 재사용) + test
@@ -170,24 +177,30 @@ docker exec consulting-web-pg-1 sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_D
 - **과연결(graph noise):** 자동추론 임계가 낮으면 모든 채널이 서로 related. → jaccard 임계 + 상위 N 컷 + confidence 표시로 억제. 임계값은 config로 빼서 튜닝.
 - **컨텍스트 오염:** 옆 채널 사실을 이 채널 답으로 단정. → 주입 블록 "참조용/단정금지" 라벨 + source-tier 유지(consulting 스킬 원칙).
 - **토큰 비용:** 매 채팅마다 traverse+주입. → 예산 게이트(3채널×400자), 그리고 엣지 없으면 조회 스킵(대부분 채널은 엣지 0).
-- **프로젝트 경계 누수:** cross-project 링크 실수. → 기본 same-project 강제, cross는 명시 플래그+승인(§7).
+- **프로젝트 경계 누수:** cross-project는 **의도적으로 허용**(D2). 누수 리스크는 워크스페이스 경계에서 차단(D1) + cross-project 엣지 감쇠·"다른 프로젝트" 라벨(D3)로 관리.
+- **워크스페이스 경계 누수(치명):** cross-workspace 자동 생성이 실수로 열리면 기밀 유출. → classifier·주입은 워크스페이스 필터 하드코딩, cross-workspace는 D5 명시 confirm 경로에서만. 테스트로 "다른 WS→엣지 없음" 회귀 고정.
 
 ---
 
-## 7. 놓친 질문 · 고도화 제안 (주인님 요청)
+## 7. 결정 완료 · 남은 튜닝 · 고도화 (주인님 요청)
 
-### 놓치신 질문들 (설계에 반영 필요)
-1. **"연관"의 방향성 — 양방향인가?** related_to는 무향으로 취급했으나, "A가 B를 참조"(references)는 유향. UI에서 둘을 구분해 보여줄지 결정 필요.
-2. **프로젝트 간 참조는 허용?** 주인님은 "채널끼리 통합"이라 하셨는데 **프로젝트 경계까지 넘을지**는 안 정하셨다. 기본은 same-project, cross-project는 승인제로 설계(안전). → 결정 필요.
-3. **자동연결의 강도** — 새 채널이 형제 전부와 자동 related면 과연결. "태그 N개 이상 겹칠 때만"의 N을 몇으로? (기본 2 제안)
-4. **참조가 답변 품질에 미치는 영향 측정** — 주입이 실제로 도움됐는지 로깅(어떤 엣지가 실제 인용됐나)해서 confidence 재조정.
+### 결정 완료 (§0.5 D1~D5)
+- ✅ 경계=워크스페이스, cross-project 자동 허용, cross-workspace 차단(D5 예외 모달만)
+- ✅ 연결 세기=거리 등급화(same-project 강 / cross-project 약+라벨)
+- ✅ 자동연결 임계=태그 2개↑, 약한추천 뱃지
+
+### 남은 튜닝 파라미터 (config로 분리, 운영 중 조정)
+1. **방향성 UI 표현** — `related_to`(무향) vs `references`(유향 A→B)를 UI에서 화살표로 구분할지. (제안: 목록은 통합, 상세는 방향 표시)
+2. **cross-project 감쇠 계수** — 현재 0.6. 실사용 후 과/소 참조 보고 조정.
+3. **주입 상위 N / 채널당 글자수** — 현재 3채널 × 400자. 토큰비용 vs 유용성 균형.
+4. **참조 유용성 로깅** — 주입된 연관 채널이 실제 답변에 인용됐는지 기록 → confidence 사후 보정(G1로 연결).
 
 ### 고도화 로드맵 (선택)
-- **G1. 엣지 신뢰도 학습 루프:** 채팅에서 실제 참조된 연관 채널을 outbox로 기록 → classifier confidence를 사후 보정(useful/ignored). gbrain volunteer_context의 "volunteered vs used" 정밀도 패턴과 동형.
-- **G2. GBrain 연동:** 컨설팅 워크스페이스의 GBrain 페이지/그래프와 채널 엣지를 브릿지 → 채널 참조 시 GBrain traverse_graph까지 확장(단일자산·store 격리 원칙 유지).
+- **G1. 엣지 신뢰도 학습 루프:** 채팅에서 실제 참조된 연관 채널을 outbox로 기록 → classifier confidence를 사후 보정(useful/ignored). gbrain volunteer_context "volunteered vs used" 정밀도 패턴과 동형.
+- **G2. 임베딩 유사도 발견(강력):** 태그 겹침만으론 명시 메타에 갇힘. GBrain 임베딩 인프라 재활용해 **의미적 유사도**로 cross-project 연관을 발견(초기 태그 기반 → 이후 임베딩 확장). 단일자산·store 격리 원칙 유지.
 - **G3. 자동 요약 캐시:** 연관 채널 "최근 요약 1줄"을 매번 계산하지 말고 채널별 rolling summary를 outbox 소비로 캐시(주입 지연 제거).
-- **G4. 시각화:** 프로젝트 그래프 뷰(노드=채널, 엣지=related/references) — d3/react-flow. 주인님이 과거 요청한 "전체 컨설팅 레이어 다이어그램"의 라이브 버전.
-- **G5. 방향성 승계:** `derived_from`(채널 복제) 자동 생성 → 분기된 채널이 원본을 자동 참조.
+- **G4. 워크스페이스 지식그래프 뷰:** 노드=프로젝트/채널, 엣지=related/references, cross-project는 점선. d3/react-flow. 주인님이 원한 "전체 지식그래프 서로 참조" 시각화의 라이브 버전.
+- **G5. 방향성 승계:** `derived_from`(채널/프로젝트 복제) 자동 생성 → 분기된 노드가 원본을 자동 참조.
 
 ---
 

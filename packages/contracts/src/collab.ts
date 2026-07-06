@@ -242,3 +242,19 @@ export const UploadAttachmentResponseSchema = z
   .object({ id: UuidSchema })
   .strict();
 export type UploadAttachmentResponse = z.infer<typeof UploadAttachmentResponseSchema>;
+
+/** 축3: 파일 뷰어용 추출 텍스트 응답. document_extractions.textContent 노출. */
+export const AttachmentExtractionResponseSchema = z
+  .object({
+    attachmentId: UuidSchema,
+    fileName: z.string(),
+    mimeType: z.string(),
+    status: z.enum(['indexed', 'skipped', 'failed']).nullable(),
+    extractor: z.string().nullable(),
+    textContent: z.string(),
+    textChars: z.number().int().nonnegative(),
+    qualityScore: z.number().int().min(0).max(100),
+    warnings: z.array(z.string()).max(20),
+  })
+  .strict();
+export type AttachmentExtractionResponse = z.infer<typeof AttachmentExtractionResponseSchema>;

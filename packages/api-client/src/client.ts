@@ -64,12 +64,16 @@ import {
   type ListNotificationsResponse,
   UploadAttachmentResponseSchema,
   ListAttachmentsResponseSchema,
+  AttachmentExtractionResponseSchema,
   type UploadAttachmentRequest,
   type UploadAttachmentResponse,
   type ListAttachmentsResponse,
+  type AttachmentExtractionResponse,
   PushPublicKeyResponseSchema,
   type PushPublicKeyResponse,
   type PushSubscribeRequest,
+  ListLibrarySourcesResponseSchema,
+  type ListLibrarySourcesResponse,
 } from '@consulting/contracts';
 import { HttpCore, type ApiClientOptions } from './http-core.js';
 import { readChatSseStream } from './sse.js';
@@ -337,6 +341,31 @@ export class ConsultingApiClient {
   listAttachments(threadId: string): Promise<ListAttachmentsResponse> {
     return this.http.request(`/attachments/threads/${threadId}`, { method: 'GET' }, (d) =>
       ListAttachmentsResponseSchema.parse(d),
+    );
+  }
+
+  /** 축3: 추출 텍스트(파일 뷰어용). */
+  getAttachmentExtraction(id: string): Promise<AttachmentExtractionResponse> {
+    return this.http.request(`/attachments/${id}/extraction`, { method: 'GET' }, (d) =>
+      AttachmentExtractionResponseSchema.parse(d),
+    );
+  }
+
+  /** 축4: 자료실 집계 목록(워크스페이스/프로젝트 단위). */
+  listLibrarySources(
+    workspaceId: string,
+    opts?: { projectId?: string; type?: string; q?: string; cursor?: string },
+  ): Promise<ListLibrarySourcesResponse> {
+    const params = new URLSearchParams();
+    if (opts?.projectId) params.set('projectId', opts.projectId);
+    if (opts?.type) params.set('type', opts.type);
+    if (opts?.q) params.set('q', opts.q);
+    if (opts?.cursor) params.set('cursor', opts.cursor);
+    const qs = params.toString();
+    return this.http.request(
+      `/library/workspaces/${workspaceId}/sources${qs ? `?${qs}` : ''}`,
+      { method: 'GET' },
+      (d) => ListLibrarySourcesResponseSchema.parse(d),
     );
   }
 

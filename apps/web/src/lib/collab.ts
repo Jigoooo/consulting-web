@@ -108,6 +108,32 @@ export function useUploadAttachment(threadId: string | undefined) {
   });
 }
 
+/** 축3: 추출 텍스트(파일 뷰어 — HWP/HWPX/PDF 원문 표시). */
+export function useAttachmentExtraction(id: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['attachment-extraction', id ?? ''],
+    queryFn: () => api.getAttachmentExtraction(id!),
+    enabled: Boolean(id) && enabled,
+  });
+}
+
+/** 축4: 자료실 집계 목록(워크스페이스/프로젝트/종류/검색 필터). */
+export function useLibrarySources(
+  workspaceId: string | undefined,
+  opts?: { projectId?: string; type?: string; q?: string },
+) {
+  return useQuery({
+    queryKey: ['library-sources', workspaceId ?? '', opts?.projectId ?? 'all', opts?.type ?? 'all', opts?.q ?? ''],
+    queryFn: () =>
+      api.listLibrarySources(workspaceId!, {
+        ...(opts?.projectId ? { projectId: opts.projectId } : {}),
+        ...(opts?.type ? { type: opts.type } : {}),
+        ...(opts?.q ? { q: opts.q } : {}),
+      }),
+    enabled: Boolean(workspaceId),
+  });
+}
+
 /** Read a File into a base64 payload for uploadAttachment. */
 export function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {

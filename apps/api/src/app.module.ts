@@ -10,6 +10,7 @@ import { OrganizationModule } from './organization/organization.module.js';
 import { SpacesModule } from './spaces/spaces.module.js';
 import { ChatModule } from './chat/chat.module.js';
 import { ArtifactsModule } from './artifacts/artifacts.module.js';
+import { LibraryModule } from './library/library.module.js';
 import { QueuesModule } from './queues/queues.module.js';
 
 @Module({
@@ -25,6 +26,7 @@ import { QueuesModule } from './queues/queues.module.js';
     SpacesModule,
     ChatModule,
     ArtifactsModule,
+    LibraryModule,
     QueuesModule,
   ],
 })

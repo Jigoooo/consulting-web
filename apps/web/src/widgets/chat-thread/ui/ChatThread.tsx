@@ -12,7 +12,6 @@ import {
   useAttachments,
   useUploadAttachment,
   fileToBase64,
-  saveAttachment,
 } from '../../../lib/collab';
 import { ConvoMinimap, type MinimapEntry } from './ConvoMinimap';
 import { messageWindowKeys, useMessageWindow } from '../model/useMessageWindow';
@@ -26,6 +25,7 @@ import { Textarea } from '../../../shared/ui/input/Input';
 import { EmptyState, Spinner } from '../../../shared/ui/feedback/EmptyState';
 import { SkeletonMessage } from '../../../shared/ui/skeleton/Skeleton';
 import { useDelayedFlag } from '../../../shared/lib/useDelayedFlag';
+import { FileViewer, type FileViewerTarget } from '../../file-viewer/ui/FileViewer';
 import s from '../../thread-view/ui/ThreadView.module.css';
 
 interface LiveTurn {
@@ -88,6 +88,7 @@ export function ChatThread({ threadId, title, breadcrumb }: { threadId: string; 
   const tailScrollRequest = useTailScrollRequest();
   const attachments = useAttachments(threadId);
   const uploadAttachment = useUploadAttachment(threadId);
+  const [fileViewer, setFileViewer] = useState<FileViewerTarget | null>(null);
   const search = useSearchState();
 
   const [live, setLive] = useState<LiveTurn[]>([]);
@@ -622,8 +623,8 @@ export function ChatThread({ threadId, title, breadcrumb }: { threadId: string; 
                 key={f.id}
                 type="button"
                 className={s.fileChip}
-                title={`다운로드 (${fmtSize(f.sizeBytes)})`}
-                onClick={() => void saveAttachment(f.id, f.fileName).catch(() => toast('error', '다운로드에 실패했어요.'))}
+                title={`미리보기 (${fmtSize(f.sizeBytes)})`}
+                onClick={() => setFileViewer({ id: f.id, fileName: f.fileName, mimeType: f.mimeType })}
               >
                 <Icon name="paperclip" size="xs" decorative /> {f.fileName} <span className={s.fileSize}>{fmtSize(f.sizeBytes)}</span>
               </button>
@@ -728,6 +729,7 @@ export function ChatThread({ threadId, title, breadcrumb }: { threadId: string; 
           </div>
         </div>
       </div>
+      {fileViewer ? <FileViewer target={fileViewer} onClose={() => setFileViewer(null)} /> : null}
     </>
   );
 }
