@@ -4,6 +4,59 @@
 
 ---
 
+## 통합 로드맵 (2026-07-07 개정) — 구현 순서 한눈에
+
+> **주인님 지침: 축소 없이 구멍 13개 전부 해결하고 간다.** 로드맵을 먼저 확인·승인한 뒤 구현 착수. 아래 Phase는 위→아래 순서. 각 Phase는 이전 Phase의 게이트가 GREEN이어야 진입.
+
+```text
+┌─ P0. 재측정 게이트 ───────────────────────────────────────────┐
+│  pnpm test/typecheck/build + compose config + DB ghost probe   │
+│  + 런타임 프로브(H1 MISSING / H2 llm-fallback / H3 2s vs 5s)     │
+│  산출: baseline 리포트                                          │
+└───────────────────────────────────────────────────────────────┘
+        ↓
+┌─ P1. 인제스트·결정성 (H5·H9·H8·H10) — §0 평가셋의 선행조건 ────┐
+│  H5+H9  ingest → outbox/queue 이관, 컨트롤러 void 제거, 워커 소비 │
+│  H8     Gemini 임베딩 재시도 + 2단계(chunk 먼저 / embed 백필)     │
+│  H10    recorded-embedding 골든 픽스처(라이브 API 없이 결정적)    │
+│  게이트: turn 유실 0 · 결정적 재현 · RED→GREEN                    │
+└───────────────────────────────────────────────────────────────┘
+        ↓
+┌─ P2. 평가 기반 §0 ────────────────────────────────────────────┐
+│  40+문항 질문셋 · hit@k/precision/groundedness/citation/latency  │
+│  baseline run 저장(P1 픽스처로 재현) · pnpm smoke 결정적          │
+│  게이트: 이후 §1~7의 회귀 gate로 동작                            │
+└───────────────────────────────────────────────────────────────┘
+        ↓
+┌─ P3. 검색 품질 §1~§3 ─────────────────────────────────────────┐
+│  §1  Hybrid RRF+reranker 복원                                   │
+│      선행: H1(이미지에 numpy+onnxruntime 추가·빌드승인) ·         │
+│            H2(cross-encoder 관측) · H3(타임아웃 설정화) ·         │
+│            H7(신호 normalize) · H13(recall status 관측)          │
+│  §2  CRAG/Self-RAG evaluator  ← 선행 H4(다중 topic fan-out)      │
+│  §3  Citation/evidence post-check (CiteFix류)                   │
+│  → 재평가 (P2 harness로 §1~3 전후 diff)                          │
+└───────────────────────────────────────────────────────────────┘
+        ↓
+┌─ P4. 심화 §4~§7 ──────────────────────────────────────────────┐
+│  §4  RAGAS/STaRK 평가셋 고도화                                   │
+│  §5  RAPTOR 계층 요약        ← 선행 H6(SoT write additive)       │
+│  §6  Leiden community        ← 선행 H6 + H11(graph edge 백필) +   │
+│                                 leidenalg/igraph 의존성 승인      │
+│  §7  ToG-2 KG×Text deep mode ← 선행 H11 + H3(deep 예산 분리)     │
+└───────────────────────────────────────────────────────────────┘
+
+전 구간: H12 Gemini 키/비용/레이트/degradation 정책 상시 적용.
+
+★ 사전 승인 필요(빌드/의존성):
+   - H1  API 이미지에 numpy + onnxruntime (+옵션 google-generativeai) → 이미지 크기 증가
+   - H6  §6용 leidenalg / igraph (또는 대체 community detection lib)
+```
+
+상세 구멍 정의는 아래 **§선결 구멍 (P-1)** 표, 각 고도화 상세는 **§구현 순서**를 본다.
+
+---
+
 ## 새 세션 프롬프트
 
 주인님 요청: `consulting-web`의 기존 GraphRAG bridge/lifecycle 안정화 위에 **7개 고급 고도화**를 순서대로 진행해줘. 단, 구현 전에 반드시 현 상태 재측정과 평가셋/품질게이트부터 만들고, 새 store/pgvector를 먼저 만들지 말고 기존 `/home/jigoo/.hermes/workspace/consulting/db/consulting.db` GraphRAG 자산을 우선 활용해.
@@ -87,24 +140,43 @@ docker exec consulting-web-api-1 sh -lc 'cd /legacy/consulting && s=$(date +%s.%
 
 ## 선결 구멍 (P-1) — 7개 고도화 착수 전 반드시 닫는다
 
-> 2026-07-07 실물 코드/DB/컨테이너 교차검증에서 발견. §0 평가셋을 잠그기 **전에** H5(인제스트 유실)를 닫아야 baseline이 새는 코퍼스를 재지 않는다. H1~H3은 §1 착수 직전에, H4는 §2 착수 직전에, H6는 §5·§6 착수 직전에 닫는다. 각 구멍은 착수 게이트다.
+> 2026-07-07 실물 코드/DB/컨테이너 교차검증에서 발견. **주인님 지침(2026-07-07): 축소 없이 13개 구멍 전부 해결하고 간다.** §0 평가셋을 잠그기 **전에** H5·H8·H9·H10(인제스트 유실·결정성)을 닫아야 baseline이 새는 코퍼스를 재지 않는다. H1~H3·H7·H13은 §1 착수 직전에, H4는 §2 착수 직전에, H6·H11은 §5·§6·§7 착수 직전에 닫는다. 각 구멍은 착수 게이트다.
 
 | ID | 구멍 | 실측 근거 | 닫는 시점 | 필요 조치 |
 |---|---|---|---|---|
 | **H5** | GraphRAG ingest가 fire-and-forget `try/catch{}`로 실패를 삼킴 → web 대화 turn 유실 | `consulting-web-ingest.service.ts:46` 빈 catch, `spawn` best-effort | **§0 이전** | 이미 있는 `outbox-relay.service.ts` + `queues.module.ts` 재사용해 ingest를 outbox/queue로 이관, 실패 시 재시도·dead-letter. RED 테스트: ingest 스크립트 실패 시 이벤트가 유실되지 않고 재시도 큐에 남는다. |
-| **H1** | API 컨테이너에 dense/rerank 런타임 의존성 전무 | `docker exec ... import numpy/onnxruntime/sentence_transformers/google.generativeai` → **전부 MISSING** | **§1 이전** | §1 "rerank 복원"은 플래그 문제가 아니라 **런타임 부재**. onnx 모델(570MB)은 마운트로 보임. numpy+onnxruntime를 API 이미지에 추가할지 결정 → **이미지 크기·빌드 승인 항목**(주인님 사전 승인 필요). 추가 안 하면 §1은 "RRF 정상화 + 신호 노출"까지만 범위. |
-| **H2** | `--rerank` 켜도 프로덕션에서 cross-encoder 미작동, `rerank_method=llm`으로 조용히 fallback | `--rerank` 실측 결과 `rerank_method=llm` (H1 의존성 부재 때문) | **§1 이전** | §1 완료 조건에 "`rerank_method`가 목표값(cross-encoder 또는 명시적 rrf)으로 **관측된다**"를 추가. 조용한 fallback을 harness가 실패로 잡게 한다. |
-| **H3** | query 임베딩이 Gemini API 실시간 urllib 왕복 → bridge 5초 타임아웃 안에서 flaky, 초과 시 조용히 `empty()`(근거 0건) | recall ≈2s(정상 네트워크), bridge `timeout: 5_000` 하드코딩(`consulting-graphrag-bridge.service.ts:59`) | **§1 이전** | 타임아웃을 설정화, 채팅경로 예산과 §5·6·7 deep-mode 예산을 **분리**. harness가 latency를 경로별로 분리 측정하고 `empty()` 폴백을 "근거 없음"과 구분해 로깅. |
-| **H4** | `bridge.recall`이 단일 `topicSlug` 스코프 전용 → cross-project fan-out 불가 | `recall(input: { topicSlug ... })` 시그니처, CLI도 `--topic` 단일 | **§2 이전** | §2 ambiguous→cross-project 확장(workspace 내 ×0.6 감쇠)은 workspace→projects→topics fan-out recall이 필요. CLI/bridge에 다중 topic 스코프 경로를 먼저 설계. 없으면 §2의 cross-project 분기는 아키텍처 공백. |
+| **H9** | 컨트롤러가 ingest를 `void`로 호출(await 안 됨) + 서비스 빈 catch = **이중 삼킴**, turn당 python 프로세스 fork | `chat-stream.controller.ts:245` `void this.webIngest.ingestCompletedTurn(...)` | **§0 이전** | H5 outbox 이관과 함께 처리: 컨트롤러는 outbox row만 트랜잭션 커밋, 실제 인제스트는 워커가 소비. 동시성 상한·프로세스 재사용 고려. |
+| **H8** | web ingest가 turn마다 Gemini 동기 임베딩(`E.embed_one`, 60s 타임아웃) → 인제스트 신뢰성이 외부 API에 결합 | `ingest_web_dialogue.py:117` `E.embed_one(context_text)` | **§0 이전** | 워커 내 재시도+backoff. `--no-embed` 경로로 우선 저장 후 임베딩 백필하는 2단계 옵션 설계(임베딩 실패해도 chunk/FTS는 남게). vector parity 회귀 테스트. |
+| **H10** | 오프라인 임베딩 캐시/픽스처 전무 → §0 평가 harness가 라이브 Gemini 의존(비결정적·과금·flaky) | `embeddings.py`에 cache/fixture/record 코드 없음 | **§0 이전(핵심)** | recorded-embedding golden 픽스처 레이어 구축(질의→벡터 스냅샷). CI/pnpm smoke는 라이브 API 없이 결정적으로 돈다. baseline run도 이 픽스처로 재현. |
+| **H1** | API 컨테이너에 dense/rerank 런타임 의존성 전무 → **결정: 이미지에 의존성 추가(축소 없음)** | `import numpy/onnxruntime/sentence_transformers/google.generativeai` 전부 MISSING. 완화: 호스트 47GB RAM/26GB avail·컨테이너 메모리 무제한 → 570MB onnx 로드 OOM 위험 낮음 | **§1 이전** | API 이미지에 `numpy`+`onnxruntime`(+필요 시 google-generativeai) 추가. onnx 모델(570MB)은 마운트 유지. **빌드 승인 항목**: 이미지 크기 증가. reranker는 lazy-load+finally-unload라 상주 안 함. 동시 recall 시 N×570MB이므로 rerank 경로 동시성 상한 설정. |
+| **H2** | `--rerank` 켜도 프로덕션에서 cross-encoder 미작동, `rerank_method=llm`으로 조용히 fallback | `--rerank` 실측 결과 `rerank_method=llm` (H1 의존성 부재 때문) | **§1 이전** | H1 해결로 실제 cross-encoder 작동. §1 완료 조건에 "`rerank_method=cross-encoder`가 **관측된다**" 추가. 조용한 fallback을 harness가 실패로 잡게 한다. |
+| **H3** | query 임베딩이 Gemini API 실시간 urllib 왕복 → bridge 5초 타임아웃 안에서 flaky, 초과 시 조용히 `empty()`(근거 0건) | recall ≈2s(정상 네트워크), bridge `timeout: 5_000` 하드코딩(`consulting-graphrag-bridge.service.ts:59`) | **§1 이전** | 타임아웃을 설정화, 채팅경로 예산과 §5·6·7 deep-mode 예산을 **분리**. harness가 latency를 경로별로 분리 측정하고 `empty()` 폴백을 "근거 없음"과 구분해 로깅(H13과 함께). |
+| **H13** | bridge가 어떤 에러(타임아웃/JSON깨짐/키부재)든 `empty()` → "근거 0건"과 "recall 실패"를 구분 못 함(관측성 부재) | `consulting-graphrag-bridge.service.ts:70-72,90-98` catch→empty | **§1 이전** | recall 결과에 `status`(ok/empty/timeout/error) + 구조화 로그/메트릭. H2 silent fallback·H3 타임아웃이 이 로그로 보이게. harness가 이 status를 회귀 신호로 사용. |
+| **H7** | recall 출력이 상위 `signals` count만 노출, hit별 dense/lexical/graph subscore는 없음. `graph=0` 관측 | recall json `signals` 블록엔 count만, hit엔 `fused_score/score`만 | **§1 이전** | §1 step3 "신호 normalize"는 legacy `dialogue_memory/search.py` **출력 수정**(=cross-workspace 자산 편집). "legacy CLI 확장 vs bridge 파생" 택1 명시. `graph=0` 원인은 H11로 규명. |
+| **H4** | `bridge.recall`이 단일 `topicSlug` 스코프 전용 → cross-project fan-out 불가 | `recall(input: { topicSlug ... })` 시그니처, CLI도 `--topic` 단일 | **§2 이전** | §2 ambiguous→cross-project 확장(workspace 내 ×0.6 감쇠)은 workspace→projects→topics fan-out recall 필요. CLI/bridge에 다중 topic 스코프 경로 먼저 설계. |
+| **H11** | graph 신호 substrate 빈약 — changwon `dialogue_edges` 그래프쿼리 **0건**, `cross_topic_links` 전역 **0건** (단 `claim_evidence_links=137` 존재) | recall `graph:0`·`file_graph:0`, DB row count 실측 | **§6·§7 이전(§1 규명)** | §1에서 `graph=0` 원인 진단(edge 부재 vs 매칭 실패). §6 community·§7 ToG-2는 graph edge에 의존하므로 착수 전 dialogue/cross-topic edge 감사·백필(additive) 필요. 없으면 빈 신호 위에 구축. |
 | **H6** | §5(RAPTOR)·§6(Leiden)이 SoT(`consulting.db`)에 WRITE | 요약/커뮤니티 노드를 legacy DB에 신규 적재 | **§5·§6 이전** | (a) additive-only·멱등·원문 `chunk_id` 추적·`source` 라벨 필수(H5 인제스트와 동급 위험). (b) Leiden은 `leidenalg`/`igraph` 등 **신규 의존성** → 착수 전 별도 빌드 승인. |
-| H7 | recall 출력이 상위 `signals` count(semantic/lexical/graph…)만 노출, hit별 dense/lexical/graph subscore는 없음. `graph=0` 관측 | recall json의 `signals` 블록엔 count만, hit엔 `fused_score/score`만 | §1 범위 명확화 | §1 step3 "신호 normalize"는 legacy `dialogue_memory/search.py` **출력 수정**(=cross-workspace 자산 편집)이 필요. "legacy CLI 확장 vs bridge에서 파생" 중 택1을 §1 안에 명시하고, `graph=0`이 진짜 그래프 신호 부재인지 먼저 규명. |
+| **H12** | Gemini가 recall+ingest+eval 공통 **하드 의존**(키/비용/레이트) | `embeddings.py`가 모든 임베딩을 Gemini로, 키는 `/legacy/hermes.env`(존재 확인) | **전 구간(§0에서 정책화)** | 키-존재 프로브(완료), eval 반복 실행(40문항×N)용 비용/레이트 예산 가드, 키/네트워크 부재 시 graceful degradation 정책 문서화. |
 
 **P-1 완료 게이트:**
 
 ```text
-H5 outbox/queue 이관 + RED→GREEN, 유실 0 증명 → 그 다음에만 §0 평가 baseline 저장
-H1/H2/H3 프로브 baseline 문서화 + §1 범위/승인 확정
-H4/H6 설계 스케치 + 필요 의존성 승인 목록 분리
+[§0 이전 · 인제스트·결정성]
+  H5+H9 outbox/queue 이관 (컨트롤러 void 제거, 트랜잭션 outbox, 워커 소비)
+  H8 임베딩 재시도 + 2단계(chunk 먼저/embed 백필) 경로
+  H10 recorded-embedding 골든 픽스처 → 그 다음에만 §0 baseline 저장(결정적)
+  → 유실 0 · 결정적 재현 증명
+
+[§1 이전 · 하이브리드/리랭커/관측성]
+  H1 이미지 의존성 추가(빌드 승인) + rerank 동시성 상한
+  H2 rerank_method=cross-encoder 관측
+  H3 타임아웃 설정화 + 경로별 예산 분리
+  H13 recall status(ok/empty/timeout/error) 구조화
+  H7 신호 normalize 범위(legacy 수정 vs bridge 파생) 확정
+
+[§2 이전]  H4 다중 topic fan-out recall 설계
+[§6·§7 이전]  H11 graph edge 감사·백필,  H6 SoT write additive·의존성 승인
+[전 구간]  H12 Gemini 비용/레이트/degradation 정책
 ```
 
 ---
@@ -148,7 +220,7 @@ CI 또는 pnpm test에서 최소 smoke 실행 가능
 
 ### 1. Hybrid RRF + reranker 복원
 
-> **착수 게이트: P-1의 H1·H2·H3·H7을 먼저 닫는다.** rerank는 플래그가 아니라 런타임(numpy/onnxruntime) 부재 문제이고, 신호 normalize는 legacy `search.py` 출력 수정이 필요하다.
+> **착수 게이트: P-1의 H1·H2·H3·H7·H13을 먼저 닫는다.** rerank는 플래그가 아니라 런타임(numpy/onnxruntime) 부재 문제(H1, 이미지 추가로 해결)이고, cross-encoder는 지금 조용히 llm으로 fallback(H2)한다. 신호 normalize는 legacy `search.py` 출력 수정이 필요(H7)하며, recall 실패/타임아웃/빈결과를 구분하는 status 관측(H13)이 함께 들어가야 harness가 회귀를 잡는다.
 
 목표: 기존 consulting GraphRAG의 장점인 vector + FTS + graph + rerank를 web bridge에서도 제대로 사용.
 
@@ -269,7 +341,7 @@ summary-only hallucination 방지를 위해 원문 evidence 연결 확인
 
 ### 6. Microsoft GraphRAG Leiden community summary
 
-> **착수 게이트: P-1의 H6을 먼저 닫는다.** community report도 SoT에 WRITE(additive-only·멱등·label). 추가로 Leiden(`leidenalg`/`igraph`)은 **신규 의존성** → 착수 전 별도 빌드 승인 필요.
+> **착수 게이트: P-1의 H6·H11을 먼저 닫는다.** community report도 SoT에 WRITE(additive-only·멱등·label). Leiden(`leidenalg`/`igraph`)은 **신규 의존성** → 착수 전 별도 빌드 승인. 또한 community detection은 graph edge에 의존하는데 changwon `dialogue_edges` 그래프신호가 0건(H11)이므로, edge 감사·백필이 선행돼야 빈 그래프 위에 커뮤니티를 만들지 않는다.
 
 목표: 프로젝트/컨설팅 전체의 구조적 이슈, recurring theme, global question에 답변.
 
@@ -295,6 +367,8 @@ summary-only hallucination 방지를 위해 원문 evidence 연결 확인
 ---
 
 ### 7. ToG-2식 KG×Text iterative deep mode
+
+> **착수 게이트: P-1의 H11·H3을 먼저 닫는다.** graph hop은 dialogue/cross-topic edge에 의존하는데 현재 그래프신호 0건(H11) → edge 감사·백필 선행 필수. round loop는 다회 recall을 하므로 채팅경로와 분리된 deep-mode latency 예산(H3)이 필요하다.
 
 목표: deep research 질문에서 graph hop과 text retrieval을 반복하며 깊게 탐색.
 
