@@ -720,107 +720,105 @@ function ContextPanel({ collapsed, onToggle }: { collapsed: boolean; onToggle: (
       >
         <Icon name={collapsed ? 'chevron-left' : 'chevron-right'} size="xs" decorative />
       </button>
-      {collapsed ? null : (
-      <>
-      {activeThread ? (
-        <div className={s.ctxTabs}>
-          <button
-            type="button"
-            className={`${s.ctxTab} ${tab === 'evidence' ? s.ctxTabOn : ''}`}
-            onClick={() => setTab('evidence')}
-          >
-            근거
-          </button>
-          {hasSearch ? (
+      <div className={`${s.contextContent} ${collapsed ? s.contextContentHidden : ''}`} aria-hidden={collapsed} inert={collapsed ? true : undefined}>
+        {activeThread ? (
+          <div className={s.ctxTabs}>
             <button
               type="button"
-              className={`${s.ctxTab} ${tab === 'search' ? s.ctxTabOn : ''}`}
-              onClick={() => setTab('search')}
+              className={`${s.ctxTab} ${tab === 'evidence' ? s.ctxTabOn : ''}`}
+              onClick={() => setTab('evidence')}
             >
-              검색 {searchCount}
+              근거
             </button>
-          ) : null}
-          <button
-            type="button"
-            className={`${s.ctxTab} ${tab === 'members' ? s.ctxTabOn : ''}`}
-            onClick={() => setTab('members')}
-          >
-            멤버
-          </button>
-        </div>
-      ) : null}
-
-      {tab === 'search' && hasSearch ? (
-        <div className={s.ctxSection}>
-          <div className={s.ctxTitle}>검색 결과</div>
-          <SearchResultsPanel onJump={(index) => searchStore.focusIndex(index)} />
-        </div>
-      ) : null}
-
-      {tab === 'evidence' && activeThread ? (
-        <div className={s.ctxSection}>
-          <div className={s.ctxTitle}>근거 자료</div>
-          <EvidencePanel threadId={activeThread} {...(activeProjectId ? { projectId: activeProjectId } : {})} />
-        </div>
-      ) : tab === 'members' || !activeThread ? (
-        <>
-          <div className={s.ctxSection}>
-            <div className={s.ctxTitle}>멤버 {members?.members.length ? `· ${members.members.length}` : ''}</div>
-            {members?.members.length ? (
-              members.members.map((m) => (
-                <div key={m.userId} className={s.member}>
-                  <div className={s.memberAv}>{m.displayName.slice(0, 1)}</div>
-                  <div className={s.memberName}>{m.displayName}</div>
-                  <div className={s.memberRole}>{roleLabel[m.role] ?? m.role}</div>
-                </div>
-              ))
-            ) : (
-              <div className={s.ctxHint}>아직 멤버가 없어요. 아래에서 초대 링크를 만들어 보세요.</div>
-            )}
-          </div>
-
-          <div className={s.ctxSection}>
-            <div className={s.ctxTitle}>초대</div>
-            <div
-              className={s.roleSeg}
-              role="radiogroup"
-              aria-label="초대 권한 선택"
-              style={{ '--role-index': inviteRoleIndex } as CSSProperties}
-            >
-              <span className={s.roleSegThumb} aria-hidden="true" />
-          {(['editor', 'viewer', 'admin'] as const).map((r) => (
+            {hasSearch ? (
+              <button
+                type="button"
+                className={`${s.ctxTab} ${tab === 'search' ? s.ctxTabOn : ''}`}
+                onClick={() => setTab('search')}
+              >
+                검색 {searchCount}
+              </button>
+            ) : null}
             <button
-              key={r}
               type="button"
-              role="radio"
-              aria-checked={inviteRole === r}
-              className={`${s.roleSegItem} ${inviteRole === r ? s.roleSegOn : ''}`}
-              onClick={() => setInviteRole(r)}
+              className={`${s.ctxTab} ${tab === 'members' ? s.ctxTabOn : ''}`}
+              onClick={() => setTab('members')}
             >
-              {roleLabel[r]}
+              멤버
             </button>
-          ))}
-        </div>
-        <Button type="button" variant="primary" size="sm" className={s.inviteBtn} disabled={inviteBusy || !selected} onClick={() => void createInvite()}>
-          {inviteBusy ? '생성 중…' : '초대 링크 생성'}
-        </Button>
-        {inviteLink ? (
-          <div
-            className={s.inviteLink}
-            title="클릭하여 복사"
-            onClick={() => {
-              void navigator.clipboard.writeText(inviteLink).then(() => toast('success', '복사했어요.'));
-            }}
-          >
-            {inviteLink}
           </div>
         ) : null}
-        <div className={s.ctxHint}>링크를 받은 사람은 가입/로그인 후 이 워크스페이스에 참여합니다. 7일 후 만료.</div>
+
+        {tab === 'search' && hasSearch ? (
+          <div className={s.ctxSection}>
+            <div className={s.ctxTitle}>검색 결과</div>
+            <SearchResultsPanel onJump={(index) => searchStore.focusIndex(index)} />
           </div>
-        </>
-      ) : null}
-      </>
-      )}
+        ) : null}
+
+        {tab === 'evidence' && activeThread ? (
+          <div className={s.ctxSection}>
+            <div className={s.ctxTitle}>근거 자료</div>
+            <EvidencePanel threadId={activeThread} {...(activeProjectId ? { projectId: activeProjectId } : {})} />
+          </div>
+        ) : tab === 'members' || !activeThread ? (
+          <>
+            <div className={s.ctxSection}>
+              <div className={s.ctxTitle}>멤버 {members?.members.length ? `· ${members.members.length}` : ''}</div>
+              {members?.members.length ? (
+                members.members.map((m) => (
+                  <div key={m.userId} className={s.member}>
+                    <div className={s.memberAv}>{m.displayName.slice(0, 1)}</div>
+                    <div className={s.memberName}>{m.displayName}</div>
+                    <div className={s.memberRole}>{roleLabel[m.role] ?? m.role}</div>
+                  </div>
+                ))
+              ) : (
+                <div className={s.ctxHint}>아직 멤버가 없어요. 아래에서 초대 링크를 만들어 보세요.</div>
+              )}
+            </div>
+
+            <div className={s.ctxSection}>
+              <div className={s.ctxTitle}>초대</div>
+              <div
+                className={s.roleSeg}
+                role="radiogroup"
+                aria-label="초대 권한 선택"
+                style={{ '--role-index': inviteRoleIndex } as CSSProperties}
+              >
+                <span className={s.roleSegThumb} aria-hidden="true" />
+                {(['editor', 'viewer', 'admin'] as const).map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    role="radio"
+                    aria-checked={inviteRole === r}
+                    className={`${s.roleSegItem} ${inviteRole === r ? s.roleSegOn : ''}`}
+                    onClick={() => setInviteRole(r)}
+                  >
+                    {roleLabel[r]}
+                  </button>
+                ))}
+              </div>
+              <Button type="button" variant="primary" size="sm" className={s.inviteBtn} disabled={inviteBusy || !selected} onClick={() => void createInvite()}>
+                {inviteBusy ? '생성 중…' : '초대 링크 생성'}
+              </Button>
+              {inviteLink ? (
+                <div
+                  className={s.inviteLink}
+                  title="클릭하여 복사"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(inviteLink).then(() => toast('success', '복사했어요.'));
+                  }}
+                >
+                  {inviteLink}
+                </div>
+              ) : null}
+              <div className={s.ctxHint}>링크를 받은 사람은 가입/로그인 후 이 워크스페이스에 참여합니다. 7일 후 만료.</div>
+            </div>
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }

@@ -1,11 +1,16 @@
 .app {
+  --context-open-width: var(--w-context);
+  --context-closed-width: 42px;
+  --chat-lane-offset: 0px;
   display: grid;
-  grid-template-columns: var(--w-rail) var(--w-sidebar) minmax(560px, 1fr) var(--w-context);
+  grid-template-columns: var(--w-rail) var(--w-sidebar) minmax(560px, 1fr) var(--context-open-width);
   height: 100vh;
   overflow: hidden;
+  transition: grid-template-columns 260ms var(--ease-out);
 }
 .appContextCollapsed {
-  grid-template-columns: var(--w-rail) var(--w-sidebar) minmax(560px, 1fr) 42px;
+  --chat-lane-offset: calc((var(--context-closed-width) - var(--context-open-width)) / 2);
+  grid-template-columns: var(--w-rail) var(--w-sidebar) minmax(560px, 1fr) var(--context-closed-width);
 }
 
 /* RAIL */
@@ -163,6 +168,7 @@
 .center {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   overflow: hidden;
   background: var(--bg-canvas);
 }
@@ -229,6 +235,7 @@
   border-right: 1px solid var(--border-whisper);
   display: flex;
   flex-direction: column;
+  min-width: 0;
   overflow-y: auto;
 }
 .wsHead {
@@ -414,7 +421,9 @@
   border-left: 1px solid var(--border-whisper);
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
+  min-width: 0;
+  overflow: hidden auto;
+  transition: background-color 180ms var(--ease-out), border-color 180ms var(--ease-out);
 }
 .contextCollapsed {
   align-items: center;
@@ -437,6 +446,7 @@
   color: var(--text-muted);
   cursor: pointer;
   box-shadow: var(--shadow-ring);
+  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out), transform 220ms var(--ease-out);
 }
 .contextToggle:hover {
   color: var(--accent);
@@ -445,6 +455,19 @@
 .contextCollapsed .contextToggle {
   align-self: center;
   margin: 10px 0;
+}
+.contextContent {
+  width: var(--context-open-width);
+  min-width: var(--context-open-width);
+  opacity: 1;
+  transform: translateX(0);
+  transition: opacity 180ms var(--ease-out), transform 240ms var(--ease-out);
+}
+.contextContentHidden {
+  opacity: 0;
+  transform: translateX(10px);
+  pointer-events: none;
+  user-select: none;
 }
 /* 2-A / B4: evidence/member/search tabs — underline-indicator style */
 .ctxTabs {
@@ -1268,6 +1291,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .app,
+  .context,
+  .contextToggle,
+  .contextContent,
   .projRow,
   .projToggle,
   .channelListShell,
@@ -1284,9 +1311,11 @@
 /* responsive: collapse context then sidebar */
 @media (max-width: 1120px) {
   .app {
+    --chat-lane-offset: 0px;
     grid-template-columns: var(--w-rail) var(--w-sidebar) minmax(480px, 1fr);
   }
   .appContextCollapsed {
+    --chat-lane-offset: 0px;
     grid-template-columns: var(--w-rail) var(--w-sidebar) minmax(480px, 1fr);
   }
   .context {
