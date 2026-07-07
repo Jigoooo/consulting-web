@@ -22,6 +22,8 @@ import {
   CreateContextEdgeResponseSchema,
   ListContextEdgesRequestSchema,
   ListContextEdgesResponseSchema,
+  ScopeProfileResponseSchema,
+  UpdateScopeProfileRequestSchema,
   ArchivedScopeKindSchema,
   OkResponseSchema,
 } from '@consulting/contracts';
@@ -36,6 +38,7 @@ import { SpaceAccessService, type SpaceAccess } from './space-access.service.js'
 import { SpaceReadService } from './space-read.service.js';
 import { RestoreParentNotActiveError, SpaceMutateService } from './space-mutate.service.js';
 import { ContextGraphService, type ContextGraphRelatedScope, type ContextGraphScopeType } from './context-graph.service.js';
+import { ScopeProfileService } from './scope-profile.service.js';
 
 @Controller('spaces')
 @UseGuards(AccessTokenGuard)
@@ -45,6 +48,7 @@ export class SpacesController {
     @Inject(SpaceReadService) private readonly reads: SpaceReadService,
     @Inject(SpaceMutateService) private readonly mutate: SpaceMutateService,
     @Inject(ContextGraphService) private readonly contextGraph: ContextGraphService,
+    @Inject(ScopeProfileService) private readonly scopeProfiles: ScopeProfileService,
     @Inject(CreateProjectUseCase) private readonly createProject: CreateProjectUseCase,
     @Inject(CreateWorkspaceUseCase) private readonly createWorkspace: CreateWorkspaceUseCase,
     @Inject(CreateChannelUseCase) private readonly createChannel: CreateChannelUseCase,
@@ -112,6 +116,42 @@ export class SpacesController {
     const detail = await this.mutate.threadDetail(threadId);
     if (!detail) throw new NotFoundException({ code: 'NOT_FOUND', message: 'thread not found' });
     return parseResponse(ThreadDetailResponseSchema, detail);
+  }
+
+  @Get('channels/:id/profile')
+  async channelProfile(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    await this.requireNodeMember(requireAuthUserId(req), 'channel', id);
+    const result = await this.scopeProfiles.getProfile('channel', id);
+    if (!result.ok) return throwDomainError(result.error);
+    return parseResponse(ScopeProfileResponseSchema, result.value);
+  }
+
+  @Patch('channels/:id/profile')
+  async updateChannelProfile(@Param('id') id: string, @Body() body: unknown, @Req() req: AuthenticatedRequest) {
+    const patch = parseBody(UpdateScopeProfileRequestSchema, body);
+    const userId = requireAuthUserId(req);
+    await this.requireNodeMember(userId, 'channel', id);
+    const result = await this.scopeProfiles.updateProfile('channel', id, { actorUserId: userId, patch });
+    if (!result.ok) return throwDomainError(result.error);
+    return parseResponse(ScopeProfileResponseSchema, result.value);
+  }
+
+  @Get('topics/:id/profile')
+  async topicProfile(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    await this.requireNodeMember(requireAuthUserId(req), 'topic', id);
+    const result = await this.scopeProfiles.getProfile('topic', id);
+    if (!result.ok) return throwDomainError(result.error);
+    return parseResponse(ScopeProfileResponseSchema, result.value);
+  }
+
+  @Patch('topics/:id/profile')
+  async updateTopicProfile(@Param('id') id: string, @Body() body: unknown, @Req() req: AuthenticatedRequest) {
+    const patch = parseBody(UpdateScopeProfileRequestSchema, body);
+    const userId = requireAuthUserId(req);
+    await this.requireNodeMember(userId, 'topic', id);
+    const result = await this.scopeProfiles.updateProfile('topic', id, { actorUserId: userId, patch });
+    if (!result.ok) return throwDomainError(result.error);
+    return parseResponse(ScopeProfileResponseSchema, result.value);
   }
 
   // --- rename (N-4) ---

@@ -49,6 +49,7 @@ import {
   ListMembersResponseSchema,
   CreateContextEdgeResponseSchema,
   ListContextEdgesResponseSchema,
+  ScopeProfileResponseSchema,
   OkResponseSchema,
   type ListWorkspacesResponse,
   type ArchivedScopeKind,
@@ -66,6 +67,8 @@ import {
   type CreateContextEdgeResponse,
   type ListContextEdgesRequest,
   type ListContextEdgesResponse,
+  type ScopeProfileResponse,
+  type UpdateScopeProfileRequest,
   type OkResponse,
   ListEvidenceResponseSchema,
   EvidenceDecisionSummaryResponseSchema,
@@ -231,6 +234,30 @@ export class ConsultingApiClient {
     if (query.limit !== undefined) params.set('limit', String(query.limit));
     return this.http.request(`/spaces/context-edges?${params.toString()}`, { method: 'GET' }, (d) =>
       ListContextEdgesResponseSchema.parse(d),
+    );
+  }
+
+  getChannelProfile(channelId: string): Promise<ScopeProfileResponse> {
+    return this.http.request(`/spaces/channels/${channelId}/profile`, { method: 'GET' }, (d) =>
+      ScopeProfileResponseSchema.parse(d),
+    );
+  }
+
+  updateChannelProfile(channelId: string, body: UpdateScopeProfileRequest): Promise<ScopeProfileResponse> {
+    return this.http.request(`/spaces/channels/${channelId}/profile`, { method: 'PATCH', body }, (d) =>
+      ScopeProfileResponseSchema.parse(d),
+    );
+  }
+
+  getTopicProfile(topicId: string): Promise<ScopeProfileResponse> {
+    return this.http.request(`/spaces/topics/${topicId}/profile`, { method: 'GET' }, (d) =>
+      ScopeProfileResponseSchema.parse(d),
+    );
+  }
+
+  updateTopicProfile(topicId: string, body: UpdateScopeProfileRequest): Promise<ScopeProfileResponse> {
+    return this.http.request(`/spaces/topics/${topicId}/profile`, { method: 'PATCH', body }, (d) =>
+      ScopeProfileResponseSchema.parse(d),
     );
   }
 

@@ -85,7 +85,7 @@
   font-size: 12.5px;
 }
 .threadSearchInput::placeholder {
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 .threadSearchBtn {
   border: 0;
@@ -104,6 +104,22 @@
 .threadSearchBtn:disabled {
   opacity: 0.55;
   cursor: default;
+}
+.threadSearchClear {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.threadSearchClear:hover {
+  background: var(--bg-warm);
+  color: var(--text-primary);
 }
 .searchNav {
   display: flex;
@@ -471,6 +487,7 @@
   font-size: 15px;
   line-height: 1.65;
   color: var(--text-primary);
+  white-space: pre-wrap;
   word-break: keep-all;
   overflow-wrap: anywhere;
 }
@@ -641,23 +658,25 @@
 }
 /* F3: search-match highlighting */
 .searchMark {
-  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: inherit;
-  border-radius: 3px;
-  padding: 0 1px;
+  border-radius: 5px;
+  padding: 0 2px;
   box-decoration-break: clone;
 }
-.virtualItemMatch :global(.msg) {
-  border-radius: 12px;
-  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
-  padding-left: 8px;
-  margin-left: -8px;
-  background: color-mix(in srgb, var(--accent-soft) 40%, transparent);
-  transition: background var(--dur-base) var(--ease-out);
+.virtualItemMatch .body {
+  border-radius: 16px;
+  padding: 10px 12px;
+  margin: -10px -12px;
+  background: color-mix(in srgb, var(--surface-card) 80%, var(--bg-warm));
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--border-hair) 70%, transparent);
+  transition: background var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
 }
-.virtualItemFocused :global(.msg) {
-  background: color-mix(in srgb, var(--accent-soft) 85%, transparent);
-  box-shadow: inset 3px 0 0 var(--accent);
+.virtualItemFocused .body {
+  background: color-mix(in srgb, var(--surface-card) 58%, var(--accent-soft));
+  box-shadow:
+    0 10px 30px -24px color-mix(in srgb, var(--accent) 38%, transparent),
+    0 1px 0 color-mix(in srgb, var(--accent) 16%, var(--border-hair));
 }
 .virtualCanvas {
   position: relative;
@@ -679,10 +698,8 @@
      measures row height dynamically. */
   contain: layout paint style;
 }
-.virtualItemHit {
-  border-radius: 16px;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--accent-soft) 72%, transparent), transparent 82%);
-  animation: searchHitPulse 1.8s ease-out both;
+.virtualItemHit .body {
+  background: color-mix(in srgb, var(--surface-card) 64%, var(--accent-soft));
 }
 .verificationInline {
   margin-top: 10px;
@@ -787,17 +804,6 @@
 .verificationActions button:disabled {
   opacity: 0.45;
   cursor: default;
-}
-@keyframes searchHitPulse {
-  0% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 22%, transparent);
-  }
-  35% {
-    box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 14%, transparent);
-  }
-  100% {
-    box-shadow: 0 0 0 0 transparent;
-  }
 }
 .msgError {
   margin-top: 6px;
@@ -923,7 +929,7 @@
   border: 1px solid var(--border-whisper);
   border-radius: 9999px;
   padding: 2px 4px 2px 9px;
-  transition: all var(--dur-fast) var(--ease-out);
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
   overflow: hidden;
 }
 .fileChip:hover {
@@ -1299,11 +1305,13 @@
   justify-content: space-between;
   gap: 10px;
   text-align: left;
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
 }
 .modelRow:hover,
 .modelRowOn {
   border-color: color-mix(in srgb, var(--accent) 42%, var(--border-whisper));
   background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 .modelRow strong,
 .modelRow em {
@@ -1320,10 +1328,18 @@
   font-size: 11px;
   font-style: normal;
 }
-.modelRow b {
+.modelRowCheck {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent);
-  font-size: 11px;
-  white-space: nowrap;
+}
+.modelRow:not(.modelRowOn) .modelRowCheck {
+  background: transparent;
 }
 .modelEmpty {
   border: 1px dashed var(--border-whisper);

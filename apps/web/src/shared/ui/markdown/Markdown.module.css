@@ -1,6 +1,8 @@
 .md {
-  font-size: 15px;
-  line-height: 1.7;
+  font-size: 15.5px;
+  line-height: 1.72;
+  font-weight: 430;
+  letter-spacing: -0.004em;
   color: var(--text-primary);
   /* G7: cap prose line length for readability (컨설팅 가독성 최우선). Tables and
      code opt back out below so wide data isn't squeezed. */
@@ -33,6 +35,7 @@
 }
 .md p {
   margin: 0.45em 0;
+  white-space: pre-wrap;
 }
 .md h1,
 .md h2,
@@ -59,6 +62,7 @@
 }
 .md li {
   margin: 0.18em 0;
+  white-space: pre-wrap;
 }
 .md li::marker {
   color: var(--text-muted);
@@ -76,23 +80,24 @@
 .md blockquote {
   margin: 0.6em 0;
   padding: 4px 14px;
-  border-left: 3px solid var(--accent-soft);
-  color: var(--text-secondary);
-  background: var(--bg-warm);
+  border-left: 3px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface-card));
   border-radius: 0 8px 8px 0;
 }
 .md code {
-  font-family: var(--font-mono);
-  font-size: 0.86em;
-  /* 은은한 잉크 틴트 — 회색 박스가 아니라 살짝 눌린 코드 느낌. 배경 하드코딩
-     대신 본문색 5% 믹스로 라이트/다크 모두 자연스럽게. 보더 제거(pill 인상 제거). */
-  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
-  border: none;
-  border-radius: 5px;
-  padding: 1px 5px;
+  font-family: var(--font-sans);
+  font-size: 0.93em;
+  font-weight: 590;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-card));
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border-whisper));
+  border-radius: 7px;
+  padding: 1px 6px 2px;
   /* 살짝 자간. ⚠️ break-all 금지 — 한글이 어절 중간에서 끊겨 "5년 6월"이 뭉개짐.
      한글 어절은 보존(keep-all), 긴 경로/토큰만 anywhere 로 오버플로 방지. */
-  letter-spacing: 0.01em;
+  letter-spacing: -0.002em;
+  line-height: 1.5;
   word-break: keep-all;
   overflow-wrap: anywhere;
 }
@@ -110,6 +115,8 @@
 }
 .md pre code {
   display: block;
+  font-family: var(--font-mono);
+  font-weight: 400;
   background: transparent;
   border: none;
   padding: 0;

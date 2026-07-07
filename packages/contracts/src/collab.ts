@@ -138,6 +138,58 @@ export const ReviewQueueResponseSchema = z
   .strict();
 export type ReviewQueueResponse = z.infer<typeof ReviewQueueResponseSchema>;
 
+export const VerificationMetricsSchema = z
+  .object({
+    totalLatencyMs: z.number().int().nonnegative(),
+    providerCalls: z.object({ nli: z.number().int().nonnegative(), llm: z.number().int().nonnegative(), heuristic: z.number().int().nonnegative() }).strict(),
+    providerLatencies: z.record(z.string(), z.number().int().nonnegative()),
+  })
+  .strict();
+export type VerificationMetrics = z.infer<typeof VerificationMetricsSchema>;
+
+export const ExactnessPassSchema = z
+  .object({
+    method: z.enum(['decimal_formula', 'decimal_invariant']),
+    value: z.string(),
+    detail: z.string(),
+  })
+  .strict();
+export type ExactnessPass = z.infer<typeof ExactnessPassSchema>;
+
+export const ExactnessCheckSchema = z
+  .object({
+    id: z.string(),
+    kind: z.enum(['sum_equals_total', 'percentage_change', 'ratio_percent']),
+    status: z.enum(['passed', 'mismatch', 'invalid_input']),
+    value: z.string().nullable(),
+    expected: z.string().nullable(),
+    reason: z.string(),
+    passes: z.array(ExactnessPassSchema),
+  })
+  .strict();
+export type ExactnessCheck = z.infer<typeof ExactnessCheckSchema>;
+
+export const ExactnessRunSummarySchema = z
+  .object({
+    id: UuidSchema,
+    status: z.enum(['skipped', 'passed', 'blocked']),
+    required: z.boolean(),
+    summary: z.string(),
+    answerInstruction: z.string(),
+    checks: z.array(ExactnessCheckSchema),
+    createdAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+export type ExactnessRunSummary = z.infer<typeof ExactnessRunSummarySchema>;
+
+export const ExactnessSummarySchema = z
+  .object({
+    latestRun: ExactnessRunSummarySchema.nullable(),
+    blockedCount: z.number().int().nonnegative(),
+  })
+  .strict();
+export type ExactnessSummary = z.infer<typeof ExactnessSummarySchema>;
+
 export const EvidenceDecisionSummaryResponseSchema = z
   .object({
     verdictSummary: ClaimVerdictSummarySchema,
@@ -150,8 +202,10 @@ export const EvidenceDecisionSummaryResponseSchema = z
         checkedMessageCount: z.number().int().nonnegative(),
         unsupportedCount: z.number().int().nonnegative(),
         refutedCount: z.number().int().nonnegative(),
+        verificationMetrics: VerificationMetricsSchema,
       })
       .strict(),
+    exactness: ExactnessSummarySchema,
   })
   .strict();
 export type EvidenceDecisionSummaryResponse = z.infer<typeof EvidenceDecisionSummaryResponseSchema>;

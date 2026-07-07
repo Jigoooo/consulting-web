@@ -13,11 +13,14 @@ import { CreateTopicUseCase } from './create-topic.usecase.js';
 import { CreateThreadUseCase } from './create-thread.usecase.js';
 import { ScopeTagSeedService } from './scope-tag-seed.service.js';
 import { ContextGraphService } from './context-graph.service.js';
+import { ProjectProvisioningReportService } from './project-provisioning-report.service.js';
+import { ProjectTemplateService } from './project-template.service.js';
+import { ScopeProfileService } from './scope-profile.service.js';
 
 @Module({
   imports: [DrizzleModule, AuthModule],
   controllers: [SpacesController],
-  providers: [ScopeRepository, SpaceAccessService, SpaceReadService, SpaceMutateService, CreateChannelUseCase, CreateProjectUseCase, CreateWorkspaceUseCase, CreateTopicUseCase, CreateThreadUseCase, ScopeTagSeedService, ContextGraphService],
-  exports: [ScopeRepository, SpaceAccessService, SpaceReadService, SpaceMutateService, CreateChannelUseCase, CreateProjectUseCase, CreateWorkspaceUseCase, CreateTopicUseCase, CreateThreadUseCase, ScopeTagSeedService, ContextGraphService],
+  providers: [ScopeRepository, SpaceAccessService, SpaceReadService, SpaceMutateService, CreateChannelUseCase, CreateProjectUseCase, CreateWorkspaceUseCase, CreateTopicUseCase, CreateThreadUseCase, ScopeTagSeedService, ContextGraphService, ProjectProvisioningReportService, ProjectTemplateService, ScopeProfileService],
+  exports: [ScopeRepository, SpaceAccessService, SpaceReadService, SpaceMutateService, CreateChannelUseCase, CreateProjectUseCase, CreateWorkspaceUseCase, CreateTopicUseCase, CreateThreadUseCase, ScopeTagSeedService, ContextGraphService, ProjectProvisioningReportService, ProjectTemplateService, ScopeProfileService],
 })
 export class SpacesModule {}

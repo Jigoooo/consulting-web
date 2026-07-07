@@ -1,12 +1,12 @@
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import type { ChatApprovalChoice, ChatMessageAttachment, ChatRuntimeModel } from '@consulting/contracts';
 import { useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from '@tanstack/react-router';
 import { api } from '../../../lib/api';
 import { useAuth } from '../../../lib/useAuth';
 import { useToast } from '../../../shared/ui/toast/Toast';
 import { activeThreadStore, useTailScrollRequest } from '../../../lib/threadCtx';
 import { useSelectedWorkspace } from '../../../lib/wsStore';
+import { workspaceModalStore } from '../../../lib/workspaceModalStore';
 import { useWorkspaceTree } from '../../../lib/spaces';
 import {
   collabKeys,
@@ -14,7 +14,6 @@ import {
   useUploadAttachment,
   fileToBase64,
 } from '../../../lib/collab';
-import { ConvoMinimap, type MinimapEntry } from './ConvoMinimap';
 import { messageWindowKeys, useMessageWindow } from '../model/useMessageWindow';
 import { searchStore, useSearchState } from '../model/searchStore';
 import { appendDraftAttachment, canSubmitDraft, createDraftAttachment, draftAttachmentsForSend } from '../model/draftAttachments';
@@ -140,16 +139,15 @@ function ApprovalCard({
 /**
  * Live chat for a thread (persistent). History loads from the API; new sends
  * stream via SSE and are persisted server-side. Craft layer (U-2):
- * ThinkingRibbon fills the start→first-delta gap (now with REAL tool labels,
- * Phase 2-A), ConvoMinimap maps long threads, hover actions add copy/retry,
- * hover on assistant messages glows the linked evidence (E-4), and answers
- * can be saved as artifacts (2-B) with file attachments (2-D G-3).
+ * ThinkingRibbon fills the start→first-delta gap (now with REAL tool labels),
+ * hover actions add copy/retry, hover on assistant messages glows the linked
+ * evidence (E-4), and answers can be saved as artifacts (2-B) with file
+ * attachments (2-D G-3).
  */
 export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { threadId: string; title: string; breadcrumb?: ThreadBreadcrumb; focusMessageId?: string }) {
   const { user } = useAuth();
   const toast = useToast();
   const qc = useQueryClient();
-  const navigate = useNavigate();
   const workspaceId = useSelectedWorkspace();
   const { data: tree } = useWorkspaceTree(workspaceId ?? undefined);
   const history = useMessageWindow(threadId);
@@ -249,6 +247,7 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
     atBottomRef.current = true;
     searchStore.reset(threadId);
   }, [threadId]);
+
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -611,7 +610,7 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
       });
       void qc.invalidateQueries({ queryKey: collabKeys.artifacts(workspaceId ?? '') });
       toast('success', '산출물 저장 완료');
-      void navigate({ to: '/artifacts' });
+      workspaceModalStore.open('artifacts', { projectId });
       void res;
     } catch {
       toast('error', '저장에 실패했어요. 편집 권한이 있는지 확인해주세요.');
@@ -701,6 +700,13 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
     }
   }
 
+  function clearSearch() {
+    setSearchQuery('');
+    setTargetMessageId(null);
+    lastFocusedId.current = null;
+    searchStore.reset(threadId);
+  }
+
   function jumpToSearchHit(hit: { id: string }, index: number) {
     // Set focus index; the focusedIndex effect performs the actual jumpAround so
     // navigator / panel / this path all funnel through one code path (F3).
@@ -717,10 +723,6 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
     if (hit) void jumpToSearchHit(hit, nextIndex);
   }
 
-  function jumpTo(key: string) {
-    const el = streamRef.current?.querySelector(`[data-turn="${key}"]`);
-    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }
 
   // A2 / G7-FAB: return to the live tail. From a search-jump ('around') window we
   // replace the window with the latest page in O(1) instead of paging down. A
@@ -784,21 +786,9 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
     : null;
 
   // 300ms 이후에도 최초 로딩이면 스켈레톤 노출 — 즉시 로드는 깜빡임 없이 통과.
-  const showHistorySkeleton = useDelayedFlag(history.isLoading, 300);
+  const showHistorySkeleton = useDelayedFlag(history.isLoading, 300, 260);
   const hasResults = search.results.length > 0 && search.threadId === threadId;
 
-  const minimapEntries: MinimapEntry[] = [
-    ...persisted.map((m) => ({
-      key: `p-${m.id}`,
-      role: m.role === 'assistant' ? ('assistant' as const) : ('user' as const),
-      preview: m.content.slice(0, 60),
-    })),
-    ...live.map((t) => ({
-      key: `l-${t.id}`,
-      role: t.role === 'ai' ? ('assistant' as const) : ('user' as const),
-      preview: t.text.slice(0, 60),
-    })),
-  ];
 
   return (
     <>
@@ -841,9 +831,17 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
                     void searchTranscript();
                   }
                 }
-                if (event.key === 'Escape') event.currentTarget.blur();
+                if (event.key === 'Escape') {
+                  if (searchQuery || search.query) clearSearch();
+                  else event.currentTarget.blur();
+                }
               }}
             />
+            {searchQuery || search.query ? (
+              <button type="button" className={`${s.threadSearchClear} cwTap`} aria-label="검색 취소" onClick={clearSearch}>
+                <Icon name="x" size="xs" decorative />
+              </button>
+            ) : null}
             {hasResults ? (
               <div className={s.searchNav}>
                 <button type="button" className={`${s.searchNavBtn} cwTap`} aria-label="이전 결과" onClick={() => stepSearch(-1)}>
@@ -931,7 +929,6 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
             onJump={() => void jumpToLatest()}
           />
         </div>
-        <ConvoMinimap entries={minimapEntries} onJump={jumpTo} />
       </div>
 
       <div className={s.composer}>

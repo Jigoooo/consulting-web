@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { Markdown } from '../../../shared/ui/markdown/Markdown';
 import { Icon } from '../../../shared/icons/Icon';
 import { useAttachmentExtraction, saveAttachment } from '../../../lib/collab';
@@ -39,6 +39,13 @@ export function FileViewer({ target, onClose }: { target: FileViewerTarget; onCl
   const blob = useAttachmentBlobUrl(target.id, needsBlob);
   const extraction = useAttachmentExtraction(target.id, needsText);
   const toast = useToast();
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
   return (
     <div className={s.overlay} role="presentation">
       <button type="button" className={s.scrim} aria-label="파일 미리보기 닫기" onClick={onClose} />

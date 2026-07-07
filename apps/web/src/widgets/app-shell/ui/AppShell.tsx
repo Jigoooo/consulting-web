@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useTransition, type CSSProperties, type ReactNode } from 'react';
-import { Link, useLocation, useRouter } from '@tanstack/react-router';
+import { useLocation, useRouter } from '@tanstack/react-router';
 import { ApiClientError } from '@consulting/api-client';
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useAuth } from '../../../lib/useAuth';
@@ -35,6 +35,9 @@ import { EvidencePanel } from '../../evidence-panel/ui/EvidencePanel';
 import { SearchResultsPanel } from '../../evidence-panel/ui/SearchResultsPanel';
 import { searchStore, useSearchState } from '../../chat-thread/model/searchStore';
 import { OfflineBadge } from '../../../shared/ui/offline/OfflineBadge';
+import { workspaceModalStore, useWorkspaceModal } from '../../../lib/workspaceModalStore';
+import { ArtifactsSurface } from '../../../components/artifacts/ArtifactsSurface';
+import { LibrarySurface } from '../../../components/library/LibrarySurface';
 import s from './AppShell.module.css';
 
 /** Persistent 4-pane frame: rail / sidebar(tree) / center(Outlet) / context. */
@@ -42,11 +45,17 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const location = useLocation();
   const [contextCollapsed, setContextCollapsed] = useState(false);
+  const searchState = useSearchState();
   useEffect(() => {
     if (location.pathname === '/library' || location.pathname === '/artifacts') {
       setContextCollapsed(true);
     }
   }, [location.pathname]);
+  useEffect(() => {
+    if (location.pathname.startsWith('/th/') && searchState.open && searchState.query) {
+      setContextCollapsed(false);
+    }
+  }, [location.pathname, searchState.open, searchState.query]);
   return (
     <div className={`${s.app} ${contextCollapsed ? s.appContextCollapsed : ''}`}>
       <OfflineBadge />
@@ -65,7 +74,28 @@ export function AppShell({ children }: { children: ReactNode }) {
         {children}
       </div>
       <ContextPanel collapsed={contextCollapsed} onToggle={() => setContextCollapsed((prev) => !prev)} />
+      <WorkspaceSurfaceModal />
     </div>
+  );
+}
+
+function WorkspaceSurfaceModal() {
+  const modal = useWorkspaceModal();
+  const open = modal.kind !== null;
+  return (
+    <DialogRoot open={open} onOpenChange={(next) => { if (!next) workspaceModalStore.close(); }}>
+      <DialogContent
+        className={s.workspaceSurfaceDialog}
+        title={modal.kind === 'library' ? '자료실' : '산출물 보관함'}
+        description={modal.kind === 'library' ? '대화 흐름은 그대로 두고 자료만 확인합니다.' : '대화 흐름은 그대로 두고 확정 문서만 확인합니다.'}
+      >
+        {modal.kind === 'library' ? (
+          <LibrarySurface variant="modal" />
+        ) : modal.kind === 'artifacts' ? (
+          <ArtifactsSurface initialProjectId={modal.projectId} variant="modal" onClose={() => workspaceModalStore.close()} />
+        ) : null}
+      </DialogContent>
+    </DialogRoot>
   );
 }
 
@@ -219,11 +249,13 @@ function InlineCreate({
   onSubmit,
   busy,
   level,
+  resetSignal,
 }: {
   placeholder: string;
   onSubmit: (name: string) => void;
   busy: boolean;
   level: 'project' | 'channel' | 'topic';
+  resetSignal?: string | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
@@ -233,6 +265,10 @@ function InlineCreate({
     setName('');
     setOpen(false);
   }
+  useEffect(() => {
+    setName('');
+    setOpen(false);
+  }, [resetSignal]);
   if (!open) {
     return (
       <button type="button" className={s.newProj} onClick={() => setOpen(true)}>
@@ -328,7 +364,7 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
   }, [pendingTopicId, resolvedTopicId]);
 
   // 300ms 넘게 로딩일 때만 스켈레톤 — 즉시 로드는 깜빡임 없이 통과.
-  const showTreeSkeleton = useDelayedFlag(isLoading, 300);
+  const showTreeSkeleton = useDelayedFlag(isLoading, 300, 260);
 
   const ws = wsData?.workspaces.find((w) => w.id === selected);
   const wsName = ws?.name ?? user?.displayName ?? '…';
@@ -459,8 +495,8 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
       <DialogRoot open={archiveOpen} onOpenChange={setArchiveOpen}>
         <DialogContent
           className={s.archiveDialog}
-          title="보관함"
-          description="보관한 프로젝트·채널·대화는 목록에서 숨겨져도 지식은 보존됩니다. 언제든 복원할 수 있어요."
+          title="숨긴 항목"
+          description="목록에서 숨긴 프로젝트·채널·대화는 지식으로 보존됩니다. 필요하면 여기서 다시 표시할 수 있어요."
         >
           <div className={s.archiveList} aria-busy={archivedScopes.isFetching || undefined}>
             {archivedScopes.isLoading ? (
@@ -505,35 +541,39 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
         </div>
         <NotificationBell />
       </div>
-      <Link
-        to="/artifacts"
+      <button
+        type="button"
         className={s.workspaceTool}
-        activeProps={{ className: `${s.workspaceTool} ${s.workspaceToolOn}` }}
-        onClick={() => onNavigate?.()}
+        onClick={() => {
+          workspaceModalStore.open('artifacts');
+          onNavigate?.();
+        }}
       >
         <Icon name="file-text" size="sm" decorative />
         <span>
           <strong>산출물 보관함</strong>
           <small>대화에서 확정한 보고서·문서</small>
         </span>
-      </Link>
-      <Link
-        to="/library"
+      </button>
+      <button
+        type="button"
         className={s.workspaceTool}
-        activeProps={{ className: `${s.workspaceTool} ${s.workspaceToolOn}` }}
-        onClick={() => onNavigate?.()}
+        onClick={() => {
+          workspaceModalStore.open('library');
+          onNavigate?.();
+        }}
       >
         <Icon name="files" size="sm" decorative />
         <span>
           <strong>자료실</strong>
           <small>근거·업로드 문서·산출물 모아보기</small>
         </span>
-      </Link>
+      </button>
       <button type="button" className={s.workspaceTool} onClick={() => setArchiveOpen(true)} disabled={!selected}>
         <Icon name="library" size="sm" decorative />
         <span>
-          <strong>보관함</strong>
-          <small>보관한 프로젝트·채널·대화 복원</small>
+          <strong>숨긴 항목</strong>
+          <small>목록에서 숨긴 프로젝트·채널·대화 복원</small>
         </span>
       </button>
       <div className={s.tree}>
@@ -547,6 +587,7 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
         ) : null}
         {tree?.projects.map((p) => {
           const collapsed = collapsedProjects.has(p.id);
+          const createResetSignal = `${selected ?? ''}:${location.pathname}:${currentTopicId ?? ''}`;
           return (
             <div key={p.id} className={`${s.projectBlock} ${collapsed ? s.projectBlockCollapsed : s.projectBlockOpen}`}>
               <div
@@ -572,7 +613,7 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
                 </span>
                 <RowMenu
                   actions={[
-                    { label: '산출물 보기', onSelect: () => void router.navigate({ to: '/artifacts', search: { projectId: p.id } }) },
+                    { label: '산출물 보기', onSelect: () => workspaceModalStore.open('artifacts', { projectId: p.id }) },
                     { label: '이름 변경', onSelect: () => void onRename('projects', p.id, p.name) },
                     { label: '보관하기', onSelect: () => void onArchive('projects', p.id, p.name) },
                   ]}
@@ -618,6 +659,7 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
                       level="channel"
                       placeholder="채널 추가"
                       busy={createChannel.isPending || createTopic.isPending}
+                      resetSignal={createResetSignal}
                       onSubmit={(name) => void createChannelWithDefaultTopic(p.id, name)}
                     />
                   </div>
@@ -630,6 +672,7 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
           level="project"
           placeholder="프로젝트 추가"
           busy={createProject.isPending}
+          resetSignal={`${selected ?? ''}:${location.pathname}:${currentTopicId ?? ''}`}
           onSubmit={(name) => createProject.mutate(name)}
         />
       </div>
@@ -744,7 +787,7 @@ function ContextPanel({ collapsed, onToggle }: { collapsed: boolean; onToggle: (
               className={`${s.ctxTab} ${tab === 'members' ? s.ctxTabOn : ''}`}
               onClick={() => setTab('members')}
             >
-              멤버
+              워크스페이스 멤버
             </button>
           </div>
         ) : null}
@@ -764,7 +807,7 @@ function ContextPanel({ collapsed, onToggle }: { collapsed: boolean; onToggle: (
         ) : tab === 'members' || !activeThread ? (
           <>
             <div className={s.ctxSection}>
-              <div className={s.ctxTitle}>멤버 {members?.members.length ? `· ${members.members.length}` : ''}</div>
+              <div className={s.ctxTitle}>워크스페이스 멤버 {members?.members.length ? `· ${members.members.length}` : ''}</div>
               {members?.members.length ? (
                 members.members.map((m) => (
                   <div key={m.userId} className={s.member}>
@@ -779,7 +822,7 @@ function ContextPanel({ collapsed, onToggle }: { collapsed: boolean; onToggle: (
             </div>
 
             <div className={s.ctxSection}>
-              <div className={s.ctxTitle}>초대</div>
+              <div className={s.ctxTitle}>워크스페이스 초대</div>
               <div
                 className={s.roleSeg}
                 role="radiogroup"

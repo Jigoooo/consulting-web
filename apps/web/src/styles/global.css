@@ -25,8 +25,8 @@ body {
   text-rendering: optimizeLegibility;
   color: var(--text-primary);
   background: var(--bg-canvas);
-  -webkit-font-smoothing: antialiased;
-  letter-spacing: -0.01em;
+  -webkit-font-smoothing: auto;
+  letter-spacing: -0.004em;
   /* 한국어 자연 줄바꿈 기본값: 단어(어절) 내부 분리 금지.
      긴 URL/코드/토큰은 .cwBreakLong 로 개별 opt-out 한다. */
   word-break: keep-all;

@@ -1,9 +1,12 @@
+import { createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { schema } from '@consulting/db-schema';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import type { EvidenceDecisionSummaryResponse, ReviewQueueResponse } from '@consulting/contracts';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 import { EvidenceToDecisionService, type ClaimInput, type DecisionRating, type EvidenceInput, type ReviewInput } from './evidence-to-decision.service.js';
+import { ClaimVerifierService } from './claim-verifier.service.js';
+import { ExactnessGateService, type ExactnessGateResult } from './exactness-gate.service.js';
 
 const FACTUAL_RE = /(이다|입니다|한다|합니다|된다|됩니다|있다|있습니다|없다|없습니다|필요|확정|증가|감소|부담|영향|제시|늘려|줄어|higher|lower|increase|decrease)/iu;
 
@@ -52,15 +55,21 @@ export class EvidenceDecisionStore {
   constructor(
     @Inject(DRIZZLE) private readonly db: Db,
     @Inject(EvidenceToDecisionService) private readonly engine: EvidenceToDecisionService,
+    @Inject(ClaimVerifierService) private readonly verifier: ClaimVerifierService,
+    @Inject(ExactnessGateService) private readonly exactness: ExactnessGateService,
   ) {}
 
   async recordCompletedAnswer(input: {
     workspaceId: string;
     threadId: string;
     assistantMessageId: string;
+    userPrompt: string;
     answer: string;
     runId: string | null;
   }): Promise<void> {
+    const exactnessRun = this.exactness.evaluateAnswer({ query: input.userPrompt, answer: input.answer });
+    if (exactnessRun.required) await this.persistExactnessRun(input, exactnessRun);
+
     const claimTexts = splitClaims(input.answer);
     if (claimTexts.length === 0) return;
 
@@ -88,7 +97,8 @@ export class EvidenceDecisionStore {
       qualityScore: row.qualityScore ?? 70,
     }));
 
-    const verification = this.engine.buildStrictJsonVerification({ claims, evidence });
+    const highRiskClaimIds = claims.filter((claim) => (claim.decisionImpact ?? 0) >= 0.8).map((claim) => claim.id);
+    const verification = await this.verifier.verify({ claims, evidence, highRiskClaimIds });
     const lattice = verification.lattice;
     if (lattice.verdicts.length > 0) {
       await this.db.insert(schema.claimVerificationVerdicts).values(
@@ -139,7 +149,7 @@ export class EvidenceDecisionStore {
         threadId: input.threadId,
         question: scorecard.question,
         recommendedAlternativeId: scorecard.recommendedAlternativeId,
-        scoreSummary: { runId: input.runId, source: 'post_answer_verification_v1' },
+        scoreSummary: { runId: input.runId, source: 'post_answer_verification_v1', verificationMetrics: verification.metrics, verifier: verification.verifier },
       })
       .returning({ id: schema.decisionScorecards.id });
     if (scorecardRow) {
@@ -189,6 +199,31 @@ export class EvidenceDecisionStore {
     }
   }
 
+  private async persistExactnessRun(input: {
+    workspaceId: string;
+    threadId: string;
+    assistantMessageId: string;
+    userPrompt: string;
+    answer: string;
+  }, run: ExactnessGateResult): Promise<void> {
+    try {
+      await this.db.insert(schema.exactnessRuns).values({
+        workspaceId: input.workspaceId,
+        threadId: input.threadId,
+        assistantMessageId: input.assistantMessageId,
+        required: run.required,
+        status: run.status,
+        queryHash: exactnessQueryHash(input.userPrompt, input.answer),
+        checks: JSON.parse(JSON.stringify(run.checks)) as Record<string, unknown>[],
+        summary: run.summary,
+        answerInstruction: run.answerInstruction,
+      });
+    } catch (error) {
+      if (isMissingRelationError(error)) return;
+      throw error;
+    }
+  }
+
   async summary(threadId: string): Promise<EvidenceDecisionSummaryResponse> {
     const verdictRows = await this.db
       .select({
@@ -225,6 +260,7 @@ export class EvidenceDecisionStore {
         id: schema.decisionScorecards.id,
         question: schema.decisionScorecards.question,
         recommendedAlternativeId: schema.decisionScorecards.recommendedAlternativeId,
+        scoreSummary: schema.decisionScorecards.scoreSummary,
         createdAt: schema.decisionScorecards.createdAt,
       })
       .from(schema.decisionScorecards)
@@ -256,6 +292,34 @@ export class EvidenceDecisionStore {
     for (const row of documentRows) byModality[row.modality] = (byModality[row.modality] ?? 0) + 1;
 
     const review = await this.reviewQueue(threadId, 50);
+    let exactnessRows: Array<{
+      id: string;
+      status: string;
+      required: boolean;
+      checks: unknown;
+      summary: string;
+      answerInstruction: string;
+      createdAt: Date;
+    }> = [];
+    try {
+      exactnessRows = await this.db
+        .select({
+          id: schema.exactnessRuns.id,
+          status: schema.exactnessRuns.status,
+          required: schema.exactnessRuns.required,
+          checks: schema.exactnessRuns.checks,
+          summary: schema.exactnessRuns.summary,
+          answerInstruction: schema.exactnessRuns.answerInstruction,
+          createdAt: schema.exactnessRuns.createdAt,
+        })
+        .from(schema.exactnessRuns)
+        .where(and(eq(schema.exactnessRuns.threadId, threadId), isNull(schema.exactnessRuns.deletedAt)))
+        .orderBy(desc(schema.exactnessRuns.createdAt))
+        .limit(50);
+    } catch (error) {
+      if (!isMissingRelationError(error)) throw error;
+    }
+    const latestExactness = exactnessRows[0];
     const checkedMessageIds = new Set(verdictRows.map((row) => row.claimId.split('-').slice(0, 2).join('-')));
     return {
       verdictSummary,
@@ -294,6 +358,21 @@ export class EvidenceDecisionStore {
         checkedMessageCount: checkedMessageIds.size,
         unsupportedCount: verdictSummary.notEnoughInfo,
         refutedCount: verdictSummary.refutes + verdictSummary.mixed,
+        verificationMetrics: verificationMetricsForResponse(scorecard?.scoreSummary),
+      },
+      exactness: {
+        latestRun: latestExactness
+          ? {
+              id: latestExactness.id,
+              status: latestExactness.status as 'skipped' | 'passed' | 'blocked',
+              required: latestExactness.required,
+              summary: latestExactness.summary,
+              answerInstruction: latestExactness.answerInstruction,
+              checks: exactnessChecksForResponse(latestExactness.checks),
+              createdAt: iso(latestExactness.createdAt),
+            }
+          : null,
+        blockedCount: exactnessRows.filter((row) => row.status === 'blocked').length,
       },
     };
   }
@@ -336,6 +415,83 @@ export class EvidenceDecisionStore {
       })),
     };
   }
+}
+
+type ExactnessCheckForResponse = NonNullable<EvidenceDecisionSummaryResponse['exactness']['latestRun']>['checks'][number];
+type ExactnessPassForResponse = ExactnessCheckForResponse['passes'][number];
+type VerificationMetricsForResponse = EvidenceDecisionSummaryResponse['postAnswerVerification']['verificationMetrics'];
+
+function verificationMetricsForResponse(scoreSummary: unknown): VerificationMetricsForResponse {
+  const summary = isRecord(scoreSummary) ? scoreSummary : {};
+  const metrics = isRecord(summary.verificationMetrics) ? summary.verificationMetrics : {};
+  const calls = isRecord(metrics.providerCalls) ? metrics.providerCalls : {};
+  const latencies = isRecord(metrics.providerLatencies) ? metrics.providerLatencies : {};
+  const providerLatencies: Record<string, number> = {};
+  for (const [key, value] of Object.entries(latencies)) providerLatencies[key] = Math.max(0, Math.round(toNumber(value)));
+  return {
+    totalLatencyMs: Math.max(0, Math.round(toNumber(metrics.totalLatencyMs))),
+    providerCalls: {
+      nli: Math.max(0, Math.round(toNumber(calls.nli))),
+      llm: Math.max(0, Math.round(toNumber(calls.llm))),
+      heuristic: Math.max(0, Math.round(toNumber(calls.heuristic))),
+    },
+    providerLatencies,
+  };
+}
+
+function exactnessQueryHash(userPrompt: string, answer: string): string {
+  return createHash('sha256').update(`${userPrompt}\n---answer---\n${answer}`).digest('hex').slice(0, 40);
+}
+
+function exactnessChecksForResponse(raw: unknown): ExactnessCheckForResponse[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) => {
+    const row = isRecord(item) ? item : {};
+    return {
+      id: stringValue(row.id),
+      kind: exactnessKind(row.kind),
+      status: exactnessCheckStatus(row.status),
+      value: typeof row.value === 'string' ? row.value : null,
+      expected: typeof row.expected === 'string' ? row.expected : null,
+      reason: stringValue(row.reason),
+      passes: Array.isArray(row.passes) ? row.passes.map(exactnessPassForResponse) : [],
+    };
+  });
+}
+
+function exactnessPassForResponse(item: unknown): ExactnessPassForResponse {
+  const row = isRecord(item) ? item : {};
+  return {
+    method: row.method === 'decimal_invariant' ? 'decimal_invariant' : 'decimal_formula',
+    value: stringValue(row.value),
+    detail: stringValue(row.detail),
+  };
+}
+
+function exactnessKind(value: unknown): ExactnessCheckForResponse['kind'] {
+  if (value === 'percentage_change' || value === 'ratio_percent' || value === 'sum_equals_total') return value;
+  return 'sum_equals_total';
+}
+
+function exactnessCheckStatus(value: unknown): ExactnessCheckForResponse['status'] {
+  if (value === 'mismatch' || value === 'invalid_input' || value === 'passed') return value;
+  return 'invalid_input';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function isMissingRelationError(error: unknown): boolean {
+  if (!isRecord(error)) return false;
+  const code = error.code;
+  if (code === '42P01') return true;
+  const message = typeof error.message === 'string' ? error.message : '';
+  return /relation .*exactness_runs.* does not exist|no such table: exactness_runs/iu.test(message);
 }
 
 function reviewActions(title: string): ReviewAction[] {

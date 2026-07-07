@@ -50,6 +50,7 @@ export const authStore = {
   getAccessToken: (): string | null => state?.accessToken ?? null,
   getUser: (): PublicUser | null => state?.user ?? null,
   isAuthed: (): boolean => state !== null,
+  ensureFresh: (): Promise<boolean> => ensureFreshSession(),
   setSession: (session: PersistedAuth): void => persist(session),
   clear: (): void => persist(null),
   subscribe: (fn: () => void): (() => void) => {
@@ -103,7 +104,19 @@ async function tryRefresh(): Promise<boolean> {
 // mid-flight 401. Re-armed on every session change and on tab focus (background
 // tabs throttle timers, so we recompute the remaining time on visibility).
 const REFRESH_LEAD_MS = 60_000;
+const ROUTE_REFRESH_GRACE_MS = 5_000;
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+function shouldRefreshForRoute(current: PersistedAuth): boolean {
+  return current.accessExpiresAt === undefined || current.accessExpiresAt - Date.now() <= ROUTE_REFRESH_GRACE_MS;
+}
+
+function ensureFreshSession(): Promise<boolean> {
+  const current = state;
+  if (!current) return Promise.resolve(false);
+  if (!shouldRefreshForRoute(current)) return Promise.resolve(true);
+  return kickRefresh();
+}
 
 function scheduleProactiveRefresh(): void {
   if (refreshTimer) {
@@ -144,8 +157,6 @@ if (typeof window !== 'undefined') {
     for (const l of listeners) l();
     scheduleProactiveRefresh();
   });
-  // Initial arm (also backfills accessExpiresAt for pre-C2 sessions).
-  scheduleProactiveRefresh();
 }
 
 export const api = new ConsultingApiClient({
@@ -153,3 +164,9 @@ export const api = new ConsultingApiClient({
   getAccessToken: () => authStore.getAccessToken(),
   onUnauthorized: () => kickRefresh(),
 });
+
+if (typeof window !== 'undefined') {
+  // Initial arm (also backfills accessExpiresAt for pre-C2 sessions). Keep this
+  // after api construction: expired/legacy sessions may refresh immediately.
+  scheduleProactiveRefresh();
+}

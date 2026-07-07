@@ -23,8 +23,8 @@ const searchSchema = z.object({
 
 export const Route = createFileRoute('/signup')({
   validateSearch: searchSchema,
-  beforeLoad: ({ context, search }) => {
-    if (context.auth.isAuthed()) {
+  beforeLoad: async ({ context, search }) => {
+    if (await context.auth.ensureFresh()) {
       // TanStack Router uses thrown redirects for control flow.
       // eslint-disable-next-line @typescript-eslint/only-throw-error
       throw redirect({ to: search.redirect });

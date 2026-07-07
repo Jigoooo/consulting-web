@@ -19,6 +19,17 @@ export interface ConsultingResolvedScope {
   linkLevel: 'project' | 'channel' | 'topic' | 'thread';
   scopePath: string;
   archived: boolean;
+  profiles?: ConsultingScopeProfile[];
+}
+
+export interface ConsultingScopeProfile {
+  scopeType: 'channel' | 'topic';
+  scopeId: string;
+  purpose: string;
+  role: string;
+  style: string;
+  rules: string;
+  source: 'template' | 'manual' | 'inferred';
 }
 
 export interface ConsultingRecallScope {
@@ -67,6 +78,7 @@ export class ConsultingTopicResolver {
     if (!scope) return null;
     const link = await this.bestLink(scope);
     if (!link) return null;
+    const profiles = await this.scopeProfiles(scope);
     return {
       ...scope,
       consultingTopicSlug: link.consultingTopicSlug,
@@ -74,6 +86,7 @@ export class ConsultingTopicResolver {
       linkLevel: this.normalizeLevel(link.linkLevel),
       scopePath: link.scopePath || this.defaultScopePath(scope),
       archived: link.status === 'archived',
+      profiles,
     };
   }
 
@@ -212,7 +225,48 @@ export class ConsultingTopicResolver {
     return 'project';
   }
 
+  private async scopeProfiles(scope: ScopeRow): Promise<ConsultingScopeProfile[]> {
+    try {
+      const rows = await this.db
+        .select({
+          scopeType: schema.scopeProfiles.scopeType,
+          scopeId: schema.scopeProfiles.scopeId,
+          purpose: schema.scopeProfiles.purpose,
+          role: schema.scopeProfiles.role,
+          style: schema.scopeProfiles.style,
+          rules: schema.scopeProfiles.rules,
+          source: schema.scopeProfiles.source,
+        })
+        .from(schema.scopeProfiles)
+        .where(and(eq(schema.scopeProfiles.workspaceId, scope.workspaceId), isNull(schema.scopeProfiles.deletedAt)));
+      const wanted = new Set([`channel:${scope.channelId}`, `topic:${scope.topicId}`]);
+      return rows
+        .filter((row) => wanted.has(`${row.scopeType}:${row.scopeId}`))
+        .sort((a, b) => (a.scopeType === b.scopeType ? 0 : a.scopeType === 'channel' ? -1 : 1))
+        .map((row) => ({
+          scopeType: row.scopeType === 'topic' ? 'topic' : 'channel',
+          scopeId: row.scopeId,
+          purpose: row.purpose,
+          role: row.role,
+          style: row.style,
+          rules: row.rules,
+          source: row.source === 'manual' || row.source === 'inferred' ? row.source : 'template',
+        }));
+    } catch (error) {
+      if (isMissingRelationError(error, 'scope_profiles')) return [];
+      throw error;
+    }
+  }
+
   private defaultScopePath(scope: ScopeRow): string {
     return `${scope.projectName}/${scope.channelName}/${scope.topicName}/${scope.threadTitle}`;
   }
+}
+
+function isMissingRelationError(error: unknown, relationName: string): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const record = error as { code?: unknown; cause?: unknown; message?: unknown };
+  const cause = record.cause as { code?: unknown; message?: unknown } | undefined;
+  const message = `${typeof record.message === 'string' ? record.message : ''}\n${typeof cause?.message === 'string' ? cause.message : ''}`;
+  return record.code === '42P01' || cause?.code === '42P01' || message.includes(relationName);
 }

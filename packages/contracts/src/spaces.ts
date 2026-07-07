@@ -110,6 +110,36 @@ export type ArchivedScopeKind = z.infer<typeof ArchivedScopeKindSchema>;
 
 export const ContextGraphScopeTypeSchema = z.enum(['project', 'channel', 'topic', 'thread']);
 export type ContextGraphScopeType = z.infer<typeof ContextGraphScopeTypeSchema>;
+export const ScopeProfileScopeTypeSchema = z.enum(['channel', 'topic']);
+export type ScopeProfileScopeType = z.infer<typeof ScopeProfileScopeTypeSchema>;
+export const ScopeProfileSourceSchema = z.enum(['template', 'manual', 'inferred']);
+export type ScopeProfileSource = z.infer<typeof ScopeProfileSourceSchema>;
+const ProfileTextSchema = z.string().max(2000);
+export const ScopeProfileSchema = z
+  .object({
+    scopeType: ScopeProfileScopeTypeSchema,
+    scopeId: UuidSchema,
+    purpose: ProfileTextSchema,
+    role: ProfileTextSchema,
+    style: ProfileTextSchema,
+    rules: ProfileTextSchema,
+    source: ScopeProfileSourceSchema,
+    updatedAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+export type ScopeProfile = z.infer<typeof ScopeProfileSchema>;
+export const ScopeProfileResponseSchema = z.object({ profile: ScopeProfileSchema.nullable() }).strict();
+export type ScopeProfileResponse = z.infer<typeof ScopeProfileResponseSchema>;
+export const UpdateScopeProfileRequestSchema = z
+  .object({
+    purpose: ProfileTextSchema.optional(),
+    role: ProfileTextSchema.optional(),
+    style: ProfileTextSchema.optional(),
+    rules: ProfileTextSchema.optional(),
+  })
+  .strict()
+  .refine((value) => Object.values(value).some((field) => field !== undefined), { message: 'at least one profile field is required' });
+export type UpdateScopeProfileRequest = z.infer<typeof UpdateScopeProfileRequestSchema>;
 export const CreateContextEdgeTypeSchema = z.enum(['related_to', 'references', 'shares_memory_with']);
 export const ContextGraphEdgeTypeSchema = z.enum(['related_to', 'references', 'shares_memory_with', 'derived_from', 'supersedes']);
 export const ContextGraphOriginSchema = z.enum(['manual', 'classifier', 'system', 'bot', 'import', 'inherited']);

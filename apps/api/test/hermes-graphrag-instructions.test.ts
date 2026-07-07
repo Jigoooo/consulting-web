@@ -15,6 +15,12 @@ const env: Env = {
   JWT_REFRESH_SECRET: 'y'.repeat(16),
   HERMES_API_BASE_URL: 'http://hermes.local',
   HERMES_API_KEY: 'test-key',
+  CONSULTING_DEFAULT_TEMPLATE_ENABLED: true,
+  VOYAGE_MULTIMODAL_ENABLED: false,
+  VOYAGE_API_BASE_URL: 'https://api.voyageai.com',
+  VOYAGE_MULTIMODAL_MODEL: 'voyage-multimodal-3.5',
+  VERIFIER_LLM_ENABLED: false,
+  VERIFIER_LLM_TIMEOUT_MS: 30_000,
   VAPID_SUBJECT: 'mailto:admin@localhost',
 };
 

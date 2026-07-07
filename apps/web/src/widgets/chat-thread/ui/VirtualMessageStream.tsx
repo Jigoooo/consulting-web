@@ -505,8 +505,8 @@ export function VirtualMessageStream({
 
   // G2: suppress the "불러오는 중" affordance for fast prefetches — only show it
   // when a page load genuinely takes >400ms. Normal prefetches stay silent.
-  const showOlderLoading = useDelayedFlag(isLoadingOlder, 400);
-  const showNewerLoading = useDelayedFlag(isLoadingNewer, 400);
+  const showOlderLoading = useDelayedFlag(isLoadingOlder, 400, 260);
+  const showNewerLoading = useDelayedFlag(isLoadingNewer, 400, 260);
 
   // Fresh guard/callback values for the IntersectionObserver without re-subscribing.
   const guards = useRef({ hasOlder, hasNewer, isLoadingOlder, isLoadingNewer });

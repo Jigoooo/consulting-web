@@ -7,8 +7,8 @@ import { CommandPalette } from '../features/command-palette/ui/CommandPalette';
  * TanStack docs pattern — beforeLoad throws redirect({ to: '/login' }).
  */
 export const Route = createFileRoute('/_app')({
-  beforeLoad: ({ context, location }) => {
-    if (!context.auth.isAuthed()) {
+  beforeLoad: async ({ context, location }) => {
+    if (!(await context.auth.ensureFresh())) {
       // TanStack Router uses thrown redirects for control flow.
       // eslint-disable-next-line @typescript-eslint/only-throw-error
       throw redirect({ to: '/login', search: { redirect: location.href } });

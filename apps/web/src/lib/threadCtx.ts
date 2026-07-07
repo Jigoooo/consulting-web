@@ -3,13 +3,19 @@ import { useSyncExternalStore } from 'react';
 /** Active thread context (Phase 2-A) — lets the ContextPanel show evidence
  * for whichever thread is open without prop-drilling through routes. */
 let active: string | null = null;
+let lastActive: string | null = null;
 const listeners = new Set<() => void>();
+const lastListeners = new Set<() => void>();
 
 export const activeThreadStore = {
   get: (): string | null => active,
   set: (id: string | null): void => {
     if (active === id) return;
     active = id;
+    if (id && lastActive !== id) {
+      lastActive = id;
+      for (const l of lastListeners) l();
+    }
     for (const l of listeners) l();
   },
   subscribe: (fn: () => void): (() => void) => {
@@ -20,6 +26,20 @@ export const activeThreadStore = {
 
 export function useActiveThread(): string | null {
   return useSyncExternalStore(activeThreadStore.subscribe, activeThreadStore.get, activeThreadStore.get);
+}
+
+/** Last non-null thread — lets Library/Artifacts offer a real return path after
+ * ChatThread unmounts and the active thread becomes null. */
+export const lastThreadStore = {
+  get: (): string | null => lastActive,
+  subscribe: (fn: () => void): (() => void) => {
+    lastListeners.add(fn);
+    return () => lastListeners.delete(fn);
+  },
+};
+
+export function useLastThread(): string | null {
+  return useSyncExternalStore(lastThreadStore.subscribe, lastThreadStore.get, lastThreadStore.get);
 }
 
 /** Hovered assistant message id (Phase 2-A E-4) — drives the evidence glow link. */

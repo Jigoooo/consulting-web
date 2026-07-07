@@ -7,7 +7,8 @@ export const SECRET_PROVIDER = Symbol('SECRET_PROVIDER');
 export type SecretName =
   | 'JWT_ACCESS_SECRET'
   | 'JWT_REFRESH_SECRET'
-  | 'HERMES_API_KEY';
+  | 'HERMES_API_KEY'
+  | 'VOYAGE_API_KEY';
 
 export interface SecretProviderPort {
   /** Returns the secret value. Never log the result. */

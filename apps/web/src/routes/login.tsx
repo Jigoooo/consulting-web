@@ -1,5 +1,5 @@
 import { createFileRoute, redirect, useRouter, Link } from '@tanstack/react-router';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 import { api, authStore } from '../lib/api';
 import {
@@ -17,11 +17,15 @@ const searchSchema = z.object({
   redirect: z.string().default('/'),
 });
 
+function formString(value: FormDataEntryValue | null): string {
+  return typeof value === 'string' ? value : '';
+}
+
 export const Route = createFileRoute('/login')({
   validateSearch: searchSchema,
-  beforeLoad: ({ context, search }) => {
+  beforeLoad: async ({ context, search }) => {
     // Already authed → skip login, honor the redirect target if present.
-    if (context.auth.isAuthed()) {
+    if (await context.auth.ensureFresh()) {
       // TanStack Router uses thrown redirects for control flow.
       // eslint-disable-next-line @typescript-eslint/only-throw-error
       throw redirect({ to: search.redirect });
@@ -42,12 +46,33 @@ function LoginPage() {
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const formRef = useRef<HTMLFormElement | null>(null);
 
   const showEmail = submitted || (blurred.email && email.length > 0);
   const showPassword = submitted || (blurred.password && password.length > 0);
   const emailError = showEmail ? validateEmail(email) : undefined;
   const passwordError = showPassword ? validatePassword(password) : undefined;
   const canSubmit = !validateEmail(email) && !validatePassword(password) && !loading;
+
+  useEffect(() => {
+    const syncAutofill = () => {
+      const form = formRef.current;
+      if (!form) return;
+      const data = new FormData(form);
+      const nextEmail = formString(data.get('email'));
+      const nextPassword = formString(data.get('password'));
+      setEmail((current) => (nextEmail !== current ? nextEmail : current));
+      setPassword((current) => (nextPassword !== current ? nextPassword : current));
+    };
+    const timers = [0, 80, 240, 700, 1400].map((delay) => window.setTimeout(syncAutofill, delay));
+    window.addEventListener('pageshow', syncAutofill);
+    window.addEventListener('focus', syncAutofill);
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+      window.removeEventListener('pageshow', syncAutofill);
+      window.removeEventListener('focus', syncAutofill);
+    };
+  }, []);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -88,9 +113,10 @@ function LoginPage() {
       <div className={s.title} data-stagger>다시 오신 걸 환영해요</div>
       <div className={s.subtitle} data-stagger>컨설팅 워크스페이스에 로그인하세요.</div>
       {error ? <ErrorBanner message={error} /> : null}
-      <form onSubmit={(event) => void onSubmit(event)} noValidate>
+      <form ref={formRef} onSubmit={(event) => void onSubmit(event)} noValidate>
         <Field
           label="이메일"
+          name="email"
           type="email"
           value={email}
           onChange={setEmail}
@@ -104,6 +130,7 @@ function LoginPage() {
         />
         <Field
           label="비밀번호"
+          name="password"
           type="password"
           value={password}
           onChange={setPassword}

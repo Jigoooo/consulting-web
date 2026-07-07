@@ -1,6 +1,6 @@
 import type { ChatRuntimeModel } from '@consulting/contracts';
 import { Button } from '../../../shared/ui/button/Button';
-import { Select } from '../../../shared/ui/select/Select';
+import { Icon } from '../../../shared/icons/Icon';
 import { SheetContent, SheetRoot } from '../../../shared/ui/dialog/Dialog';
 import s from '../../thread-view/ui/ThreadView.module.css';
 
@@ -23,7 +23,6 @@ export function ModelPickerSheet({
 }) {
   const effectiveModel = selectedModel || defaultModel || models[0]?.route || '';
   const selected = models.find((m) => m.route === effectiveModel);
-  const options = models.map((m) => ({ value: m.route, label: m.label }));
   return (
     <SheetRoot open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -40,28 +39,24 @@ export function ModelPickerSheet({
 
           {loading ? (
             <div className={s.modelEmpty}>모델 목록을 불러오는 중…</div>
-          ) : options.length > 0 ? (
+          ) : models.length > 0 ? (
             <>
-              <Select
-                value={effectiveModel}
-                options={options}
-                onValueChange={onSelect}
-                ariaLabel="모델 선택"
-                placeholder="모델 선택"
-              />
               <div className={s.modelList}>
                 {models.map((model) => (
                   <button
                     key={`${model.id}:${model.route}`}
                     type="button"
+                    aria-current={effectiveModel === model.route ? 'true' : undefined}
                     className={`${s.modelRow} ${effectiveModel === model.route ? s.modelRowOn : ''}`}
                     onClick={() => onSelect(model.route)}
                   >
                     <span>
                       <strong>{model.label}</strong>
-                      <em>{model.provider} · route {model.route}</em>
+                      <em>{model.provider} · {model.route}{defaultModel === model.route ? ' · 기본값' : ''}</em>
                     </span>
-                    {effectiveModel === model.route ? <b>선택됨</b> : null}
+                    <b className={s.modelRowCheck} aria-hidden="true">
+                      {effectiveModel === model.route ? <Icon name="check" size="xs" decorative /> : null}
+                    </b>
                   </button>
                 ))}
               </div>

@@ -4,6 +4,7 @@ import { and, asc, desc, eq, gt, inArray, isNull, lt, or } from 'drizzle-orm';
 import type { ChatMessage, ChatMessageAttachment, ChatMessageVerification, ListMessagesPageRequest, ListMessagesPageResponse, ListMessagesResponse, SearchMessagesResponse } from '@consulting/contracts';
 import { hangulMatch, highlightRanges, isChosungQuery } from '@consulting/contracts';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
+import { VisualDocumentSearchService } from '../consulting/visual-document-search.service.js';
 
 export type FinishState = 'complete' | 'cancelled' | 'error';
 
@@ -27,7 +28,10 @@ type MessageRow = ChatMessage & { createdAtDate: Date };
  */
 @Injectable()
 export class ChatMessageStore {
-  constructor(@Inject(DRIZZLE) private readonly db: Db) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: Db,
+    @Inject(VisualDocumentSearchService) private readonly visualSearch: VisualDocumentSearchService,
+  ) {}
 
   async saveUserMessage(input: {
     workspaceId: string;
@@ -169,28 +173,88 @@ export class ChatMessageStore {
       if (results.length >= cap) return results;
     }
 
-    const unitRows = await this.db
-      .select({
-        attachmentId: schema.fileAttachments.id,
-        fileName: schema.fileAttachments.fileName,
-        mimeType: schema.fileAttachments.mimeType,
-        messageId: schema.fileAttachments.messageId,
-        createdAt: schema.documentRetrievalUnits.createdAt,
-        status: schema.documentExtractions.status,
-        modality: schema.documentRetrievalUnits.modality,
-        locator: schema.documentRetrievalUnits.locator,
-        textContent: schema.documentRetrievalUnits.textContent,
-        documentRef: schema.documentRetrievalUnits.documentRef,
-      })
-      .from(schema.documentRetrievalUnits)
-      .innerJoin(schema.fileAttachments, eq(schema.documentRetrievalUnits.attachmentId, schema.fileAttachments.id))
-      .leftJoin(schema.documentExtractions, eq(schema.documentRetrievalUnits.extractionId, schema.documentExtractions.id))
-      .where(and(eq(schema.fileAttachments.threadId, threadId), isNull(schema.fileAttachments.deletedAt), isNull(schema.documentRetrievalUnits.deletedAt)))
-      .orderBy(desc(schema.documentRetrievalUnits.scorePrior), desc(schema.documentRetrievalUnits.createdAt))
-      .limit(2000);
-    for (const row of unitRows) {
+    let unitRows: Array<{
+      attachmentId: string;
+      fileName: string;
+      mimeType: string;
+      messageId: string | null;
+      unitId: string;
+      createdAt: Date;
+      status: string | null;
+      modality: string;
+      locator: string;
+      textContent: string;
+      documentRef: string;
+      scorePrior: string;
+      metadata: Record<string, unknown>;
+      embedding: number[] | null;
+    }>;
+    try {
+      unitRows = await this.db
+        .select({
+          attachmentId: schema.fileAttachments.id,
+          fileName: schema.fileAttachments.fileName,
+          mimeType: schema.fileAttachments.mimeType,
+          messageId: schema.fileAttachments.messageId,
+          unitId: schema.documentRetrievalUnits.id,
+          createdAt: schema.documentRetrievalUnits.createdAt,
+          status: schema.documentExtractions.status,
+          modality: schema.documentRetrievalUnits.modality,
+          locator: schema.documentRetrievalUnits.locator,
+          textContent: schema.documentRetrievalUnits.textContent,
+          documentRef: schema.documentRetrievalUnits.documentRef,
+          scorePrior: schema.documentRetrievalUnits.scorePrior,
+          metadata: schema.documentRetrievalUnits.metadata,
+          embedding: schema.documentUnitEmbeddings.embedding,
+        })
+        .from(schema.documentRetrievalUnits)
+        .innerJoin(schema.fileAttachments, eq(schema.documentRetrievalUnits.attachmentId, schema.fileAttachments.id))
+        .leftJoin(schema.documentExtractions, eq(schema.documentRetrievalUnits.extractionId, schema.documentExtractions.id))
+        .leftJoin(schema.documentUnitEmbeddings, and(eq(schema.documentUnitEmbeddings.documentUnitId, schema.documentRetrievalUnits.id), isNull(schema.documentUnitEmbeddings.deletedAt)))
+        .where(and(eq(schema.fileAttachments.threadId, threadId), isNull(schema.fileAttachments.deletedAt), isNull(schema.documentRetrievalUnits.deletedAt)))
+        .orderBy(desc(schema.documentRetrievalUnits.scorePrior), desc(schema.documentRetrievalUnits.createdAt))
+        .limit(2000);
+    } catch (error) {
+      if (!isMissingEmbeddingRelationError(error)) throw error;
+      unitRows = await this.db
+        .select({
+          attachmentId: schema.fileAttachments.id,
+          fileName: schema.fileAttachments.fileName,
+          mimeType: schema.fileAttachments.mimeType,
+          messageId: schema.fileAttachments.messageId,
+          unitId: schema.documentRetrievalUnits.id,
+          createdAt: schema.documentRetrievalUnits.createdAt,
+          status: schema.documentExtractions.status,
+          modality: schema.documentRetrievalUnits.modality,
+          locator: schema.documentRetrievalUnits.locator,
+          textContent: schema.documentRetrievalUnits.textContent,
+          documentRef: schema.documentRetrievalUnits.documentRef,
+          scorePrior: schema.documentRetrievalUnits.scorePrior,
+          metadata: schema.documentRetrievalUnits.metadata,
+        })
+        .from(schema.documentRetrievalUnits)
+        .innerJoin(schema.fileAttachments, eq(schema.documentRetrievalUnits.attachmentId, schema.fileAttachments.id))
+        .leftJoin(schema.documentExtractions, eq(schema.documentRetrievalUnits.extractionId, schema.documentExtractions.id))
+        .where(and(eq(schema.fileAttachments.threadId, threadId), isNull(schema.fileAttachments.deletedAt), isNull(schema.documentRetrievalUnits.deletedAt)))
+        .orderBy(desc(schema.documentRetrievalUnits.scorePrior), desc(schema.documentRetrievalUnits.createdAt))
+        .limit(2000)
+        .then((rows) => rows.map((row) => ({ ...row, embedding: null })));
+    }
+    const matchedRows = unitRows.filter((row) => {
       const haystack = `${row.fileName}\n${row.documentRef}\n${row.locator}\n${row.modality}\n${row.textContent}`;
-      if (!hangulMatch(haystack, q)) continue;
+      return hangulMatch(haystack, q);
+    });
+    const rankedRows = await this.visualSearch.rankStoredUnits(q, matchedRows.map((row) => ({
+      id: row.unitId,
+      scorePrior: Number(row.scorePrior),
+      textContent: `${row.fileName}\n${row.documentRef}\n${row.locator}\n${row.modality}\n${row.textContent}`,
+      embedding: row.embedding ?? vectorFromMetadata(row.metadata),
+      modality: row.modality,
+    })));
+    const rowByUnitId = new Map(matchedRows.map((row) => [row.unitId, row]));
+    for (const ranked of rankedRows) {
+      const row = rowByUnitId.get(ranked.id);
+      if (!row) continue;
       const ranges = highlightRanges(row.textContent, q);
       results.push({
         id: row.attachmentId,
@@ -521,4 +585,19 @@ export class ChatMessageStore {
     const suffix = end < content.length ? '…' : '';
     return `${prefix}${content.slice(start, end)}${suffix}`;
   }
+}
+
+function vectorFromMetadata(metadata: Record<string, unknown> | null): number[] | null {
+  const value = metadata?.embedding;
+  if (!Array.isArray(value)) return null;
+  const vector = value.filter((item): item is number => typeof item === 'number' && Number.isFinite(item));
+  return vector.length > 0 ? vector : null;
+}
+
+function isMissingEmbeddingRelationError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const record = error as Record<string, unknown>;
+  if (record.code === '42P01') return true;
+  const message = typeof record.message === 'string' ? record.message : '';
+  return /relation .*document_unit_embeddings.* does not exist|no such table: document_unit_embeddings/iu.test(message);
 }

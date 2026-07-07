@@ -12,7 +12,10 @@ export const messageWindowKeys = {
 
 function cachedLatest(threadId: string): MessageWindow | undefined {
   const cached = getCachedMessageWindow(threadId);
-  return cached?.mode === 'latest' ? cached : undefined;
+  // Channel entry must always face the live tail. Search/deeplink windows and
+  // any window with a newer edge open are stale middle-history states, so skip
+  // them and hydrate the latest page instead.
+  return cached?.mode === 'latest' && !cached.hasNewer ? cached : undefined;
 }
 
 export function useMessageWindow(threadId: string) {

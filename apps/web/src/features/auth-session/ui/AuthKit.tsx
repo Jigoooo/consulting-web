@@ -93,6 +93,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
 
 export function Field(props: {
   label: string;
+  name?: string;
   type: string;
   value: string;
   onChange: (v: string) => void;
@@ -112,6 +113,7 @@ export function Field(props: {
   const input = (
     <Input
       id={id}
+      name={props.name}
       className={s.input}
       type={inputType}
       value={props.value}

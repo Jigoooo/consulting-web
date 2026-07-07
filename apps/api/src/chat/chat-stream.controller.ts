@@ -268,6 +268,7 @@ export class ChatStreamController {
             workspaceId: access.workspaceId,
             threadId: cmd.threadId,
             assistantMessageId: messageId,
+            userPrompt: runMessage,
             answer: assistantText,
             runId,
           });

@@ -6,6 +6,7 @@ export class EnvSecretProvider implements SecretProviderPort {
   constructor(private readonly env: Env) {}
 
   get(name: SecretName): string {
-    return this.env[name];
+    const value = this.env[name as keyof Env];
+    return typeof value === 'string' ? value : '';
   }
 }

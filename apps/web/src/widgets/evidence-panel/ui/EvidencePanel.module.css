@@ -9,19 +9,25 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-height: 0;
 }
 .modeTabs {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  display: flex;
   gap: 2px;
   padding: 3px;
   margin-bottom: 6px;
   border: 1px solid var(--border-hair);
   border-radius: 10px;
   background: var(--surface-card);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.modeTabs::-webkit-scrollbar {
+  display: none;
 }
 .modeTab {
-  min-width: 0;
+  flex: 1 0 max-content;
+  min-width: 72px;
   border: 0;
   border-radius: 7px;
   background: transparent;
@@ -387,7 +393,7 @@
   grid-template-rows: 1fr;
   opacity: 1;
   margin-top: 6px;
-  transition: grid-template-rows 200ms var(--ease-out), opacity 150ms var(--ease-out), margin-top 200ms var(--ease-out);
+  transition: grid-template-rows var(--dur-panel) var(--ease-standard), opacity var(--dur-exit) var(--ease-exit), margin-top var(--dur-panel) var(--ease-standard);
 }
 .addBtnShell > * {
   min-height: 0;
@@ -405,7 +411,7 @@
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
-  transition: grid-template-rows 200ms var(--ease-out), opacity 160ms var(--ease-out);
+  transition: grid-template-rows var(--dur-panel) var(--ease-standard), opacity var(--dur-enter) var(--ease-enter);
 }
 .formShellOpen {
   grid-template-rows: 1fr;
@@ -413,7 +419,7 @@
 }
 /* G3: staggered field entry — each control fades + rises 40ms apart. */
 .formShellOpen .formInner > * {
-  animation: cwFieldRise 240ms var(--ease-out) both;
+  animation: cwFieldRise var(--dur-enter) var(--ease-enter) both;
 }
 .formShellOpen .formInner > *:nth-child(1) { animation-delay: 0ms; }
 .formShellOpen .formInner > *:nth-child(2) { animation-delay: 40ms; }
@@ -428,8 +434,13 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-top: 6px;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--border-hair);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-card) 72%, var(--bg-warm));
+  box-shadow: var(--shadow-ring);
 }
 .formActions {
   display: flex;
@@ -440,9 +451,9 @@
   font: inherit;
   font-size: 12.5px;
   padding: 7px 9px;
-  border: 1px solid var(--border-whisper);
+  border: 1px solid color-mix(in srgb, var(--border-whisper) 76%, var(--text-muted));
   border-radius: 7px;
-  background: var(--bg-canvas);
+  background: var(--surface-card);
   color: var(--text-primary);
   outline: none;
   resize: vertical;
@@ -491,7 +502,7 @@
 .searchList {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
 }
 .searchListHead {
   display: flex;
@@ -521,19 +532,21 @@
   align-items: center;
   gap: 2px 8px;
   width: 100%;
-  border: 0;
-  border-radius: 10px;
+  border: 1px solid transparent;
+  border-radius: 12px;
   background: transparent;
-  padding: 9px 10px;
+  padding: 10px 11px;
   text-align: left;
   cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
-.searchRow:hover,
-.searchRowOn {
-  background: var(--bg-warm);
+.searchRow:hover {
+  background: color-mix(in srgb, var(--surface-card) 72%, var(--bg-warm));
 }
 .searchRowOn {
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: color-mix(in srgb, var(--surface-card) 82%, var(--bg-warm));
+  border-color: color-mix(in srgb, var(--border-hair) 78%, transparent);
+  box-shadow: 0 8px 24px -22px color-mix(in srgb, var(--text-primary) 35%, transparent);
 }
 .searchRowMuted {
   cursor: default;
@@ -548,16 +561,15 @@
 .searchRowRole {
   font-size: 10.5px;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--text-secondary);
 }
 .searchRowKind {
   font-size: 9.5px;
   font-weight: 700;
   color: var(--text-secondary);
-  background: var(--bg-warm);
-  border: 1px solid var(--border-hair);
-  border-radius: 4px;
-  padding: 0 4px;
+  background: color-mix(in srgb, var(--surface-card) 82%, var(--bg-warm));
+  border-radius: 999px;
+  padding: 1px 5px;
 }
 .searchRowTime {
   font-size: 10.5px;
@@ -583,10 +595,10 @@
   grid-area: go;
   color: var(--text-muted);
   transform: rotate(180deg);
-  opacity: 0;
+  opacity: 0.35;
   transition: opacity var(--dur-fast) var(--ease-out);
 }
 .searchRow:hover .searchRowGo,
 .searchRowOn .searchRowGo {
-  opacity: 1;
+  opacity: 0.75;
 }

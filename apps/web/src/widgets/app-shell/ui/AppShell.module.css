@@ -6,7 +6,7 @@
   grid-template-columns: var(--w-rail) var(--w-sidebar) minmax(560px, 1fr) var(--context-open-width);
   height: 100vh;
   overflow: hidden;
-  transition: grid-template-columns 260ms var(--ease-out);
+  transition: none;
 }
 .appContextCollapsed {
   --chat-lane-offset: calc((var(--context-closed-width) - var(--context-open-width)) / 2);
@@ -55,7 +55,7 @@
   color: #e9eaec;
   background: rgba(255, 255, 255, 0.07);
   border: 1px solid rgba(255, 255, 255, 0.05);
-  transition: all var(--dur-fast) var(--ease-out);
+  transition: border-radius var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
 .ws:hover {
   border-radius: 15px;
@@ -90,7 +90,7 @@
   background: transparent;
   border: 1px dashed rgba(255, 255, 255, 0.22);
   cursor: pointer;
-  transition: all var(--dur-fast) var(--ease-out);
+  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 .wsAdd:hover {
   color: #fff;
@@ -417,12 +417,14 @@
 /* CONTEXT */
 .context {
   position: relative;
+  height: 100vh;
+  min-height: 0;
   background: var(--bg-sidebar);
   border-left: 1px solid var(--border-whisper);
   display: flex;
   flex-direction: column;
   min-width: 0;
-  overflow: hidden auto;
+  overflow: hidden;
   transition: background-color 180ms var(--ease-out), border-color 180ms var(--ease-out);
 }
 .contextCollapsed {
@@ -459,6 +461,10 @@
 .contextContent {
   width: var(--context-open-width);
   min-width: var(--context-open-width);
+  min-height: 0;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
   opacity: 1;
   transform: translateX(0);
   transition: opacity 180ms var(--ease-out), transform 240ms var(--ease-out);
@@ -472,6 +478,7 @@
 /* 2-A / B4: evidence/member/search tabs — underline-indicator style */
 .ctxTabs {
   display: flex;
+  flex: 0 0 auto;
   gap: 2px;
   padding: 10px 14px 0;
   border-bottom: 1px solid var(--border-hair);
@@ -479,8 +486,14 @@
   top: 0;
   background: var(--surface-panel);
   z-index: 2;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.ctxTabs::-webkit-scrollbar {
+  display: none;
 }
 .ctxTab {
+  flex: 1 0 auto;
   position: relative;
   font: inherit;
   font-size: 12px;
@@ -692,6 +705,18 @@
 
 .archiveDialog {
   width: min(520px, calc(100vw - 32px));
+}
+.workspaceSurfaceDialog {
+  width: min(1120px, calc(100vw - 40px));
+  height: min(760px, calc(100vh - 40px));
+  max-height: calc(100vh - 40px);
+  padding: 18px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.workspaceSurfaceDialog :global(.cwDialogHead) {
+  margin-bottom: 12px;
 }
 .archiveList {
   display: flex;

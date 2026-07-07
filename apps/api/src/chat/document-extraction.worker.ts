@@ -11,6 +11,7 @@ import { ENV_TOKEN } from '../config/config.module.js';
 import type { Env } from '../config/env.schema.js';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 import { EvidenceToDecisionService } from '../consulting/evidence-to-decision.service.js';
+import { DocumentUnitEmbeddingService } from '../consulting/document-unit-embedding.service.js';
 import { extractDocumentText } from './document-extraction.service.js';
 
 const MAX_INDEXED_TEXT_CHARS = 200_000;
@@ -47,6 +48,7 @@ export class DocumentExtractionWorker implements OnModuleInit, OnModuleDestroy {
     @Inject(ENV_TOKEN) private readonly env: Env,
     @Inject(DRIZZLE) private readonly db: Db,
     @Inject(EvidenceToDecisionService) private readonly evidenceDecision: EvidenceToDecisionService,
+    @Inject(DocumentUnitEmbeddingService) private readonly documentEmbeddings: DocumentUnitEmbeddingService,
   ) {
     this.queue = new Queue('document-extraction', {
       connection: redisConnectionFromUrl(this.env.REDIS_URL),
@@ -136,7 +138,7 @@ export class DocumentExtractionWorker implements OnModuleInit, OnModuleDestroy {
     ];
     await this.db.delete(schema.documentRetrievalUnits).where(eq(schema.documentRetrievalUnits.extractionId, extractionRow.id));
     if (units.length === 0) return;
-    await this.db.insert(schema.documentRetrievalUnits).values(
+    const insertedUnits = await this.db.insert(schema.documentRetrievalUnits).values(
       units.map((unit) => ({
         workspaceId: job.workspaceId,
         attachmentId: job.attachmentId,
@@ -148,7 +150,25 @@ export class DocumentExtractionWorker implements OnModuleInit, OnModuleDestroy {
         scorePrior: String(unit.scorePrior),
         metadata: unit.metadata,
       })),
-    );
+    ).returning({
+      id: schema.documentRetrievalUnits.id,
+      documentRef: schema.documentRetrievalUnits.documentRef,
+      modality: schema.documentRetrievalUnits.modality,
+      locator: schema.documentRetrievalUnits.locator,
+      textContent: schema.documentRetrievalUnits.textContent,
+      metadata: schema.documentRetrievalUnits.metadata,
+    });
+    await this.documentEmbeddings.embedAndPersistUnits({
+      workspaceId: job.workspaceId,
+      units: insertedUnits.map((unit) => ({
+        id: unit.id,
+        documentRef: unit.documentRef,
+        modality: unit.modality,
+        locator: unit.locator,
+        textContent: unit.textContent,
+        metadata: unit.metadata,
+      })),
+    });
   }
 }
 

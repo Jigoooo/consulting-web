@@ -28,6 +28,8 @@ describe('EvidenceToDecisionService', () => {
     });
 
     expect(result.verifier).toBe('strict_json_local_nli_v1');
+    expect(result.metrics.totalLatencyMs).toBeGreaterThanOrEqual(0);
+    expect(result.lattice.verdicts[0]?.verifierTrace).toEqual(expect.objectContaining({ provider: 'local_nli', latencyMs: expect.any(Number) }));
     expect(result.strictJson.verdicts).toEqual(expect.arrayContaining([
       expect.objectContaining({ claim_id: 'support-tp', verdict: 'supports' }),
       expect.objectContaining({ claim_id: 'refute-tp', verdict: 'refutes' }),

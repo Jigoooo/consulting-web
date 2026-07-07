@@ -1,6 +1,10 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import type { MessageWindow } from './messageWindow';
-import { clearMessageWindowCache, getCachedMessageWindow, setCachedMessageWindow } from './messageCache';
+import {
+  clearMessageWindowCache,
+  getCachedMessageWindow,
+  setCachedMessageWindow,
+} from './messageCache';
 
 function win(label: string): MessageWindow {
   return {

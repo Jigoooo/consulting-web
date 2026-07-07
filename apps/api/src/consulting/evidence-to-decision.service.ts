@@ -9,6 +9,20 @@ export interface ClaimInput {
   decisionImpact?: number;
 }
 
+export interface VerifierTrace {
+  provider: string;
+  model: string;
+  label?: string;
+  latencyMs: number;
+  source: 'heuristic' | 'nli' | 'llm';
+}
+
+export interface VerificationMetrics {
+  totalLatencyMs: number;
+  providerCalls: { nli: number; llm: number; heuristic: number };
+  providerLatencies: Record<string, number>;
+}
+
 export interface EvidenceInput {
   id: string;
   text: string;
@@ -26,6 +40,7 @@ export interface ClaimVerdict {
   contradictedTerms: string[];
   rationale: string;
   decisionImpact: number;
+  verifierTrace?: VerifierTrace;
 }
 
 export interface ClaimVerificationLattice {
@@ -35,8 +50,9 @@ export interface ClaimVerificationLattice {
 }
 
 export interface StrictJsonVerificationResult {
-  verifier: 'strict_json_local_nli_v1';
+  verifier: string;
   lattice: ClaimVerificationLattice;
+  metrics: VerificationMetrics;
   strictJson: {
     verdicts: Array<{
       claim_id: string;
@@ -253,6 +269,11 @@ export class EvidenceToDecisionService {
     return {
       verifier: 'strict_json_local_nli_v1',
       lattice,
+      metrics: {
+        totalLatencyMs: 0,
+        providerCalls: { nli: 0, llm: 0, heuristic: lattice.verdicts.length },
+        providerLatencies: { 'heuristic:local_nli': 0 },
+      },
       strictJson: {
         verdicts: lattice.verdicts.map((verdict) => ({
           claim_id: verdict.claimId,
@@ -453,6 +474,7 @@ export class EvidenceToDecisionService {
         contradictedTerms,
         rationale: `${verdict}; overlap=${round4(overlapScore)}; quality=${item.qualityScore ?? 'n/a'}; evidence=${item.id}`,
         decisionImpact: clamp01(claim.decisionImpact ?? 0.5),
+        verifierTrace: { provider: 'local_nli', model: 'term-overlap-contradiction-v1', label: verdict, latencyMs: 0, source: 'heuristic' },
       };
       if (!best || this.verdictRank(candidate) > this.verdictRank(best)) best = candidate;
     }
@@ -467,6 +489,7 @@ export class EvidenceToDecisionService {
         contradictedTerms: best?.contradictedTerms ?? [],
         rationale: best ? `not_enough_info; best=${best.rationale}` : 'not_enough_info; no evidence',
         decisionImpact: clamp01(claim.decisionImpact ?? 0.5),
+        verifierTrace: best?.verifierTrace ?? { provider: 'local_nli', model: 'term-overlap-contradiction-v1', label: 'not_enough_info', latencyMs: 0, source: 'heuristic' },
       };
     }
     return best;

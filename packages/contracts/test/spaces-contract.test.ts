@@ -11,6 +11,8 @@ import {
   CreateContextEdgeRequestSchema,
   CreateContextEdgeResponseSchema,
   ListContextEdgesResponseSchema,
+  ScopeProfileResponseSchema,
+  UpdateScopeProfileRequestSchema,
 } from '../src/index.js';
 
 const uuid = '00000000-0000-4000-8000-000000000001';
@@ -44,6 +46,26 @@ describe('space creation contracts', () => {
     expect(CreateTopicResponseSchema.parse(response)).toEqual(response);
     expect(CreateThreadResponseSchema.parse(response)).toEqual(response);
     expect(() => CreateThreadResponseSchema.parse({ ...response, jwtSecret: 'secret' })).toThrow();
+  });
+});
+
+describe('scope profile contracts', () => {
+  it('accepts strict channel/topic profile responses and update requests without tree leakage', () => {
+    const profile = {
+      scopeType: 'channel' as const,
+      scopeId: uuid,
+      purpose: '자료를 모으는 채널',
+      role: 'source_intake',
+      style: '간결하고 근거 중심',
+      rules: '출처 없는 단정 금지',
+      source: 'template' as const,
+      updatedAt: '2026-07-07T00:00:00.000Z',
+    };
+    expect(ScopeProfileResponseSchema.parse({ profile })).toEqual({ profile });
+    expect(ScopeProfileResponseSchema.parse({ profile: null })).toEqual({ profile: null });
+    expect(UpdateScopeProfileRequestSchema.parse({ purpose: '수정', rules: '' })).toEqual({ purpose: '수정', rules: '' });
+    expect(() => UpdateScopeProfileRequestSchema.parse({ purpose: 'x', memoryTopicId: 'secret' })).toThrow();
+    expect(() => ScopeProfileResponseSchema.parse({ profile: { ...profile, tokenHash: 'secret' } })).toThrow();
   });
 });
 

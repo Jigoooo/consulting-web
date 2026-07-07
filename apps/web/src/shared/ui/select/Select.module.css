@@ -48,7 +48,7 @@
 }
 
 .content {
-  z-index: 60;
+  z-index: var(--z-popover);
   min-width: var(--radix-select-trigger-width);
   max-height: var(--radix-select-content-available-height);
   background: var(--surface-card);
@@ -60,10 +60,10 @@
 }
 /* shadcn 표준 open/close 애니메이션 — fade + zoom + slide. */
 .content[data-state='open'] {
-  animation: selectIn 150ms var(--ease-out);
+  animation: selectIn var(--dur-enter) var(--ease-enter);
 }
 .content[data-state='closed'] {
-  animation: selectOut 120ms var(--ease-out);
+  animation: selectOut var(--dur-exit) var(--ease-exit);
 }
 @keyframes selectIn {
   from {

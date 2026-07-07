@@ -1,4 +1,4 @@
-import { index, jsonb, numeric, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { boolean, index, integer, jsonb, numeric, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { primaryId, softDelete, timestamps } from './_shared';
 import { evidenceItems, fileAttachments, documentExtractions } from './collab';
 import { workspaces } from './organization';
@@ -131,6 +131,62 @@ export const documentRetrievalUnits = pgTable(
     index('document_units_workspace_idx').on(t.workspaceId, t.modality),
     index('document_units_attachment_idx').on(t.attachmentId),
     index('document_units_extraction_idx').on(t.extractionId),
+  ],
+);
+
+export const documentUnitEmbeddings = pgTable(
+  'document_unit_embeddings',
+  {
+    id: primaryId,
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    documentUnitId: uuid('document_unit_id')
+      .notNull()
+      .references(() => documentRetrievalUnits.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    model: text('model').notNull(),
+    embeddingDim: integer('embedding_dim').notNull().default(0),
+    inputSha256: text('input_sha256').notNull(),
+    status: text('status').notNull().default('fallback'),
+    fallbackReason: text('fallback_reason'),
+    embedding: jsonb('embedding').$type<number[]>().notNull().default([]),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+    ...timestamps,
+    ...softDelete,
+  },
+  (t) => [
+    uniqueIndex('document_unit_embeddings_unit_provider_input_uq').on(t.documentUnitId, t.provider, t.inputSha256),
+    index('document_unit_embeddings_workspace_idx').on(t.workspaceId, t.provider, t.createdAt),
+    index('document_unit_embeddings_unit_idx').on(t.documentUnitId, t.createdAt),
+    index('document_unit_embeddings_status_idx').on(t.workspaceId, t.status, t.createdAt),
+  ],
+);
+
+export const exactnessRuns = pgTable(
+  'exactness_runs',
+  {
+    id: primaryId,
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    threadId: uuid('thread_id').references(() => threads.id, { onDelete: 'set null' }),
+    assistantMessageId: uuid('assistant_message_id').references(() => chatMessages.id, { onDelete: 'cascade' }),
+    runKind: text('run_kind').notNull().default('exactness_gate_v1'),
+    required: boolean('required').notNull().default(false),
+    status: text('status').notNull(),
+    queryHash: text('query_hash').notNull(),
+    checks: jsonb('checks').$type<Record<string, unknown>[]>().notNull().default([]),
+    summary: text('summary').notNull().default(''),
+    answerInstruction: text('answer_instruction').notNull().default(''),
+    ...timestamps,
+    ...softDelete,
+  },
+  (t) => [
+    index('exactness_runs_workspace_idx').on(t.workspaceId, t.createdAt),
+    index('exactness_runs_thread_idx').on(t.threadId, t.createdAt),
+    index('exactness_runs_message_idx').on(t.assistantMessageId, t.createdAt),
+    index('exactness_runs_status_idx').on(t.workspaceId, t.status, t.createdAt),
   ],
 );
 

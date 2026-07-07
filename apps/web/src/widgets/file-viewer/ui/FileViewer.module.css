@@ -12,7 +12,7 @@
   inset: 0;
   border: 0;
   background: color-mix(in srgb, var(--text-primary) 16%, transparent);
-  cursor: default;
+  cursor: pointer;
   pointer-events: auto;
 }
 .panel {

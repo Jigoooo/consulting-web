@@ -3,6 +3,7 @@ import { useEvidence, useProjectEvidence, useAddEvidence, useEvidenceDecisionSum
 import { useHoveredMessage } from '../../../lib/threadCtx';
 import { useToast } from '../../../shared/ui/toast/Toast';
 import { Icon } from '../../../shared/icons/Icon';
+import type { EvidenceDecisionSummaryResponse, ReviewQueueResponse } from '@consulting/contracts';
 import type { IconName } from '../../../shared/icons/registry';
 import { Button } from '../../../shared/ui/button/Button';
 import { Input, Textarea } from '../../../shared/ui/input/Input';
@@ -51,7 +52,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
   const [url, setUrl] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
-  const showLoading = useDelayedFlag(isLoading, 300);
+  const showLoading = useDelayedFlag(isLoading, 300, 260);
 
   // Focus the first field once the expand transition settles (avoids scroll jump).
   useEffect(() => {
@@ -80,6 +81,25 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
     }
   }
 
+  function closeForm() {
+    setRef('');
+    setExcerpt('');
+    setUrl('');
+    setFormOpen(false);
+  }
+
+  function selectMode(next: typeof mode) {
+    setMode(next);
+    setSelectedId(null);
+    if (next !== 'sources') closeForm();
+  }
+
+  function selectScope(next: typeof scope) {
+    setScope(next);
+    setSelectedId(null);
+    closeForm();
+  }
+
   const items = data?.evidence ?? [];
   const selected = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
 
@@ -98,7 +118,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
             role="tab"
             aria-selected={mode === id}
             className={`${s.modeTab} ${mode === id ? s.modeTabOn : ''}`}
-            onClick={() => setMode(id)}
+            onClick={() => selectMode(id)}
           >
             {label}
           </button>
@@ -111,7 +131,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
             role="radio"
             aria-checked={scope === 'channel'}
             className={`${s.scopeBtn} ${scope === 'channel' ? s.scopeBtnOn : ''}`}
-            onClick={() => setScope('channel')}
+            onClick={() => selectScope('channel')}
           >
             이 채널
           </button>
@@ -120,7 +140,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
             role="radio"
             aria-checked={scope === 'project'}
             className={`${s.scopeBtn} ${scope === 'project' ? s.scopeBtnOn : ''}`}
-            onClick={() => setScope('project')}
+            onClick={() => selectScope('project')}
           >
             프로젝트 전체
           </button>
@@ -222,7 +242,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
       ) : null}
 
       {/* B5: grid-accordion add form — always mounted, animates on open */}
-      <div className={`${s.formShell} ${mode === 'sources' && formOpen ? s.formShellOpen : ''}`} aria-hidden={!formOpen} inert={!formOpen ? true : undefined}>
+      <div className={`${s.formShell} ${mode === 'sources' && formOpen ? s.formShellOpen : ''}`} aria-hidden={mode !== 'sources' || !formOpen} inert={mode !== 'sources' || !formOpen ? true : undefined}>
         <div className={s.formInner}>
           <Input
             ref={firstFieldRef}
@@ -248,7 +268,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
             <Button type="button" variant="primary" size="sm" className={s.btnPrimary} disabled={addEvidence.isPending} onClick={() => void submit()}>
               추가
             </Button>
-            <Button type="button" variant="ghost" size="sm" className={s.btnGhost} onClick={() => setFormOpen(false)}>
+            <Button type="button" variant="ghost" size="sm" className={s.btnGhost} onClick={closeForm}>
               취소
             </Button>
           </div>
@@ -271,8 +291,8 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
   );
 }
 
-type DecisionSummary = NonNullable<ReturnType<typeof useEvidenceDecisionSummary>['data']>;
-type ReviewItem = NonNullable<ReturnType<typeof useReviewQueue>['data']>['items'][number];
+type DecisionSummary = EvidenceDecisionSummaryResponse;
+type ReviewItem = ReviewQueueResponse['items'][number];
 
 function VerificationView({ isLoading, summary }: { isLoading: boolean; summary: DecisionSummary | undefined }) {
   if (isLoading) return <PanelLoading label="근거검증 계산 중" />;
@@ -280,6 +300,7 @@ function VerificationView({ isLoading, summary }: { isLoading: boolean; summary:
     return <EmptyState icon="info" title="검증된 답변이 아직 없어요" description="답변이 생성되면 문장별 지지/반박/근거부족 판정이 여기에 쌓입니다." />;
   }
   const v = summary.verdictSummary;
+  const exactness = summary.exactness.latestRun;
   return (
     <div className={s.decisionStack} data-testid="evidence-verification-panel">
       <div className={s.metricGrid}>
@@ -288,6 +309,13 @@ function VerificationView({ isLoading, summary }: { isLoading: boolean; summary:
         <Metric label="근거부족" value={v.notEnoughInfo} tone="warn" />
         <Metric label="검증문장" value={v.claimCount} />
       </div>
+      {exactness ? (
+        <div className={s.verdictRow} data-verdict={exactness.status === 'blocked' ? 'refutes' : exactness.status === 'passed' ? 'supports' : 'not_enough_info'}>
+          <span className={s.verdictBadge}>정확성</span>
+          <span className={s.verdictText}>{exactnessLabel(exactness.status)} · {exactness.summary}</span>
+          <span className={s.verdictMeta}>검산 {exactness.checks.length}건</span>
+        </div>
+      ) : null}
       <div className={s.sectionLabel}>최근 판정</div>
       {summary.latestVerdicts.slice(0, 6).map((row) => (
         <div key={row.id} className={s.verdictRow} data-verdict={row.verdict}>
@@ -356,6 +384,12 @@ function verdictLabel(verdict: string): string {
   if (verdict === 'refutes') return '반박';
   if (verdict === 'mixed') return '혼재';
   return '근거부족';
+}
+
+function exactnessLabel(status: string): string {
+  if (status === 'passed') return '검산 통과';
+  if (status === 'blocked') return '검산 차단';
+  return '검산 생략';
 }
 
 function actionLabel(action: string): string {

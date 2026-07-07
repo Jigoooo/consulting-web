@@ -178,6 +178,34 @@ describe('HttpCore fetch binding', () => {
     });
   });
 
+  it('calls scope profile endpoints with strict typed payloads', async () => {
+    const calls: Array<{ url: string; body: string | null; method: string | undefined }> = [];
+    const fakeFetch = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), body: typeof init?.body === 'string' ? init.body : null, method: init?.method });
+      return Promise.resolve(new Response(JSON.stringify({
+        profile: {
+          scopeType: String(url).includes('/topics/') ? 'topic' : 'channel',
+          scopeId: '00000000-0000-4000-8000-000000000001',
+          purpose: '자료 수집',
+          role: 'source_intake',
+          style: '간결',
+          rules: '출처 없는 단정 금지',
+          source: init?.method === 'PATCH' ? 'manual' : 'template',
+          updatedAt: '2026-07-07T00:00:00.000Z',
+        },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    });
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+
+    await client.getChannelProfile('00000000-0000-4000-8000-000000000001');
+    await client.updateTopicProfile('00000000-0000-4000-8000-000000000002', { purpose: '검산', rules: '숫자는 재계산' });
+
+    expect(calls).toEqual([
+      { url: '/api/spaces/channels/00000000-0000-4000-8000-000000000001/profile', method: 'GET', body: null },
+      { url: '/api/spaces/topics/00000000-0000-4000-8000-000000000002/profile', method: 'PATCH', body: JSON.stringify({ purpose: '검산', rules: '숫자는 재계산' }) },
+    ]);
+  });
+
   it('preserves PARENT_ARCHIVED restore errors as typed ApiClientError codes', async () => {
     const fakeFetch = vi.fn(() => Promise.resolve(new Response(JSON.stringify({
       code: 'PARENT_ARCHIVED',

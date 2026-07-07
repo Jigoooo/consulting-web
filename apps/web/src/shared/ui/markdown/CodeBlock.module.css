@@ -94,15 +94,16 @@
   border-radius: 10px;
 }
 /* Shiki 출력(defaultColor:false)은 --shiki-light / --shiki-dark 두 변수를 담는다.
-   라이트=light 값, [data-theme='dark']에서 dark 값으로 전환. */
+   코드블록 배경은 라이트 테마에서도 어두운 잉크 패널(--code-bg)이므로 github-light
+   색을 쓰면 검은 글씨가 배경에 묻힌다. 배경 톤 기준으로 항상 dark palette를 쓴다. */
 .shiki :global(.shiki),
 .shiki :global(.shiki span) {
-  color: var(--shiki-light);
+  color: var(--shiki-dark, var(--code-fg));
   background-color: transparent !important;
 }
 :global([data-theme='dark']) .shiki :global(.shiki),
 :global([data-theme='dark']) .shiki :global(.shiki span) {
-  color: var(--shiki-dark);
+  color: var(--shiki-dark, var(--code-fg));
 }
 .shiki :global(pre.shiki) {
   margin: 0;

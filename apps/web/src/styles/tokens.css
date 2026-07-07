@@ -21,8 +21,8 @@
 
   /* text — pure black 금지, warm charcoal ink */
   --text-primary: #1f211f;
-  --text-secondary: #62605a;
-  --text-muted: #918c82;
+  --text-secondary: #5d5a54;
+  --text-muted: #746f66;
 
   /* borders */
   --border-whisper: rgba(31, 33, 36, 0.1);
@@ -54,6 +54,12 @@
   --green: #287a46;
   --amber: #a96613;
   --red: #b43d2f;
+  --semantic-success: var(--green);
+  --semantic-warning: var(--amber);
+  --semantic-danger: var(--red);
+  --warning-soft: rgba(169, 102, 19, 0.12);
+  --danger: var(--red);
+  --danger-soft: rgba(180, 61, 47, 0.11);
 
   /* radii — 8/12/16 3단 + pill */
   --radius-sm: 8px;
@@ -64,7 +70,7 @@
   --radius-pill: 9999px;
 
   /* type */
-  --font-sans: 'Wanted Sans Variable', 'Wanted Sans', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Segoe UI', system-ui, sans-serif;
+  --font-sans: 'Wanted Sans Variable', 'Wanted Sans', 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', system-ui, sans-serif;
   --font-mono: ui-monospace, 'Cascadia Code', 'Cascadia Mono', 'DejaVu Sans Mono', 'Noto Sans Mono', SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
   /* weight scale — 400/510/590/650. 700+는 사용하지 않는다 (절제). */
   --fw-regular: 400;
@@ -102,13 +108,24 @@
   --shadow-card: 0 0 0 1px rgba(31, 33, 36, 0.08), 0 2px 2px rgba(31, 33, 36, 0.035), 0 12px 28px -22px rgba(31, 33, 36, 0.35);
   --shadow-pop: 0 0 0 1px rgba(31, 33, 36, 0.1), 0 18px 55px -24px rgba(31, 33, 36, 0.45);
 
-  /* motion */
-  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
-  --ease-emphasized: cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* z-layers — Dialog/Select/Toast portal ordering. */
+  --z-overlay: 900;
+  --z-dialog: 901;
+  --z-popover: 930;
+  --z-toast: 1000;
+
+  /* motion — short, non-bouncy product motion. */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-enter: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ease-exit: cubic-bezier(0.3, 0, 0.8, 0.15);
+  --ease-emphasized: var(--ease-enter);
   --ease-out: var(--ease-standard);
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --dur-fast: 0.16s;
-  --dur-base: 0.24s;
+  --ease-spring: var(--ease-enter);
+  --dur-fast: 140ms;
+  --dur-base: 220ms;
+  --dur-enter: 220ms;
+  --dur-exit: 140ms;
+  --dur-panel: 240ms;
 }
 
 /* Dark layer. Toggled via [data-theme] on <html>; an inline pre-hydration
@@ -127,8 +144,8 @@
   --bg-surface: var(--surface-card);
 
   --text-primary: #ebe7de;
-  --text-secondary: #b2aca2;
-  --text-muted: #7e786f;
+  --text-secondary: #c2bbae;
+  --text-muted: #a49c90;
 
   --border-whisper: rgba(235, 231, 222, 0.11);
   --border-hair: rgba(235, 231, 222, 0.06);
@@ -154,6 +171,12 @@
   --green: #4fae72;
   --amber: #cf8c3a;
   --red: #d3705f;
+  --semantic-success: var(--green);
+  --semantic-warning: var(--amber);
+  --semantic-danger: var(--red);
+  --warning-soft: rgba(207, 140, 58, 0.16);
+  --danger: var(--red);
+  --danger-soft: rgba(211, 112, 95, 0.16);
 
   --shadow-ring: 0 0 0 1px var(--border-whisper);
   --shadow-card: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 2px 2px rgba(0, 0, 0, 0.25), 0 12px 28px -20px rgba(0, 0, 0, 0.6);
