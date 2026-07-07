@@ -7,7 +7,7 @@ const cliPath = '/home/jigoo/.hermes/workspace/consulting/scripts/dialogue_memor
 const d = existsSync(pythonPath) && existsSync(cliPath) ? describe : describe.skip;
 
 d('ConsultingGraphRagBridge', () => {
-  it('recalls existing changwon GraphRAG evidence through the legacy CLI', async () => {
+  it('recalls existing changwon GraphRAG evidence through the consulting brain CLI', async () => {
     const bridge = new ConsultingGraphRagBridge();
     const result = await bridge.recall({
       topicSlug: 'changwon-org-mgmt-diagnosis',

@@ -19,7 +19,7 @@ const payload = {
 };
 
 describe('ConsultingWebIngestWorker', () => {
-  it('runs legacy ingest only for ConsultingWebTurnCompleted outbox jobs', async () => {
+  it('runs consulting brain ingest only for ConsultingWebTurnCompleted outbox jobs', async () => {
     const runner = vi.fn(async () => undefined);
     const worker = new ConsultingWebIngestWorker(
       { REDIS_URL: 'redis://127.0.0.1:6379' } as never,

@@ -1,7 +1,7 @@
 # Final Audit / Bugfix / Advanced GraphRAG Handoff
 
 **Date:** 2026-07-07
-**Scope:** `consulting-web` + legacy `consulting` GraphRAG bridge
+**Scope:** `consulting-web` + shared consulting brain GraphRAG bridge
 **Instruction boundary:** 7개 고급 고도화 본구현은 새 세션에서 진행한다. 이 문서는 그 직전까지의 버그픽스·검증·핸드오프다.
 
 ---

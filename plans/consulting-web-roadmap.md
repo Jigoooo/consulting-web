@@ -29,8 +29,8 @@ Phase 3 Cloudflare/외부 노출: ░░░░░░░░░░ 0%
   - `consulting_topic_links`로 web project/scope → 기존 `consulting.db.topics.slug` 매핑 추가, 창원 project 3건 active link 적용.
   - `ConsultingTopicResolver` + `ConsultingGraphRagBridge` + `ConsultingMemoryContextBuilder`로 기존 `dialogue_memory_cli.py recall --no-rerank` 결과를 Hermes run instructions에 주입.
   - `apps/api/scripts/ingest_web_dialogue.py` + `ConsultingWebIngestService`로 stream 완료 user+assistant 턴을 기존 `consulting.db.dialogue_chunks`에 `source='consulting-web'`로 직접 적재.
-  - Docker runtime 보강: `/legacy/consulting` mount, `/legacy/hermes.env` env-file mount, `/app/scripts` copy, `USER node`(UID 1000)로 bind-mounted `consulting.db`/`.env` 권한 정합.
-  - 실제 E2E: `/api/chat/stream` 완료 답변이 legacy `dialogue_chunks`에 `source='consulting-web'`, `embed_dim=3072`, `dialogue_session_scopes.scope_path='E2E smoke / legacy GraphRAG bridge'`로 적재됨 확인 후 smoke row cleanup 0.
+  - Docker runtime 보강: `/brain/consulting` mount, `/brain/hermes.env` env-file mount, `/app/scripts` copy, `USER node`(UID 1000)로 bind-mounted `consulting.db`/`.env` 권한 정합.
+  - 실제 E2E: `/api/chat/stream` 완료 답변이 shared brain `dialogue_chunks`에 `source='consulting-web'`, `embed_dim=3072`, `dialogue_session_scopes.scope_path='E2E smoke / shared GraphRAG bridge'`로 적재됨 확인 후 smoke row cleanup 0.
   - 중간 발견/수정: Hermes run id는 UUID가 아니라 opaque `run_...` → error SSE `runId` schema를 string으로 수정. Project-wide session id 92자가 Hermes prompt_cache_key 64자 제한을 초과 → `cw-project:<sha256 40>` 안정 키로 수정.
 
 - UI 현대화/FSD 패스

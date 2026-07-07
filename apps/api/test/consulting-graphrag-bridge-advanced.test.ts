@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildConsultingRecallArgs, CONSULTING_RECALL_TIMEOUT_MS, ConsultingGraphRagBridge, normalizeConsultingRecallJson, type ConsultingGraphRagRecallResult } from '../src/consulting/consulting-graphrag-bridge.service.js';
 
 describe('ConsultingGraphRagBridge advanced recall contract', () => {
-  it('enables rerank by default and gives the legacy CLI enough time for deep recall', () => {
+  it('enables rerank by default and gives the consulting brain CLI enough time for deep recall', () => {
     const args = buildConsultingRecallArgs({ topicSlug: 'changwon-org-mgmt-diagnosis', query: '정원 인건비', topK: 12 });
 
     expect(args).toContain('--rerank');

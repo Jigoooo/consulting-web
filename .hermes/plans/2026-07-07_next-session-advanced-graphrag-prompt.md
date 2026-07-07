@@ -107,17 +107,17 @@ docker exec consulting-web-pg-1 sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_D
 
 ### 시작 전 런타임 프로브 게이트 (2026-07-07 추가 — 필수)
 
-아래를 실행해 **legacy GraphRAG 런타임이 API 컨테이너 안에서 실제로 동작하는지** 먼저 확정한다. 이 프로브 결과가 §P-1 구멍 H1~H3의 baseline이다.
+아래를 실행해 **shared consulting brain GraphRAG 런타임이 API 컨테이너 안에서 실제로 동작하는지** 먼저 확정한다. 이 프로브 결과가 §P-1 구멍 H1~H3의 baseline이다.
 
 ```bash
 # H1: dense/rerank 런타임 의존성 존재 여부 (현재 전부 없음이 확인됨)
 docker exec consulting-web-api-1 sh -lc 'for m in numpy onnxruntime sentence_transformers google.generativeai; do python3 -c "import $m" 2>/dev/null && echo "$m OK" || echo "$m MISSING"; done'
 
 # H2: --rerank 켰을 때 실제 rerank_method (cross-encoder 여야 정상; llm/rrf면 fallback = 미작동)
-docker exec consulting-web-api-1 sh -lc 'cd /legacy/consulting && python3 scripts/dialogue_memory_cli.py recall --topic changwon-org-mgmt-diagnosis --q "핵심 리스크" --top-k 3 --format json --rerank 2>/dev/null | python3 -c "import sys,json; print(\"rerank_method=\", json.load(sys.stdin).get(\"rerank\"))"'
+docker exec consulting-web-api-1 sh -lc 'cd /brain/consulting && python3 scripts/dialogue_memory_cli.py recall --topic changwon-org-mgmt-diagnosis --q "핵심 리스크" --top-k 3 --format json --rerank 2>/dev/null | python3 -c "import sys,json; print(\"rerank_method=\", json.load(sys.stdin).get(\"rerank\"))"'
 
 # H3: no-rerank recall latency (Gemini embed API 왕복 포함) vs bridge 5초 타임아웃
-docker exec consulting-web-api-1 sh -lc 'cd /legacy/consulting && s=$(date +%s.%N); python3 scripts/dialogue_memory_cli.py recall --topic changwon-org-mgmt-diagnosis --q "핵심 리스크" --top-k 3 --format json --no-rerank >/dev/null 2>&1; e=$(date +%s.%N); echo "no_rerank_latency=$(echo "$e-$s"|bc)s"'
+docker exec consulting-web-api-1 sh -lc 'cd /brain/consulting && s=$(date +%s.%N); python3 scripts/dialogue_memory_cli.py recall --topic changwon-org-mgmt-diagnosis --q "핵심 리스크" --top-k 3 --format json --no-rerank >/dev/null 2>&1; e=$(date +%s.%N); echo "no_rerank_latency=$(echo "$e-$s"|bc)s"'
 ```
 
 2026-07-07 실측 baseline (이 값에서 출발):
@@ -152,11 +152,11 @@ docker exec consulting-web-api-1 sh -lc 'cd /legacy/consulting && s=$(date +%s.%
 | **H2** | `--rerank` 켜도 프로덕션에서 cross-encoder 미작동, `rerank_method=llm`으로 조용히 fallback | `--rerank` 실측 결과 `rerank_method=llm` (H1 의존성 부재 때문) | **§1 이전** | H1 해결로 실제 cross-encoder 작동. §1 완료 조건에 "`rerank_method=cross-encoder`가 **관측된다**" 추가. 조용한 fallback을 harness가 실패로 잡게 한다. |
 | **H3** | query 임베딩이 Gemini API 실시간 urllib 왕복 → bridge 5초 타임아웃 안에서 flaky, 초과 시 조용히 `empty()`(근거 0건) | recall ≈2s(정상 네트워크), bridge `timeout: 5_000` 하드코딩(`consulting-graphrag-bridge.service.ts:59`) | **§1 이전** | 타임아웃을 설정화, 채팅경로 예산과 §5·6·7 deep-mode 예산을 **분리**. harness가 latency를 경로별로 분리 측정하고 `empty()` 폴백을 "근거 없음"과 구분해 로깅(H13과 함께). |
 | **H13** | bridge가 어떤 에러(타임아웃/JSON깨짐/키부재)든 `empty()` → "근거 0건"과 "recall 실패"를 구분 못 함(관측성 부재) | `consulting-graphrag-bridge.service.ts:70-72,90-98` catch→empty | **§1 이전** | recall 결과에 `status`(ok/empty/timeout/error) + 구조화 로그/메트릭. H2 silent fallback·H3 타임아웃이 이 로그로 보이게. harness가 이 status를 회귀 신호로 사용. |
-| **H7** | recall 출력이 상위 `signals` count만 노출, hit별 dense/lexical/graph subscore는 없음. `graph=0` 관측 | recall json `signals` 블록엔 count만, hit엔 `fused_score/score`만 | **§1 이전** | §1 step3 "신호 normalize"는 legacy `dialogue_memory/search.py` **출력 수정**(=cross-workspace 자산 편집). "legacy CLI 확장 vs bridge 파생" 택1 명시. `graph=0` 원인은 H11로 규명. |
+| **H7** | recall 출력이 상위 `signals` count만 노출, hit별 dense/lexical/graph subscore는 없음. `graph=0` 관측 | recall json `signals` 블록엔 count만, hit엔 `fused_score/score`만 | **§1 이전** | §1 step3 "신호 normalize"는 shared brain `dialogue_memory/search.py` **출력 수정**(=cross-workspace 자산 편집). "brain CLI 확장 vs bridge 파생" 택1 명시. `graph=0` 원인은 H11로 규명. |
 | **H4** | `bridge.recall`이 단일 `topicSlug` 스코프 전용 → cross-project fan-out 불가 | `recall(input: { topicSlug ... })` 시그니처, CLI도 `--topic` 단일 | **§2 이전** | §2 ambiguous→cross-project 확장(workspace 내 ×0.6 감쇠)은 workspace→projects→topics fan-out recall 필요. CLI/bridge에 다중 topic 스코프 경로 먼저 설계. |
 | **H11** | graph 신호 substrate 빈약 — changwon `dialogue_edges` 그래프쿼리 **0건**, `cross_topic_links` 전역 **0건** (단 `claim_evidence_links=137` 존재) | recall `graph:0`·`file_graph:0`, DB row count 실측 | **§6·§7 이전(§1 규명)** | §1에서 `graph=0` 원인 진단(edge 부재 vs 매칭 실패). §6 community·§7 ToG-2는 graph edge에 의존하므로 착수 전 dialogue/cross-topic edge 감사·백필(additive) 필요. 없으면 빈 신호 위에 구축. |
-| **H6** | §5(RAPTOR)·§6(Leiden)이 SoT(`consulting.db`)에 WRITE | 요약/커뮤니티 노드를 legacy DB에 신규 적재 | **§5·§6 이전** | (a) additive-only·멱등·원문 `chunk_id` 추적·`source` 라벨 필수(H5 인제스트와 동급 위험). (b) Leiden은 `leidenalg`/`igraph` 등 **신규 의존성** → 착수 전 별도 빌드 승인. |
-| **H12** | Gemini가 recall+ingest+eval 공통 **하드 의존**(키/비용/레이트) | `embeddings.py`가 모든 임베딩을 Gemini로, 키는 `/legacy/hermes.env`(존재 확인) | **전 구간(§0에서 정책화)** | 키-존재 프로브(완료), eval 반복 실행(40문항×N)용 비용/레이트 예산 가드, 키/네트워크 부재 시 graceful degradation 정책 문서화. |
+| **H6** | §5(RAPTOR)·§6(Leiden)이 SoT(`consulting.db`)에 WRITE | 요약/커뮤니티 노드를 shared brain DB에 신규 적재 | **§5·§6 이전** | (a) additive-only·멱등·원문 `chunk_id` 추적·`source` 라벨 필수(H5 인제스트와 동급 위험). (b) Leiden은 `leidenalg`/`igraph` 등 **신규 의존성** → 착수 전 별도 빌드 승인. |
+| **H12** | Gemini가 recall+ingest+eval 공통 **하드 의존**(키/비용/레이트) | `embeddings.py`가 모든 임베딩을 Gemini로, 키는 `/brain/hermes.env`(존재 확인) | **전 구간(§0에서 정책화)** | 키-존재 프로브(완료), eval 반복 실행(40문항×N)용 비용/레이트 예산 가드, 키/네트워크 부재 시 graceful degradation 정책 문서화. |
 
 **P-1 완료 게이트:**
 
@@ -186,8 +186,8 @@ docker exec consulting-web-api-1 sh -lc 'cd /legacy/consulting && s=$(date +%s.%
 - 반복 검증 완료: `pnpm --filter @consulting/api test:ralph` → 3회 반복 GREEN, static failures 0, failed consulting-web embeddings 0, dialogue FTS orphans 0, context_only cross-topic links 2, 컨테이너 runtime cross-encoder probe GREEN.
 - 추가 완료: H4 다중 topic fan-out recall 지원. `ConsultingTopicResolver.resolveThreadFanout()`가 workspace 내 active project links를 후보로 만들고, `ConsultingGraphRagBridge.recallMany()`가 중복 topic 제거·cross-project confidence ×0.6 감쇠·`다른 프로젝트` 라벨을 보존한다. ralph 3회 반복에 H4 context-builder 테스트와 single-topic recall 금지 static check를 추가했다.
 - 추가 완료: H11. 실측 결과 `dialogue_edges=339`, `file_edges=1931`로 edge substrate는 존재했고, `graph=0` 원인은 한국어 어미/조사 미정규화(`수익구조` ↔ `수익구조는`, `취약` ↔ `취약하다`)였다. legacy `dialogue_memory/search.py`에 deterministic `_term_set()` 정규화를 추가했고, `수익구조 경륜 취약` recall에서 `graph=1`, `file_graph=16`, `claim:CL-D4-01` hit를 확인했다. 또한 `cross_topic_suggest()`가 파일만 쓰고 DB `cross_topic_links`를 남기지 않던 구멍을 idempotent insert 코드 + `/tmp` DB 테스트로 닫았다. 승인 후 live `consulting.db`에 양방향 2건(`road-traffic-conditions-outlook` ↔ `changwon-org-mgmt-diagnosis`)을 `context_only/pending`으로 적용했고, 재실행 count=2로 멱등 검증했다.
-- 추가 완료: H12. `E.embed_query()`/`E.embed_file_query()` 실패가 recall 전체를 죽이지 않도록 legacy recall을 signal-level degradation으로 격리했다. Gemini quota/key/network 장애 시 `semantic`/`file_semantic`은 0으로 degrade되고 lexical/graph/file_lexical/file_graph는 계속 실행되며, 결과 JSON에 `degraded_signals`/`degraded_errors`가 붙는다. `/tmp` in-memory regression test와 `test:graphrag` GREEN.
-- 추가 완료: H6. `scripts/advanced_graphrag_write_guard.py`를 추가해 RAPTOR/Leiden/ToG류 SoT write가 `CONSULTING_ADVANCED_GRAPHRAG_WRITE_APPROVED=YES` 없이는 차단되도록 했다. derived row는 `source`와 non-empty `source_chunk_ids`를 강제하고, Leiden류 신규 의존성은 별도 `CONSULTING_ADVANCED_GRAPHRAG_DEPS_APPROVED=YES` + import probe를 통과해야 한다. ralph legacy tests에 H6 guard를 포함해 GREEN.
+- 추가 완료: H12. `E.embed_query()`/`E.embed_file_query()` 실패가 recall 전체를 죽이지 않도록 shared brain recall을 signal-level degradation으로 격리했다. Gemini quota/key/network 장애 시 `semantic`/`file_semantic`은 0으로 degrade되고 lexical/graph/file_lexical/file_graph는 계속 실행되며, 결과 JSON에 `degraded_signals`/`degraded_errors`가 붙는다. `/tmp` in-memory regression test와 `test:graphrag` GREEN.
+- 추가 완료: H6. `scripts/advanced_graphrag_write_guard.py`를 추가해 RAPTOR/Leiden/ToG류 SoT write가 `CONSULTING_ADVANCED_GRAPHRAG_WRITE_APPROVED=YES` 없이는 차단되도록 했다. derived row는 `source`와 non-empty `source_chunk_ids`를 강제하고, Leiden류 신규 의존성은 별도 `CONSULTING_ADVANCED_GRAPHRAG_DEPS_APPROVED=YES` + import probe를 통과해야 한다. ralph brain tests에 H6 guard를 포함해 GREEN.
 - P-1 현재 상태: 13개 선결 구멍은 코드/DB/문서/ralph 기준 모두 닫힘. 이제 7개 고도화(§1~§7) 착수 가능. 단, §6 Leiden에서 실제 `igraph/leidenalg` 설치·이미지 변경이 필요해질 경우에는 별도 승인 후 진행한다.
 
 ---
