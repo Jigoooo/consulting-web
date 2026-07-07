@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { Inject, Injectable } from '@nestjs/common';
 import type {
   ChatApprovalChoice,
@@ -64,7 +65,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 const APPROVAL_CHOICES: ChatApprovalChoice[] = ['once', 'session', 'always', 'deny'];
-const HERMES_AGENT_BRAND_RE = /^hermes(?:\s+agent)?$/i;
+const HERMES_AGENT_BRAND_RE = /^hermes(?:[\s_-]+agent)?$/i;
 
 function stringField(record: Record<string, unknown>, names: string[]): string | undefined {
   for (const name of names) {
@@ -121,6 +122,108 @@ function normalizeRuntimeModel(item: unknown): ChatRuntimeModel | null {
     ...(root ? { root } : {}),
     ...(typeof item.parent === 'string' || item.parent === null ? { parent: item.parent } : {}),
   };
+}
+
+function stripYamlScalar(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const withoutComment = value.split('#')[0]?.trim() ?? '';
+  if (!withoutComment) return undefined;
+  if ((withoutComment.startsWith('"') && withoutComment.endsWith('"')) || (withoutComment.startsWith("'") && withoutComment.endsWith("'"))) {
+    return withoutComment.slice(1, -1).trim() || undefined;
+  }
+  return withoutComment;
+}
+
+function configuredRoute(provider: string | undefined, model: string | undefined): ChatRuntimeModel | null {
+  const modelValue = stripYamlScalar(model);
+  if (!modelValue || isHermesAgentBrand(modelValue)) return null;
+  const modelParts = splitProviderModel(modelValue);
+  const providerValue = stripYamlScalar(provider) ?? modelParts?.provider ?? 'unknown';
+  const modelName = modelParts?.modelName ?? modelValue;
+  const route = providerValue !== 'unknown' && !modelParts ? `${providerValue}/${modelName}` : modelValue;
+  return {
+    id: `config:${route}`,
+    route,
+    label: providerValue === 'unknown' ? modelName : `${modelName} · ${providerValue}`,
+    provider: providerValue,
+    modelName,
+    root: route,
+  };
+}
+
+function parseHermesConfigModels(configText: string): ChatRuntimeModel[] {
+  const lines = configText.split(/\r?\n/);
+  const fallbackModels: ChatRuntimeModel[] = [];
+  let inModel = false;
+  let inFallback = false;
+  let modelProvider: string | undefined;
+  let modelName: string | undefined;
+  let fallbackItem: { provider?: string; model?: string } | null = null;
+
+  const flushFallback = () => {
+    const model = configuredRoute(fallbackItem?.provider, fallbackItem?.model);
+    if (model) fallbackModels.push(model);
+    fallbackItem = null;
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/\t/g, '  ');
+    if (/^\S/.test(line)) {
+      if (inFallback) flushFallback();
+      inModel = /^model:\s*(?:#.*)?$/.test(line);
+      inFallback = /^fallback_providers:\s*(?:#.*)?$/.test(line);
+      continue;
+    }
+
+    if (inModel) {
+      const match = line.match(/^\s{2}([A-Za-z0-9_-]+):\s*(.*)$/);
+      if (match?.[1] === 'provider') modelProvider = match[2];
+      if (match?.[1] === 'default' || match?.[1] === 'model') modelName = match[2];
+      continue;
+    }
+
+    if (inFallback) {
+      const itemStart = line.match(/^\s{2}-\s*([A-Za-z0-9_-]+):\s*(.*)$/);
+      if (itemStart) {
+        flushFallback();
+        const value = itemStart[2] ?? '';
+        fallbackItem = {};
+        if (itemStart[1] === 'provider') fallbackItem.provider = value;
+        if (itemStart[1] === 'model') fallbackItem.model = value;
+        continue;
+      }
+      const field = line.match(/^\s{4}([A-Za-z0-9_-]+):\s*(.*)$/);
+      if (field && fallbackItem) {
+        const value = field[2] ?? '';
+        if (field[1] === 'provider') fallbackItem.provider = value;
+        if (field[1] === 'model') fallbackItem.model = value;
+      }
+    }
+  }
+  if (inFallback) flushFallback();
+
+  const primary = configuredRoute(modelProvider, modelName);
+  const models = primary ? [primary, ...fallbackModels] : fallbackModels;
+  const seen = new Set<string>();
+  return models.filter((model) => {
+    if (seen.has(model.route)) return false;
+    seen.add(model.route);
+    return true;
+  });
+}
+
+function isGenericHermesModel(model: ChatRuntimeModel): boolean {
+  return isHermesAgentBrand(model.id) || isHermesAgentBrand(model.route) || isHermesAgentBrand(model.root);
+}
+
+function mergeModelRoutes(configured: ChatRuntimeModel[], upstream: ChatRuntimeModel[]): ChatRuntimeModel[] {
+  const candidates = configured.length > 0 ? [...configured, ...upstream.filter((model) => !isGenericHermesModel(model))] : upstream;
+  const seen = new Set<string>();
+  return candidates.filter((model) => {
+    if (seen.has(model.route)) return false;
+    seen.add(model.route);
+    return true;
+  });
 }
 
 /**
@@ -276,7 +379,19 @@ export class HermesRunsClient {
       const normalized = normalizeRuntimeModel(item);
       return normalized ? [normalized] : [];
     });
-    return { ...(models[0]?.route ? { defaultModel: models[0].route } : {}), models };
+    const configuredModels = await this.configuredModels();
+    const merged = mergeModelRoutes(configuredModels, models);
+    return { ...(merged[0]?.route ? { defaultModel: merged[0].route } : {}), models: merged };
+  }
+
+  private async configuredModels(): Promise<ChatRuntimeModel[]> {
+    const configPath = this.env.HERMES_CONFIG_PATH?.trim();
+    if (!configPath) return [];
+    try {
+      return parseHermesConfigModels(await readFile(configPath, 'utf8'));
+    } catch {
+      return [];
+    }
   }
 
   async capabilities(): Promise<ChatRuntimeCapabilitiesResponse> {

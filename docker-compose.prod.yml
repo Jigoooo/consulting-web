@@ -74,6 +74,7 @@ services:
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set in .env.docker}
       HERMES_API_BASE_URL: http://host.docker.internal:38642
       HERMES_API_KEY: ${HERMES_API_KEY:?set in .env.docker}
+      HERMES_CONFIG_PATH: /legacy/hermes.config.yaml
       CONSULTING_LEGACY_ROOT: /legacy/consulting
       HERMES_ENV_FILE: /legacy/hermes.env
       CONSULTING_PYTHON: python3
@@ -87,6 +88,7 @@ services:
     volumes:
       - /home/jigoo/.hermes/workspace/consulting:/legacy/consulting
       - /home/jigoo/.hermes/.env:/legacy/hermes.env:ro
+      - /home/jigoo/.hermes/config.yaml:/legacy/hermes.config.yaml:ro
     depends_on:
       pg:
         condition: service_healthy
@@ -97,7 +99,7 @@ services:
       hermes-proxy:
         condition: service_healthy
     healthcheck:
-      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:3000/health/live || exit 1']
+      test: ['CMD-SHELL', 'curl -fsS http://127.0.0.1:3000/health/live >/dev/null || exit 1']
       interval: 10s
       timeout: 4s
       retries: 6

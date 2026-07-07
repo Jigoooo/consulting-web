@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HermesRunsClient } from '../src/chat/hermes-runs-client.js';
 import type { Env } from '../src/config/env.schema.js';
@@ -143,5 +146,52 @@ describe('HermesRunsClient GraphRAG instructions', () => {
       provider: 'anthropic',
       modelName: 'claude-sonnet-4',
     });
+  });
+
+  it('falls back to server-side Hermes config routes when the API advertises only hermes-agent', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cw-hermes-config-'));
+    const configPath = join(dir, 'config.yaml');
+    await writeFile(configPath, [
+      'model:',
+      '  default: claude-opus-4-8',
+      '  provider: anthropic',
+      'fallback_providers:',
+      '  - provider: openai-codex',
+      '    model: gpt-5.5',
+      '    base_url: https://chatgpt.com/backend-api/codex',
+      '  - provider: anthropic',
+      '    model: claude-sonnet-5',
+      '',
+    ].join('\n'), 'utf8');
+
+    vi.stubGlobal('fetch', async (input: unknown) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({
+          data: [{ id: 'hermes-agent', object: 'model', owned_by: 'hermes', root: 'hermes-agent', parent: null }],
+        }), { status: 200 });
+      }
+      return new Response('not found', { status: 404 });
+    });
+
+    try {
+      const client = new HermesRunsClient({ ...env, HERMES_CONFIG_PATH: configPath });
+      const res = await client.listModels();
+
+      expect(res.defaultModel).toBe('anthropic/claude-opus-4-8');
+      expect(res.models.map((model) => model.route)).toEqual([
+        'anthropic/claude-opus-4-8',
+        'openai-codex/gpt-5.5',
+        'anthropic/claude-sonnet-5',
+      ]);
+      expect(res.models.some((model) => model.route === 'hermes-agent')).toBe(false);
+      expect(res.models.find((model) => model.route === 'openai-codex/gpt-5.5')).toMatchObject({
+        label: 'gpt-5.5 · openai-codex',
+        provider: 'openai-codex',
+        modelName: 'gpt-5.5',
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

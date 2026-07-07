@@ -1,0 +1,9 @@
+# GraphRAG bridge runtime dependencies for /legacy/consulting dialogue_memory.
+# CPU torch is pinned explicitly; the default PyPI torch pulls CUDA wheels and bloats the image.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+torch==2.5.1+cpu
+numpy>=1.26,<3
+onnxruntime>=1.20,<2
+sentence-transformers>=3.3,<6
+google-generativeai>=0.8,<1

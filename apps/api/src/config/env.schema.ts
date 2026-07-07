@@ -17,6 +17,7 @@ export const EnvSchema = z.object({
 
   HERMES_API_BASE_URL: z.string().url(),
   HERMES_API_KEY: z.string().min(1),
+  HERMES_CONFIG_PATH: z.string().optional(),
 
   // Web Push (2026-07-06). Optional — when unset, push endpoints return
   // publicKey: null and the sender no-ops; the in-app bell keeps working.
