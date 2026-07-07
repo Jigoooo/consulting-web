@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { schema } from '@consulting/db-schema';
 import { and, asc, desc, eq, gt, inArray, isNull, lt, or } from 'drizzle-orm';
-import type { ChatMessage, ChatMessageAttachment, ListMessagesPageRequest, ListMessagesPageResponse, ListMessagesResponse, SearchMessagesResponse } from '@consulting/contracts';
+import type { ChatMessage, ChatMessageAttachment, ChatMessageVerification, ListMessagesPageRequest, ListMessagesPageResponse, ListMessagesResponse, SearchMessagesResponse } from '@consulting/contracts';
 import { hangulMatch, highlightRanges, isChosungQuery } from '@consulting/contracts';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 
@@ -164,6 +164,43 @@ export class ChatMessageStore {
         snippet: ranges.length > 0 ? this.snippet(row.textContent ?? '', q, ranges[0]?.[0] ?? -1) : row.fileName,
         messageId: row.messageId,
         status: row.status as 'processing' | 'indexed' | 'skipped' | 'failed' | null,
+        createdAt: row.createdAt.toISOString(),
+      });
+      if (results.length >= cap) return results;
+    }
+
+    const unitRows = await this.db
+      .select({
+        attachmentId: schema.fileAttachments.id,
+        fileName: schema.fileAttachments.fileName,
+        mimeType: schema.fileAttachments.mimeType,
+        messageId: schema.fileAttachments.messageId,
+        createdAt: schema.documentRetrievalUnits.createdAt,
+        status: schema.documentExtractions.status,
+        modality: schema.documentRetrievalUnits.modality,
+        locator: schema.documentRetrievalUnits.locator,
+        textContent: schema.documentRetrievalUnits.textContent,
+        documentRef: schema.documentRetrievalUnits.documentRef,
+      })
+      .from(schema.documentRetrievalUnits)
+      .innerJoin(schema.fileAttachments, eq(schema.documentRetrievalUnits.attachmentId, schema.fileAttachments.id))
+      .leftJoin(schema.documentExtractions, eq(schema.documentRetrievalUnits.extractionId, schema.documentExtractions.id))
+      .where(and(eq(schema.fileAttachments.threadId, threadId), isNull(schema.fileAttachments.deletedAt), isNull(schema.documentRetrievalUnits.deletedAt)))
+      .orderBy(desc(schema.documentRetrievalUnits.scorePrior), desc(schema.documentRetrievalUnits.createdAt))
+      .limit(2000);
+    for (const row of unitRows) {
+      const haystack = `${row.fileName}\n${row.documentRef}\n${row.locator}\n${row.modality}\n${row.textContent}`;
+      if (!hangulMatch(haystack, q)) continue;
+      const ranges = highlightRanges(row.textContent, q);
+      results.push({
+        id: row.attachmentId,
+        fileName: row.fileName,
+        mimeType: row.mimeType,
+        snippet: `${row.modality} · ${ranges.length > 0 ? this.snippet(row.textContent, q, ranges[0]?.[0] ?? -1) : row.locator}`,
+        messageId: row.messageId,
+        status: row.status as 'processing' | 'indexed' | 'skipped' | 'failed' | null,
+        modality: row.modality as 'text' | 'table' | 'page_visual',
+        locator: row.locator,
         createdAt: row.createdAt.toISOString(),
       });
       if (results.length >= cap) break;
@@ -395,10 +432,80 @@ export class ChatMessageStore {
       };
       byMessage.set(row.messageId, [...(byMessage.get(row.messageId) ?? []), attachment]);
     }
+
+    const verificationByMessage = await this.verificationForMessages(messages);
     return messages.map((message) => {
       const attachments = byMessage.get(message.id);
-      return attachments && attachments.length > 0 ? { ...message, attachments } : message;
+      const verification = verificationByMessage.get(message.id);
+      return {
+        ...message,
+        ...(attachments && attachments.length > 0 ? { attachments } : {}),
+        ...(verification ? { verification } : {}),
+      };
     });
+  }
+
+  private async verificationForMessages(messages: ChatMessage[]): Promise<Map<string, ChatMessageVerification>> {
+    const assistantIds = messages.filter((message) => message.role === 'assistant').map((message) => message.id);
+    if (assistantIds.length === 0) return new Map();
+    const rows = await this.db
+      .select({
+        assistantMessageId: schema.claimVerificationVerdicts.assistantMessageId,
+        claimId: schema.claimVerificationVerdicts.claimId,
+        claimText: schema.claimVerificationVerdicts.claimText,
+        verdict: schema.claimVerificationVerdicts.verdict,
+        confidence: schema.claimVerificationVerdicts.confidence,
+        rationale: schema.claimVerificationVerdicts.rationale,
+        createdAt: schema.claimVerificationVerdicts.createdAt,
+      })
+      .from(schema.claimVerificationVerdicts)
+      .where(and(inArray(schema.claimVerificationVerdicts.assistantMessageId, assistantIds), isNull(schema.claimVerificationVerdicts.deletedAt)))
+      .orderBy(desc(schema.claimVerificationVerdicts.createdAt));
+
+    const grouped = new Map<string, { supports: number; refutes: number; mixed: number; notEnoughInfo: number; rationale: string | null; claims: ChatMessageVerification['claims'] }>();
+    for (const row of rows) {
+      if (!row.assistantMessageId) continue;
+      const prev = grouped.get(row.assistantMessageId) ?? { supports: 0, refutes: 0, mixed: 0, notEnoughInfo: 0, rationale: null, claims: [] };
+      if (row.verdict === 'supports') prev.supports += 1;
+      else if (row.verdict === 'refutes') prev.refutes += 1;
+      else if (row.verdict === 'mixed') prev.mixed += 1;
+      else prev.notEnoughInfo += 1;
+      if (!prev.rationale && row.verdict !== 'supports') prev.rationale = row.rationale;
+      if (prev.claims.length < 12) {
+        prev.claims.push({
+          claimId: row.claimId,
+          claimText: row.claimText,
+          verdict: row.verdict as 'supports' | 'refutes' | 'mixed' | 'not_enough_info',
+          confidence: Number(row.confidence),
+        });
+      }
+      grouped.set(row.assistantMessageId, prev);
+    }
+
+    const out = new Map<string, ChatMessageVerification>();
+    for (const [messageId, counts] of grouped) {
+      const status: ChatMessageVerification['status'] = counts.refutes + counts.mixed > 0
+        ? 'refuted'
+        : counts.notEnoughInfo > 0
+          ? 'needs_review'
+          : counts.supports > 0
+            ? 'supported'
+            : 'unsupported';
+      const badgeLabel: ChatMessageVerification['badgeLabel'] = status === 'supported' ? '지지됨' : status === 'refuted' ? '반박됨' : '근거부족';
+      out.set(messageId, {
+        status,
+        badgeLabel,
+        counts: {
+          supports: counts.supports,
+          refutes: counts.refutes,
+          mixed: counts.mixed,
+          notEnoughInfo: counts.notEnoughInfo,
+        },
+        topRationale: counts.rationale,
+        claims: counts.claims,
+      });
+    }
+    return out;
   }
 
   private snippet(content: string, query: string, hintIndex = -1): string {

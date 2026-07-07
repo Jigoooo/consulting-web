@@ -45,6 +45,118 @@ export const AddEvidenceRequestSchema = z
 export type AddEvidenceRequest = z.infer<typeof AddEvidenceRequestSchema>;
 
 // ---------------------------------------------------------------------------
+// Evidence-to-Decision Intelligence — verification / scorecard / review queue
+// ---------------------------------------------------------------------------
+
+export const ClaimVerdictKindSchema = z.enum(['supports', 'refutes', 'mixed', 'not_enough_info']);
+export type ClaimVerdictKind = z.infer<typeof ClaimVerdictKindSchema>;
+
+export const ClaimVerdictSummarySchema = z
+  .object({
+    supports: z.number().int().nonnegative(),
+    refutes: z.number().int().nonnegative(),
+    mixed: z.number().int().nonnegative(),
+    notEnoughInfo: z.number().int().nonnegative(),
+    claimCount: z.number().int().nonnegative(),
+  })
+  .strict();
+export type ClaimVerdictSummary = z.infer<typeof ClaimVerdictSummarySchema>;
+
+export const ClaimVerdictRowSchema = z
+  .object({
+    id: UuidSchema,
+    claimId: z.string(),
+    claimText: z.string(),
+    evidenceRef: z.string().nullable(),
+    evidenceItemId: UuidSchema.nullable(),
+    verdict: ClaimVerdictKindSchema,
+    confidence: z.number().min(0).max(1),
+    rationale: z.string(),
+    verifier: z.string(),
+    createdAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+export type ClaimVerdictRow = z.infer<typeof ClaimVerdictRowSchema>;
+
+export const DecisionScorecardItemSchema = z
+  .object({
+    id: UuidSchema,
+    alternativeId: z.string(),
+    alternativeLabel: z.string(),
+    weightedScore: z.number().min(0).max(1),
+    uncertainty: z.number().min(0).max(1),
+    evidenceCoverage: z.number().min(0).max(1),
+    requiredAction: z.enum(['recommend', 'collect_more_evidence', 'defer']),
+  })
+  .strict();
+export type DecisionScorecardItem = z.infer<typeof DecisionScorecardItemSchema>;
+
+export const DecisionScorecardSummarySchema = z
+  .object({
+    id: UuidSchema,
+    question: z.string(),
+    recommendedAlternativeId: z.string().nullable(),
+    ranked: z.array(DecisionScorecardItemSchema),
+    createdAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+export type DecisionScorecardSummary = z.infer<typeof DecisionScorecardSummarySchema>;
+
+export const DocumentUnitsSummarySchema = z
+  .object({
+    total: z.number().int().nonnegative(),
+    byModality: z.record(z.string(), z.number().int().nonnegative()),
+  })
+  .strict();
+export type DocumentUnitsSummary = z.infer<typeof DocumentUnitsSummarySchema>;
+
+export const ReviewQueueItemSchema = z
+  .object({
+    id: UuidSchema,
+    itemKind: z.string(),
+    title: z.string(),
+    targetRef: z.string(),
+    priorityScore: z.number().min(0),
+    decisionImpact: z.number().min(0).max(1),
+    uncertainty: z.number().min(0).max(1),
+    evidenceGap: z.number().min(0).max(1),
+    deadlineWeight: z.number().min(0),
+    status: z.string(),
+    reasons: z.array(z.string()).max(20),
+    actions: z.array(z.object({
+      id: z.enum(['rewrite_with_evidence', 'remove_sentence', 'request_more_sources']),
+      label: z.enum(['근거 보강 후 재작성', '해당 문장 제거', '추가 자료 요청']),
+      prompt: z.string().min(1).max(1000),
+    }).strict()).length(3),
+    createdAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+export type ReviewQueueItem = z.infer<typeof ReviewQueueItemSchema>;
+
+export const ReviewQueueResponseSchema = z
+  .object({ items: z.array(ReviewQueueItemSchema) })
+  .strict();
+export type ReviewQueueResponse = z.infer<typeof ReviewQueueResponseSchema>;
+
+export const EvidenceDecisionSummaryResponseSchema = z
+  .object({
+    verdictSummary: ClaimVerdictSummarySchema,
+    latestVerdicts: z.array(ClaimVerdictRowSchema),
+    latestScorecard: DecisionScorecardSummarySchema.nullable(),
+    documentUnits: DocumentUnitsSummarySchema,
+    reviewQueue: z.object({ openCount: z.number().int().nonnegative(), top: ReviewQueueItemSchema.nullable() }).strict(),
+    postAnswerVerification: z
+      .object({
+        checkedMessageCount: z.number().int().nonnegative(),
+        unsupportedCount: z.number().int().nonnegative(),
+        refutedCount: z.number().int().nonnegative(),
+      })
+      .strict(),
+  })
+  .strict();
+export type EvidenceDecisionSummaryResponse = z.infer<typeof EvidenceDecisionSummaryResponseSchema>;
+
+// ---------------------------------------------------------------------------
 // Phase 2-B — Artifacts
 // ---------------------------------------------------------------------------
 

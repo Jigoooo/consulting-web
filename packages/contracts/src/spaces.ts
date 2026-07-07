@@ -236,6 +236,29 @@ export const ChatMessageAttachmentSchema = z
   .strict();
 export type ChatMessageAttachment = z.infer<typeof ChatMessageAttachmentSchema>;
 
+export const ChatMessageVerificationSchema = z
+  .object({
+    status: z.enum(['supported', 'needs_review', 'refuted', 'unsupported']),
+    badgeLabel: z.enum(['지지됨', '근거부족', '반박됨']),
+    counts: z
+      .object({
+        supports: z.number().int().nonnegative(),
+        refutes: z.number().int().nonnegative(),
+        mixed: z.number().int().nonnegative(),
+        notEnoughInfo: z.number().int().nonnegative(),
+      })
+      .strict(),
+    topRationale: z.string().nullable(),
+    claims: z.array(z.object({
+      claimId: z.string(),
+      claimText: z.string(),
+      verdict: z.enum(['supports', 'refutes', 'mixed', 'not_enough_info']),
+      confidence: z.number().min(0).max(1),
+    }).strict()).max(12),
+  })
+  .strict();
+export type ChatMessageVerification = z.infer<typeof ChatMessageVerificationSchema>;
+
 export const ChatMessageSchema = z
   .object({
     id: UuidSchema,
@@ -247,6 +270,7 @@ export const ChatMessageSchema = z
     finishState: z.enum(['complete', 'cancelled', 'error']),
     createdAt: z.string().datetime({ offset: true }),
     attachments: z.array(ChatMessageAttachmentSchema).optional(),
+    verification: ChatMessageVerificationSchema.optional(),
   })
   .strict();
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
@@ -317,6 +341,8 @@ export const FileSearchHitSchema = z
     snippet: z.string(),
     messageId: UuidSchema.nullable(),
     status: z.enum(['processing', 'indexed', 'skipped', 'failed']).nullable(),
+    modality: z.enum(['text', 'table', 'page_visual']).optional(),
+    locator: z.string().optional(),
     createdAt: z.string().datetime({ offset: true }),
   })
   .strict();

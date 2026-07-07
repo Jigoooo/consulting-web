@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ConsultingMemoryContextBuilder } from '../src/consulting/consulting-memory-context.builder.js';
+import { EvidenceToDecisionService } from '../src/consulting/evidence-to-decision.service.js';
 import { EvidenceSufficiencyEvaluator } from '../src/consulting/evidence-sufficiency-evaluator.service.js';
 import type { ConsultingGraphRagBridge } from '../src/consulting/consulting-graphrag-bridge.service.js';
 import type { ConsultingTopicResolver } from '../src/consulting/consulting-topic-resolver.service.js';
@@ -61,6 +62,7 @@ describe('ConsultingMemoryContextBuilder', () => {
       resolver as unknown as ConsultingTopicResolver,
       bridge as unknown as ConsultingGraphRagBridge,
       new EvidenceSufficiencyEvaluator(),
+      new EvidenceToDecisionService(),
     );
     const context = await builder.build({ threadId: 'thread', query: '정원 인건비 조직진단' });
 
@@ -74,6 +76,10 @@ describe('ConsultingMemoryContextBuilder', () => {
     expect(context).toContain('signals: file_semantic#1, file_graph#2');
     expect(context).toContain('graph path: claim:CL-D5-01');
     expect(context).toContain('CRAG 판단: ambiguous');
+    expect(context).toContain('### Evidence-to-Decision v1');
+    expect(context).toContain('claim_verdicts:');
+    expect(context).toContain('LLM 사용 지시:');
+    expect(context).toContain('cross_project diffusion');
     expect(context).toContain('정원·인건비');
   });
 
@@ -99,6 +105,7 @@ describe('ConsultingMemoryContextBuilder', () => {
       resolver as unknown as ConsultingTopicResolver,
       bridge as unknown as ConsultingGraphRagBridge,
       new EvidenceSufficiencyEvaluator(),
+      new EvidenceToDecisionService(),
     ).build({ threadId: 'thread', query: '승진 수당 기준' });
 
     expect(context).toContain('CRAG 판단: insufficient');

@@ -573,6 +573,8 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
       void qc.invalidateQueries({ queryKey: collabKeys.attachments(threadId) });
       // Evidence rows settle with the assistant message — refresh the panel.
       void qc.invalidateQueries({ queryKey: collabKeys.evidence(threadId) });
+      void qc.invalidateQueries({ queryKey: collabKeys.evidenceDecision(threadId) });
+      void qc.invalidateQueries({ queryKey: collabKeys.reviewQueue(threadId) });
     }
   }
 

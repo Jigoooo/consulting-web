@@ -10,6 +10,172 @@
   flex-direction: column;
   gap: 4px;
 }
+.modeTabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border-hair);
+  border-radius: 10px;
+  background: var(--surface-card);
+}
+.modeTab {
+  min-width: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  padding: 6px 3px;
+  white-space: nowrap;
+}
+.modeTabOn {
+  color: var(--text-primary);
+  background: var(--bg-warm);
+  box-shadow: var(--shadow-ring);
+}
+.decisionStack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+.metricGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+.metric,
+.scoreRow,
+.reviewRow,
+.verdictRow {
+  border: 1px solid var(--border-hair);
+  border-radius: 11px;
+  background: var(--surface-card);
+  box-shadow: var(--shadow-ring);
+}
+.metric {
+  padding: 10px;
+}
+.metric b {
+  display: block;
+  color: var(--text-primary);
+  font-size: 18px;
+  line-height: 1;
+}
+.metric span {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+.metric[data-tone='good'] b { color: var(--semantic-success); }
+.metric[data-tone='warn'] b { color: var(--semantic-warning); }
+.metric[data-tone='bad'] b { color: var(--semantic-danger); }
+.sectionLabel {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+.verdictRow {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 8px;
+  padding: 9px;
+}
+.verdictBadge {
+  align-self: start;
+  border-radius: 999px;
+  background: var(--bg-warm);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 7px;
+}
+.verdictRow[data-verdict='supports'] .verdictBadge { color: var(--semantic-success); }
+.verdictRow[data-verdict='refutes'] .verdictBadge,
+.verdictRow[data-verdict='mixed'] .verdictBadge { color: var(--semantic-danger); }
+.verdictRow[data-verdict='not_enough_info'] .verdictBadge { color: var(--semantic-warning); }
+.verdictText {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.verdictMeta {
+  grid-column: 2;
+  color: var(--text-muted);
+  font-size: 10.5px;
+}
+.scorecardHead,
+.scoreTop,
+.reviewTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.scorecardHead {
+  padding: 10px;
+  border: 1px solid var(--border-hair);
+  border-radius: 11px;
+  background: var(--bg-warm);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 750;
+}
+.scorecardHead b,
+.scoreTop b,
+.reviewTop b {
+  color: var(--accent);
+  font-size: 11px;
+}
+.scoreRow,
+.reviewRow {
+  padding: 10px;
+}
+.scoreTop span,
+.reviewTop span {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 760;
+}
+.scoreMeta,
+.reviewReasons {
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+.scoreBar {
+  height: 5px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-warm);
+}
+.scoreBar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+.reviewTitle {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
 /* #6: channel/project evidence scope switcher — segmented control. */
 .scopeSwitch {
   display: flex;

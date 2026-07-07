@@ -4,6 +4,8 @@ import type { AddEvidenceRequest, CreateArtifactRequest, AddArtifactVersionReque
 
 export const collabKeys = {
   evidence: (threadId: string) => ['evidence', threadId] as const,
+  evidenceDecision: (threadId: string) => ['evidence-decision', threadId] as const,
+  reviewQueue: (threadId: string) => ['review-queue', threadId] as const,
   artifacts: (workspaceId: string) => ['artifacts', workspaceId] as const,
   artifact: (id: string) => ['artifact', id] as const,
   notifications: ['notifications'] as const,
@@ -33,6 +35,22 @@ export function useAddEvidence(threadId: string | undefined) {
   return useMutation({
     mutationFn: (body: AddEvidenceRequest) => api.addEvidence(body),
     onSuccess: () => void qc.invalidateQueries({ queryKey: collabKeys.evidence(threadId ?? '') }),
+  });
+}
+
+export function useEvidenceDecisionSummary(threadId: string | undefined) {
+  return useQuery({
+    queryKey: collabKeys.evidenceDecision(threadId ?? ''),
+    queryFn: () => api.evidenceDecisionSummary(threadId!),
+    enabled: Boolean(threadId),
+  });
+}
+
+export function useReviewQueue(threadId: string | undefined) {
+  return useQuery({
+    queryKey: collabKeys.reviewQueue(threadId ?? ''),
+    queryFn: () => api.reviewQueue(threadId!),
+    enabled: Boolean(threadId),
   });
 }
 

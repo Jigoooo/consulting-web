@@ -14,6 +14,8 @@ import { HighlightedText } from './HighlightedText';
 import { computePrefetchRootMargin } from '../model/prefetchMargin';
 import s from '../../thread-view/ui/ThreadView.module.css';
 
+type VerificationClaim = NonNullable<ChatMessage['verification']>['claims'][number];
+
 interface LiveTurnLike {
   id: number;
   role: 'user' | 'ai';
@@ -113,6 +115,49 @@ function AttachmentCards({
   );
 }
 
+function verdictLabel(verdict: VerificationClaim['verdict']): '지지됨' | '반박됨' | '근거부족' {
+  if (verdict === 'supports') return '지지됨';
+  if (verdict === 'refutes' || verdict === 'mixed') return '반박됨';
+  return '근거부족';
+}
+
+function rewritePrompt(action: 'rewrite' | 'remove' | 'more', claim: VerificationClaim): string {
+  if (action === 'rewrite') return `다음 문장을 현재 근거로 다시 검증하고, 근거가 충분한 표현으로만 재작성해줘: ${claim.claimText}`;
+  if (action === 'remove') return `다음 문장이 반박되거나 근거부족이면 답변에서 제거하고, 남은 답변의 흐름을 자연스럽게 정리해줘: ${claim.claimText}`;
+  return `다음 판단을 확정하기 위해 어떤 추가 자료가 필요한지 3개 이내로 요청문을 작성해줘: ${claim.claimText}`;
+}
+
+function VerificationInlinePanel({ verification, busy, onRetry }: { verification: ChatMessage['verification']; busy: boolean; onRetry: Props['onRetry'] }) {
+  if (!verification || verification.claims.length === 0) return null;
+  return (
+    <div className={s.verificationInline} data-testid="assistant-verification-inline">
+      <div className={s.verificationInlineHead}>
+        <span className={`${s.verificationBadge} ${s[`verificationBadge_${verification.status}`]}`}>{verification.badgeLabel}</span>
+        <span className={s.verificationCounts}>
+          지지 {verification.counts.supports} · 반박 {verification.counts.refutes + verification.counts.mixed} · 근거부족 {verification.counts.notEnoughInfo}
+        </span>
+      </div>
+      {verification.claims.map((claim) => {
+        const label = verdictLabel(claim.verdict);
+        const needsAction = claim.verdict !== 'supports';
+        return (
+          <div key={claim.claimId} className={s.verificationClaimRow} data-verdict={claim.verdict}>
+            <div className={s.verificationClaimText}>{claim.claimText}</div>
+            <span className={`${s.verificationMiniBadge} ${s[`verificationMiniBadge_${claim.verdict}`]}`}>{label}</span>
+            {needsAction ? (
+              <div className={s.verificationActions}>
+                <button type="button" disabled={busy} onClick={() => void onRetry(rewritePrompt('rewrite', claim))}>근거 보강 후 재작성</button>
+                <button type="button" disabled={busy} onClick={() => void onRetry(rewritePrompt('remove', claim))}>해당 문장 제거</button>
+                <button type="button" disabled={busy} onClick={() => void onRetry(rewritePrompt('more', claim))}>추가 자료 요청</button>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function PersistedRow({
   message,
   userName,
@@ -187,6 +232,7 @@ function PersistedRow({
             <HighlightedText text={message.content} query={highlightQuery} />
           </div>
         )}
+        {message.role === 'assistant' ? <VerificationInlinePanel verification={message.verification} busy={busy} onRetry={onRetry} /> : null}
         <AttachmentCards
           attachments={message.attachments}
           onOpenAttachment={onOpenAttachment}

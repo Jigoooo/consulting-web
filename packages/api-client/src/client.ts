@@ -68,12 +68,16 @@ import {
   type ListContextEdgesResponse,
   type OkResponse,
   ListEvidenceResponseSchema,
+  EvidenceDecisionSummaryResponseSchema,
+  ReviewQueueResponseSchema,
   ListArtifactsResponseSchema,
   ArtifactDetailResponseSchema,
   CreateArtifactResponseSchema,
   ListNotificationsResponseSchema,
   type AddEvidenceRequest,
   type ListEvidenceResponse,
+  type EvidenceDecisionSummaryResponse,
+  type ReviewQueueResponse,
   type CreateArtifactRequest,
   type AddArtifactVersionRequest,
   type CreateArtifactResponse,
@@ -345,6 +349,18 @@ export class ConsultingApiClient {
 
   addEvidence(body: AddEvidenceRequest): Promise<OkResponse> {
     return this.http.request('/chat/evidence', { method: 'POST', body }, (d) => OkResponseSchema.parse(d));
+  }
+
+  evidenceDecisionSummary(threadId: string): Promise<EvidenceDecisionSummaryResponse> {
+    return this.http.request(`/chat/threads/${threadId}/evidence-decision/summary`, { method: 'GET' }, (d) =>
+      EvidenceDecisionSummaryResponseSchema.parse(d),
+    );
+  }
+
+  reviewQueue(threadId: string): Promise<ReviewQueueResponse> {
+    return this.http.request(`/chat/threads/${threadId}/review-queue`, { method: 'GET' }, (d) =>
+      ReviewQueueResponseSchema.parse(d),
+    );
   }
 
   // --- artifacts (Phase 2-B) ---

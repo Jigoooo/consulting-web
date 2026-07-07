@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useEvidence, useProjectEvidence, useAddEvidence } from '../../../lib/collab';
+import { useEvidence, useProjectEvidence, useAddEvidence, useEvidenceDecisionSummary, useReviewQueue } from '../../../lib/collab';
 import { useHoveredMessage } from '../../../lib/threadCtx';
 import { useToast } from '../../../shared/ui/toast/Toast';
 import { Icon } from '../../../shared/icons/Icon';
@@ -35,8 +35,11 @@ const sourceIcon: Record<string, IconName> = {
  */
 export function EvidencePanel({ threadId, projectId }: { threadId: string; projectId?: string }) {
   const [scope, setScope] = useState<'channel' | 'project'>('channel');
+  const [mode, setMode] = useState<'sources' | 'verification' | 'scorecard' | 'review'>('sources');
   const channelEv = useEvidence(threadId);
   const projectEv = useProjectEvidence(projectId, scope === 'project');
+  const decision = useEvidenceDecisionSummary(threadId);
+  const review = useReviewQueue(threadId);
   const data = scope === 'project' ? projectEv.data : channelEv.data;
   const isLoading = scope === 'project' ? projectEv.isLoading : channelEv.isLoading;
   const hovered = useHoveredMessage();
@@ -82,6 +85,25 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
 
   return (
     <div className={s.wrap}>
+      <div className={s.modeTabs} role="tablist" aria-label="근거 지능 패널">
+        {([
+          ['sources', '근거자료'],
+          ['verification', '근거검증'],
+          ['scorecard', '결정표'],
+          ['review', `검토큐${review.data?.items.length ? ` ${review.data.items.length}` : ''}`],
+        ] as const).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={mode === id}
+            className={`${s.modeTab} ${mode === id ? s.modeTabOn : ''}`}
+            onClick={() => setMode(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       {projectId ? (
         <div className={s.scopeSwitch} role="radiogroup" aria-label="근거 범위">
           <button
@@ -104,12 +126,25 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
           </button>
         </div>
       ) : null}
-      {showLoading ? (
+
+      {mode === 'verification' ? (
+        <VerificationView isLoading={decision.isLoading} summary={decision.data} />
+      ) : null}
+
+      {mode === 'scorecard' ? (
+        <ScorecardView isLoading={decision.isLoading} summary={decision.data} />
+      ) : null}
+
+      {mode === 'review' ? (
+        <ReviewQueueView isLoading={review.isLoading} items={review.data?.items ?? []} />
+      ) : null}
+
+      {mode === 'sources' && showLoading ? (
         <div className={s.loadingRow}>
           <Spinner label="근거 불러오는 중" /> 근거 불러오는 중…
         </div>
       ) : null}
-      {!isLoading && items.length === 0 && !formOpen ? (
+      {mode === 'sources' && !isLoading && items.length === 0 && !formOpen ? (
         <EmptyState
           icon="pin"
           title="아직 수집된 근거가 없어요"
@@ -117,7 +152,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
         />
       ) : null}
 
-      {items.length > 0 ? (
+      {mode === 'sources' && items.length > 0 ? (
         <div className={s.rows}>
           {items.map((e) => (
             <div
@@ -153,7 +188,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
         </div>
       ) : null}
 
-      {selected ? (
+      {mode === 'sources' && selected ? (
         <div className={s.detail}>
           <div className={s.detailHead}>
             <span>{sourceLabel[selected.sourceType] ?? selected.sourceType}</span>
@@ -187,7 +222,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
       ) : null}
 
       {/* B5: grid-accordion add form — always mounted, animates on open */}
-      <div className={`${s.formShell} ${formOpen ? s.formShellOpen : ''}`} aria-hidden={!formOpen} inert={!formOpen ? true : undefined}>
+      <div className={`${s.formShell} ${mode === 'sources' && formOpen ? s.formShellOpen : ''}`} aria-hidden={!formOpen} inert={!formOpen ? true : undefined}>
         <div className={s.formInner}>
           <Input
             ref={firstFieldRef}
@@ -224,9 +259,9 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
           accordion when the form opens — mutually-exclusive but never unmounted,
           so canceling the form causes zero height jump. */}
       <div
-        className={`${s.addBtnShell} ${formOpen ? s.addBtnShellHidden : ''}`}
-        aria-hidden={formOpen}
-        inert={formOpen ? true : undefined}
+        className={`${s.addBtnShell} ${mode !== 'sources' || formOpen ? s.addBtnShellHidden : ''}`}
+        aria-hidden={mode !== 'sources' || formOpen}
+        inert={mode !== 'sources' || formOpen ? true : undefined}
       >
         <button type="button" className={`${s.addBtn} cwTap`} onClick={() => setFormOpen(true)}>
           <Icon name="plus" size="xs" decorative /> 근거 추가
@@ -234,4 +269,97 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
       </div>
     </div>
   );
+}
+
+type DecisionSummary = NonNullable<ReturnType<typeof useEvidenceDecisionSummary>['data']>;
+type ReviewItem = NonNullable<ReturnType<typeof useReviewQueue>['data']>['items'][number];
+
+function VerificationView({ isLoading, summary }: { isLoading: boolean; summary: DecisionSummary | undefined }) {
+  if (isLoading) return <PanelLoading label="근거검증 계산 중" />;
+  if (!summary || summary.verdictSummary.claimCount === 0) {
+    return <EmptyState icon="info" title="검증된 답변이 아직 없어요" description="답변이 생성되면 문장별 지지/반박/근거부족 판정이 여기에 쌓입니다." />;
+  }
+  const v = summary.verdictSummary;
+  return (
+    <div className={s.decisionStack} data-testid="evidence-verification-panel">
+      <div className={s.metricGrid}>
+        <Metric label="지지" value={v.supports} tone="good" />
+        <Metric label="반박" value={v.refutes + v.mixed} tone="bad" />
+        <Metric label="근거부족" value={v.notEnoughInfo} tone="warn" />
+        <Metric label="검증문장" value={v.claimCount} />
+      </div>
+      <div className={s.sectionLabel}>최근 판정</div>
+      {summary.latestVerdicts.slice(0, 6).map((row) => (
+        <div key={row.id} className={s.verdictRow} data-verdict={row.verdict}>
+          <span className={s.verdictBadge}>{verdictLabel(row.verdict)}</span>
+          <span className={s.verdictText}>{row.claimText}</span>
+          <span className={s.verdictMeta}>신뢰 {Math.round(row.confidence * 100)}%</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ScorecardView({ isLoading, summary }: { isLoading: boolean; summary: DecisionSummary | undefined }) {
+  if (isLoading) return <PanelLoading label="결정표 불러오는 중" />;
+  const scorecard = summary?.latestScorecard;
+  if (!scorecard) return <EmptyState icon="info" title="결정표가 아직 없어요" description="답변 검증 뒤 유지/보강 같은 선택지가 점수표로 정리됩니다." />;
+  return (
+    <div className={s.decisionStack} data-testid="decision-scorecard-panel">
+      <div className={s.scorecardHead}>
+        <span>{scorecard.question === 'post_answer_verification' ? '답변 후검증 결정표' : scorecard.question}</span>
+        <b>{scorecard.recommendedAlternativeId ? '추천 있음' : '보류'}</b>
+      </div>
+      {scorecard.ranked.map((item) => (
+        <div key={item.id} className={s.scoreRow}>
+          <div className={s.scoreTop}>
+            <span>{item.alternativeLabel}</span>
+            <b>{Math.round(item.weightedScore * 100)}점</b>
+          </div>
+          <div className={s.scoreMeta}>근거충족 {Math.round(item.evidenceCoverage * 100)}% · 불확실성 {Math.round(item.uncertainty * 100)}% · {actionLabel(item.requiredAction)}</div>
+          <div className={s.scoreBar}><span style={{ width: `${Math.round(item.weightedScore * 100)}%` }} /></div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ReviewQueueView({ isLoading, items }: { isLoading: boolean; items: ReviewItem[] }) {
+  if (isLoading) return <PanelLoading label="검토큐 불러오는 중" />;
+  if (items.length === 0) return <EmptyState icon="check" title="열린 검토 항목이 없어요" description="반박/근거부족 claim이 생기면 우선순위순으로 표시됩니다." />;
+  return (
+    <div className={s.decisionStack} data-testid="active-review-queue-panel">
+      {items.map((item) => (
+        <div key={item.id} className={s.reviewRow}>
+          <div className={s.reviewTop}>
+            <span>{item.itemKind === 'refuted_claim' ? '반박 확인' : '근거 보강'}</span>
+            <b>{item.priorityScore.toFixed(2)}</b>
+          </div>
+          <div className={s.reviewTitle}>{item.title}</div>
+          <div className={s.reviewReasons}>{item.reasons.join(' · ')}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PanelLoading({ label }: { label: string }) {
+  return <div className={s.loadingRow}><Spinner label={label} /> {label}…</div>;
+}
+
+function Metric({ label, value, tone = 'neutral' }: { label: string; value: number; tone?: 'neutral' | 'good' | 'warn' | 'bad' }) {
+  return <div className={s.metric} data-tone={tone}><b>{value}</b><span>{label}</span></div>;
+}
+
+function verdictLabel(verdict: string): string {
+  if (verdict === 'supports') return '지지';
+  if (verdict === 'refutes') return '반박';
+  if (verdict === 'mixed') return '혼재';
+  return '근거부족';
+}
+
+function actionLabel(action: string): string {
+  if (action === 'recommend') return '유지 가능';
+  if (action === 'collect_more_evidence') return '근거 보강';
+  return '보류';
 }

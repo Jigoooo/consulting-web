@@ -1,3 +1,8 @@
+import { createHash } from 'node:crypto';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { Inject, Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import { Queue, Worker } from 'bullmq';
 import { schema } from '@consulting/db-schema';
@@ -5,6 +10,7 @@ import { eq } from 'drizzle-orm';
 import { ENV_TOKEN } from '../config/config.module.js';
 import type { Env } from '../config/env.schema.js';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
+import { EvidenceToDecisionService } from '../consulting/evidence-to-decision.service.js';
 import { extractDocumentText } from './document-extraction.service.js';
 
 const MAX_INDEXED_TEXT_CHARS = 200_000;
@@ -40,6 +46,7 @@ export class DocumentExtractionWorker implements OnModuleInit, OnModuleDestroy {
   constructor(
     @Inject(ENV_TOKEN) private readonly env: Env,
     @Inject(DRIZZLE) private readonly db: Db,
+    @Inject(EvidenceToDecisionService) private readonly evidenceDecision: EvidenceToDecisionService,
   ) {
     this.queue = new Queue('document-extraction', {
       connection: redisConnectionFromUrl(this.env.REDIS_URL),
@@ -92,7 +99,7 @@ export class DocumentExtractionWorker implements OnModuleInit, OnModuleDestroy {
     const extracted = extractDocumentText(job.fileName, job.mimeType, buffer);
 
     // extraction row upsert(이미 pending 행이 있으면 갱신).
-    await this.db
+    const [extractionRow] = await this.db
       .insert(schema.documentExtractions)
       .values({
         workspaceId: job.workspaceId,
@@ -115,6 +122,81 @@ export class DocumentExtractionWorker implements OnModuleInit, OnModuleDestroy {
           qualityScore: extracted.qualityScore,
           warnings: extracted.warnings,
         },
-      });
+      })
+      .returning({ id: schema.documentExtractions.id });
+
+    if (!extractionRow || extracted.text.trim().length === 0) return;
+    const baseUnits = this.evidenceDecision.buildDocumentRetrievalUnits({
+      documents: [{ id: job.attachmentId, title: job.fileName, text: extracted.text, qualityScore: extracted.qualityScore }],
+    });
+    const visualUnits = renderPdfVisualUnits(buffer, job.attachmentId, job.fileName, extracted.qualityScore);
+    const units = [
+      ...baseUnits.filter((unit) => unit.modality !== 'page_visual'),
+      ...(visualUnits.length > 0 ? visualUnits : baseUnits.filter((unit) => unit.modality === 'page_visual')),
+    ];
+    await this.db.delete(schema.documentRetrievalUnits).where(eq(schema.documentRetrievalUnits.extractionId, extractionRow.id));
+    if (units.length === 0) return;
+    await this.db.insert(schema.documentRetrievalUnits).values(
+      units.map((unit) => ({
+        workspaceId: job.workspaceId,
+        attachmentId: job.attachmentId,
+        extractionId: extractionRow.id,
+        documentRef: job.fileName,
+        modality: unit.modality,
+        locator: unit.locator,
+        textContent: unit.text.slice(0, 20_000),
+        scorePrior: String(unit.scorePrior),
+        metadata: unit.metadata,
+      })),
+    );
   }
+}
+
+export function renderPdfVisualUnits(buffer: Buffer, attachmentId: string, fileName: string, qualityScore: number) {
+  if (!fileName.toLowerCase().endsWith('.pdf')) return [];
+  const dir = mkdtempSync(join(tmpdir(), 'consulting-pdf-visual-'));
+  const input = join(dir, 'input.pdf');
+  const prefix = join(dir, 'page');
+  try {
+    writeFileSync(input, buffer);
+    const rendered = spawnSync('pdftoppm', ['-f', '1', '-l', '3', '-r', '96', '-png', input, prefix], {
+      encoding: 'utf8',
+      timeout: 60_000,
+      maxBuffer: 2 * 1024 * 1024,
+    });
+    if (rendered.status !== 0) return [];
+    return readdirSync(dir)
+      .filter((name) => /^page-\d+\.png$/u.test(name))
+      .sort()
+      .slice(0, 3)
+      .map((name, index) => {
+        const png = readFileSync(join(dir, name));
+        const imageSha256 = createHash('sha256').update(png).digest('hex');
+        const embedding = imageEmbedding32(png);
+        return {
+          documentId: attachmentId,
+          modality: 'page_visual' as const,
+          locator: `${fileName}#page-${index + 1}`,
+          text: `visual-page: ${fileName} page ${index + 1} image_sha256=${imageSha256.slice(0, 16)} embedding_provider=local_visual_hash_v1`,
+          scorePrior: Math.round((0.55 + Math.max(0, Math.min(1, qualityScore / 100)) * 0.25) * 10_000) / 10_000,
+          metadata: {
+            title: fileName,
+            page: index + 1,
+            mimeType: 'image/png',
+            imageSha256,
+            imageBytes: png.length,
+            embeddingProvider: 'local_visual_hash_v1',
+            targetProvider: 'colpali_or_voyage_multimodal',
+            embedding,
+          },
+        };
+      });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function imageEmbedding32(png: Buffer): number[] {
+  const digest = createHash('sha256').update(png).digest();
+  return Array.from(digest).map((byte) => Math.round(((byte / 255) * 2 - 1) * 10_000) / 10_000);
 }

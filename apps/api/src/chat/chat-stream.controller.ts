@@ -10,11 +10,13 @@ import {
   ChatRuntimeModelsResponseSchema,
   ChatStreamEventSchema,
   ChatStreamRequestSchema,
+  EvidenceDecisionSummaryResponseSchema,
   ListEvidenceResponseSchema,
   ListMessagesPageRequestSchema,
   ListMessagesPageResponseSchema,
   ListMessagesResponseSchema,
   OkResponseSchema,
+  ReviewQueueResponseSchema,
   SearchMessagesRequestSchema,
   SearchMessagesResponseSchema,
 } from '@consulting/contracts';
@@ -26,6 +28,7 @@ import { ChatMessageStore, type FinishState } from './chat-message.store.js';
 import { EvidenceStore, type CapturedToolUse } from './evidence.store.js';
 import { NotificationStore } from './notification.store.js';
 import { SpaceAccessService, type SpaceAccess } from '../spaces/space-access.service.js';
+import { EvidenceDecisionStore } from '../consulting/evidence-decision.store.js';
 import { ConsultingMemoryContextBuilder } from '../consulting/consulting-memory-context.builder.js';
 import { ConsultingWebIngestService } from '../consulting/consulting-web-ingest.service.js';
 
@@ -40,6 +43,7 @@ export class ChatStreamController {
     @Inject(EvidenceStore) private readonly evidence: EvidenceStore,
     @Inject(NotificationStore) private readonly notifications: NotificationStore,
     @Inject(SpaceAccessService) private readonly access: SpaceAccessService,
+    @Inject(EvidenceDecisionStore) private readonly evidenceDecision: EvidenceDecisionStore,
     @Inject(ConsultingMemoryContextBuilder) private readonly memoryContext: ConsultingMemoryContextBuilder,
     @Inject(ConsultingWebIngestService) private readonly webIngest: ConsultingWebIngestService,
   ) {}
@@ -118,6 +122,22 @@ export class ChatStreamController {
     const userId = requireAuthUserId(req);
     this.throwIfDenied(await this.access.projectMember(userId, projectId));
     return parseResponse(ListEvidenceResponseSchema, await this.evidence.listForProject(projectId));
+  }
+
+  /** Evidence-to-Decision summary for the active thread right panel. */
+  @Get('threads/:threadId/evidence-decision/summary')
+  @UseGuards(AccessTokenGuard)
+  async evidenceDecisionSummary(@Param('threadId') threadId: string, @Req() req: AuthenticatedRequest) {
+    await this.requireThreadRead(requireAuthUserId(req), threadId);
+    return parseResponse(EvidenceDecisionSummaryResponseSchema, await this.evidenceDecision.summary(threadId));
+  }
+
+  /** Active review queue ordered by decision impact × uncertainty × evidence gap. */
+  @Get('threads/:threadId/review-queue')
+  @UseGuards(AccessTokenGuard)
+  async reviewQueue(@Param('threadId') threadId: string, @Req() req: AuthenticatedRequest) {
+    await this.requireThreadRead(requireAuthUserId(req), threadId);
+    return parseResponse(ReviewQueueResponseSchema, await this.evidenceDecision.reviewQueue(threadId));
   }
 
   /** Manual evidence attach (Phase 2-A E-3). */
@@ -244,6 +264,13 @@ export class ChatStreamController {
           toolUses,
         });
         if (finishState === 'complete' && assistantText.length > 0) {
+          await this.evidenceDecision.recordCompletedAnswer({
+            workspaceId: access.workspaceId,
+            threadId: cmd.threadId,
+            assistantMessageId: messageId,
+            answer: assistantText,
+            runId,
+          });
           await this.webIngest.ingestCompletedTurn({
             threadId: cmd.threadId,
             userText: cmd.message,

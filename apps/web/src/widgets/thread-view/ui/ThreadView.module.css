@@ -681,6 +681,110 @@
   background: linear-gradient(90deg, color-mix(in srgb, var(--accent-soft) 72%, transparent), transparent 82%);
   animation: searchHitPulse 1.8s ease-out both;
 }
+.verificationInline {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid var(--border-hair);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-card) 92%, var(--bg-warm));
+}
+.verificationInlineHead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.verificationBadge,
+.verificationMiniBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--border-hair);
+  font-weight: 750;
+  white-space: nowrap;
+}
+.verificationBadge {
+  min-height: 23px;
+  padding: 2px 9px;
+  font-size: 11.5px;
+}
+.verificationMiniBadge {
+  min-height: 21px;
+  padding: 2px 8px;
+  font-size: 10.5px;
+}
+.verificationBadge_supported,
+.verificationMiniBadge_supports {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 32%, var(--border-hair));
+  background: color-mix(in srgb, var(--green) 9%, transparent);
+}
+.verificationBadge_refuted,
+.verificationMiniBadge_refutes,
+.verificationMiniBadge_mixed {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 32%, var(--border-hair));
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+}
+.verificationBadge_needs_review,
+.verificationBadge_unsupported,
+.verificationMiniBadge_not_enough_info {
+  color: var(--amber, #b7791f);
+  border-color: color-mix(in srgb, var(--amber, #b7791f) 32%, var(--border-hair));
+  background: color-mix(in srgb, var(--amber, #b7791f) 10%, transparent);
+}
+.verificationCounts {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+.verificationClaimRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 7px 8px;
+  padding: 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-warm) 70%, transparent);
+}
+.verificationClaimText {
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.verificationActions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.verificationActions button {
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--border-hair);
+  border-radius: 999px;
+  background: var(--surface-card);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.verificationActions button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border-hair));
+  color: var(--accent);
+}
+.verificationActions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
 @keyframes searchHitPulse {
   0% {
     box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 22%, transparent);
