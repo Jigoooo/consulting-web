@@ -146,6 +146,17 @@ d('context graph activation', () => {
     expect(blocked.ok).toBe(false);
     if (!blocked.ok) expect(blocked.error.code).toBe('FORBIDDEN');
 
+    await db.insert(schema.contextEdges).values({
+      workspaceId: a.workspaceId,
+      fromScopeType: 'topic',
+      fromScopeId: a.topicId,
+      toScopeType: 'topic',
+      toScopeId: other.topicId,
+      edgeType: 'related_to',
+      origin: 'import',
+      confidence: '0.95',
+    });
+
     const related = await service.traverseRelatedScopes({ scopeType: 'topic', scopeId: a.topicId });
     expect(related).toEqual([
       expect.objectContaining({

@@ -161,7 +161,7 @@ export class ContextGraphService {
       const targetType = isOutgoing ? edge.toScopeType : edge.fromScopeType;
       const targetId = isOutgoing ? edge.toScopeId : edge.fromScopeId;
       const target = await this.resolveLiveScope(targetType, targetId);
-      if (!target) continue;
+      if (!target || target.workspaceId !== anchor.workspaceId) continue;
       const key = `${target.scopeType}:${target.scopeId}:${edge.edgeType}`;
       if (seen.has(key)) continue;
       seen.add(key);
