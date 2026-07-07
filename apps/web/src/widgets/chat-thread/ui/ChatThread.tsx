@@ -894,6 +894,7 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
           ) : null}
 
           <VirtualMessageStream
+            key={threadId}
             threadId={threadId}
             messages={persisted}
             live={live}

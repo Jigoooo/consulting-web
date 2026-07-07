@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { useVirtualizer, type ReactVirtualizer } from '@tanstack/react-virtual';
 import type { ChatMessage, ChatMessageAttachment } from '@consulting/contracts';
 import { Markdown } from '../../../shared/ui/markdown/Markdown';
 import { StreamingMarkdown } from '../../../shared/ui/markdown/StreamingMarkdown';
@@ -12,9 +12,18 @@ import { hoveredMessageStore } from '../../../lib/threadCtx';
 import { ThinkingRibbon } from './ThinkingRibbon';
 import { HighlightedText } from './HighlightedText';
 import { computePrefetchRootMargin } from '../model/prefetchMargin';
+import {
+  shouldAutoPageEdge,
+  type ScrollDirection,
+} from '../model/scrollPaging';
 import s from '../../thread-view/ui/ThreadView.module.css';
 
 type VerificationClaim = NonNullable<ChatMessage['verification']>['claims'][number];
+type MessageVirtualizer = ReactVirtualizer<HTMLDivElement, Element>;
+interface TailLockState {
+  threadId: string;
+  startedAt: number;
+}
 
 interface LiveTurnLike {
   id: number;
@@ -365,23 +374,122 @@ export function VirtualMessageStream({
 }: Props) {
   const didInitialScroll = useRef(false);
   const allowAutoLoad = useRef(false);
-  const pendingAnchor = useRef<{ index: number; offset: number } | null>(null);
-  const previousLength = useRef(messages.length);
+  const userScrollIntent = useRef(false);
+  const scrollDirection = useRef<ScrollDirection>('none');
+  const suppressAutoLoadUntil = useRef(0);
+  const olderEdgeLoadPending = useRef(false);
+  const appliedTargetRef = useRef<string | null>(null);
   const topSentinelRef = useRef<HTMLDivElement | null>(null);
   const bottomSentinelRef = useRef<HTMLDivElement | null>(null);
+  const tailLockRef = useRef<TailLockState | null>(null);
+  const tailSettleTimerRef = useRef(0);
+  const tailReleaseFrameRef = useRef(0);
+  const tailReleasePendingRef = useRef(false);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [topDateLabel, setTopDateLabel] = useState<string>('');
+  const [isTailSettling, setIsTailSettling] = useState(true);
+
+  const getItemKey = useCallback((index: number) => messages[index]?.id ?? `missing-${index}`, [messages]);
+
+  const clearTailSettleTimer = useCallback(() => {
+    if (!tailSettleTimerRef.current) return;
+    window.clearTimeout(tailSettleTimerRef.current);
+    tailSettleTimerRef.current = 0;
+  }, []);
+
+  const clearTailReleaseFrame = useCallback(() => {
+    if (!tailReleaseFrameRef.current) return;
+    window.cancelAnimationFrame(tailReleaseFrameRef.current);
+    tailReleaseFrameRef.current = 0;
+  }, []);
+
+  const finishTailLock = useCallback((instance?: MessageVirtualizer) => {
+    const lock = tailLockRef.current;
+    if (!lock || lock.threadId !== threadId) return;
+    clearTailSettleTimer();
+    clearTailReleaseFrame();
+    const scroller = scrollRef.current;
+    const clampTail = () => {
+      if (!instance || !scroller) return;
+      instance.scrollToEnd({ behavior: 'auto' });
+      scroller.scrollTop = Math.max(scroller.scrollHeight - scroller.clientHeight, 0);
+    };
+    clampTail();
+    tailReleaseFrameRef.current = window.requestAnimationFrame(() => {
+      clampTail();
+      tailReleaseFrameRef.current = window.requestAnimationFrame(() => {
+        tailReleaseFrameRef.current = 0;
+        const current = tailLockRef.current;
+        if (!current || current.threadId !== threadId) return;
+        clampTail();
+        tailLockRef.current = null;
+        tailReleasePendingRef.current = true;
+        allowAutoLoad.current = true;
+        setIsTailSettling(false);
+      });
+    });
+  }, [clearTailReleaseFrame, clearTailSettleTimer, scrollRef, threadId]);
+
+  const lockTailToEnd = useCallback((instance: MessageVirtualizer) => {
+    const lock = tailLockRef.current;
+    const scroller = scrollRef.current;
+    if (!lock || lock.threadId !== threadId || !scroller || messages.length === 0) return;
+    suppressProgrammaticAutoLoad(900);
+    instance.scrollToEnd({ behavior: 'auto' });
+    scroller.scrollTop = Math.max(scroller.scrollHeight - scroller.clientHeight, 0);
+  }, [messages.length, scrollRef, threadId]);
+
+  const scheduleTailLockSettle = useCallback((instance: MessageVirtualizer) => {
+    const lock = tailLockRef.current;
+    if (!lock || lock.threadId !== threadId) return;
+    clearTailSettleTimer();
+    clearTailReleaseFrame();
+    tailSettleTimerRef.current = window.setTimeout(() => {
+      tailSettleTimerRef.current = 0;
+      const current = tailLockRef.current;
+      const scroller = scrollRef.current;
+      if (!current || current.threadId !== threadId || !scroller) return;
+      lockTailToEnd(instance);
+      const distanceFromEnd = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+      const quietAtEnd = distanceFromEnd < 8;
+      const timedOut = performance.now() - current.startedAt > 2_500;
+      if (quietAtEnd || timedOut) {
+        finishTailLock(instance);
+      } else {
+        scheduleTailLockSettle(instance);
+      }
+    }, 480);
+  }, [clearTailReleaseFrame, clearTailSettleTimer, finishTailLock, lockTailToEnd, scrollRef, threadId]);
 
   const virtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => scrollRef.current,
-    getItemKey: (index) => messages[index]?.id ?? index,
-    estimateSize: () => 132,
+    getItemKey,
+    estimateSize: () => 180,
     overscan: 12,
+    anchorTo: 'end',
+    followOnAppend: 'auto',
+    scrollEndThreshold: 48,
+    useAnimationFrameWithResizeObserver: false,
+    useFlushSync: true,
+    onChange: (instance, _sync) => {
+      // Event-driven tail lock: row ResizeObserver measurements call
+      // resizeItem() -> notify(false) -> onChange(false). Keep the live tail
+      // pinned only when real measurements change, instead of guessing a frame
+      // count and visibly pushing the list multiple times.
+      lockTailToEnd(instance as MessageVirtualizer);
+      scheduleTailLockSettle(instance as MessageVirtualizer);
+    },
   });
 
   const virtualItems = virtualizer.getVirtualItems();
   const totalSize = virtualizer.getTotalSize();
+
+  function suppressProgrammaticAutoLoad(ms = 650) {
+    suppressAutoLoadUntil.current = Date.now() + ms;
+    userScrollIntent.current = false;
+    scrollDirection.current = 'none';
+  }
 
   // 축2: sticky 날짜 pill — 현재 뷰포트 상단에 보이는 첫 메시지의 날짜를 추적.
   // 가상 리스트라 DOM 순회 대신 virtualizer가 계산한 상단 인덱스의 createdAt을
@@ -415,56 +523,61 @@ export function VirtualMessageStream({
   // channel and the new channel never scrolls to the bottom (bug: 텔레그램
   // 채널에서 맨 밑으로 안 감), and stale virtualizer offset shows the old
   // conversation for a frame (bug: 새 채널에 이전 대화가 보임).
-  useEffect(() => {
+  useLayoutEffect(() => {
     didInitialScroll.current = false;
     allowAutoLoad.current = false;
-    pendingAnchor.current = null;
-    previousLength.current = 0;
+    olderEdgeLoadPending.current = false;
+    clearTailSettleTimer();
+    clearTailReleaseFrame();
+    tailLockRef.current = { threadId, startedAt: performance.now() };
+    setIsTailSettling(true);
+    suppressProgrammaticAutoLoad();
     setHighlightedId(null);
-    // Snap to top immediately; the initial-scroll effect below re-pins to the
-    // tail once this thread's messages are in.
-    const scroller = scrollRef.current;
-    if (scroller) scroller.scrollTop = 0;
-  }, [threadId, scrollRef]);
+    appliedTargetRef.current = null;
+    return () => {
+      clearTailSettleTimer();
+      clearTailReleaseFrame();
+    };
+  }, [clearTailReleaseFrame, clearTailSettleTimer, threadId]);
 
-  // Initial mount: pin to the newest message, then arm auto-loading.
-  useEffect(() => {
+  // Initial mount/channel re-entry: pin to the newest message before paint.
+  // Subsequent markdown/attachment height changes are handled by the
+  // virtualizer's ResizeObserver -> onChange(false) path above, and the lock is
+  // released when the bottom sentinel is actually intersecting.
+  useLayoutEffect(() => {
     if (messages.length === 0) {
       didInitialScroll.current = false;
       allowAutoLoad.current = false;
-      previousLength.current = 0;
+      olderEdgeLoadPending.current = false;
+      tailLockRef.current = null;
+      tailReleasePendingRef.current = false;
+      setIsTailSettling(false);
       return;
     }
     if (didInitialScroll.current) return;
     didInitialScroll.current = true;
     allowAutoLoad.current = false;
-    previousLength.current = messages.length;
-    requestAnimationFrame(() => {
-      virtualizer.scrollToIndex(messages.length - 1, { align: 'end' });
-      requestAnimationFrame(() => {
-        allowAutoLoad.current = true;
-      });
-    });
-  }, [messages.length, virtualizer]);
+    suppressProgrammaticAutoLoad();
+    if (!tailLockRef.current) {
+      tailLockRef.current = { threadId, startedAt: performance.now() };
+      setIsTailSettling(true);
+    }
+    lockTailToEnd(virtualizer);
+    scheduleTailLockSettle(virtualizer);
+  }, [lockTailToEnd, messages.length, scheduleTailLockSettle, virtualizer]);
 
-  // After an older page prepends, restore the anchor's on-screen position.
+  useLayoutEffect(() => {
+    if (isTailSettling || !tailReleasePendingRef.current) return;
+    tailReleasePendingRef.current = false;
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    virtualizer.scrollToEnd({ behavior: 'auto' });
+    scroller.scrollTop = Math.max(scroller.scrollHeight - scroller.clientHeight, 0);
+  }, [isTailSettling, scrollRef, virtualizer]);
+
   useEffect(() => {
-    const anchor = pendingAnchor.current;
-    const prev = previousLength.current;
-    if (messages.length === prev) return;
-    previousLength.current = messages.length;
-    if (!anchor || messages.length <= prev) return;
-    pendingAnchor.current = null;
-    const added = messages.length - prev;
-    const newIndex = anchor.index + added;
-    requestAnimationFrame(() => {
-      virtualizer.scrollToIndex(newIndex, { align: 'start' });
-      requestAnimationFrame(() => {
-        const scroller = scrollRef.current;
-        if (scroller) scroller.scrollTop = Math.max(0, scroller.scrollTop - anchor.offset);
-      });
-    });
-  }, [messages.length, virtualizer, scrollRef]);
+    if (!isLoadingOlder) olderEdgeLoadPending.current = false;
+  }, [isLoadingOlder, messages.length]);
 
   // Sentinel-driven infinite scroll + bottom-proximity tracking (A1). Callbacks
   // are read from refs and inlined here, so this effect does NOT depend on the
@@ -492,25 +605,45 @@ export function VirtualMessageStream({
     const handleIntersect: IntersectionObserverCallback = (entries) => {
       for (const entry of entries) {
         if (entry.target === bottomEl) {
-          // bottom sentinel visibility === "user is at/near the tail"
-          atBottomRef.current(entry.isIntersecting);
+          const g = guards.current;
+          // The bottom of the loaded window is only the live tail when no newer
+          // page exists. In around/search windows, keep JumpToLatest visible.
+          atBottomRef.current(entry.isIntersecting && !g.hasNewer);
+          if (entry.isIntersecting && !g.hasNewer && tailLockRef.current) {
+            lockTailToEnd(virtualizer);
+            scheduleTailLockSettle(virtualizer);
+          }
         }
         if (!entry.isIntersecting) continue;
         if (entry.target === topEl) {
-          if (!allowAutoLoad.current) continue;
           const g = guards.current;
-          if (!g.hasOlder || g.isLoadingOlder) continue;
-          const first = virtualizer.getVirtualItems()[0];
-          if (first) {
-            const el = scroller.querySelector<HTMLElement>(`[data-index="${first.index}"]`);
-            const offset = el ? el.getBoundingClientRect().top - scroller.getBoundingClientRect().top : 0;
-            pendingAnchor.current = { index: first.index, offset };
-          }
+          if (!shouldAutoPageEdge({
+            edge: 'older',
+            isIntersecting: entry.isIntersecting,
+            allowAutoLoad: allowAutoLoad.current,
+            hasPage: g.hasOlder,
+            isLoading: g.isLoadingOlder,
+            userInitiated: userScrollIntent.current,
+            direction: scrollDirection.current,
+            now: Date.now(),
+            suppressUntil: suppressAutoLoadUntil.current,
+          })) continue;
+          if (olderEdgeLoadPending.current) continue;
+          olderEdgeLoadPending.current = true;
           void loadOlderRef.current();
         } else if (entry.target === bottomEl) {
-          if (!allowAutoLoad.current) continue;
           const g = guards.current;
-          if (!g.hasNewer || g.isLoadingNewer) continue;
+          if (!shouldAutoPageEdge({
+            edge: 'newer',
+            isIntersecting: entry.isIntersecting,
+            allowAutoLoad: allowAutoLoad.current,
+            hasPage: g.hasNewer,
+            isLoading: g.isLoadingNewer,
+            userInitiated: userScrollIntent.current,
+            direction: scrollDirection.current,
+            now: Date.now(),
+            suppressUntil: suppressAutoLoadUntil.current,
+          })) continue;
           void loadNewerRef.current();
         }
       }
@@ -531,10 +664,46 @@ export function VirtualMessageStream({
 
     const measure = () => {
       rafPending = false;
+      if (tailLockRef.current) {
+        lockTailToEnd(virtualizer);
+        scheduleTailLockSettle(virtualizer);
+      }
       const now = scroller.scrollTop;
-      velocity = Math.abs(now - lastScrollTop);
+      const delta = now - lastScrollTop;
+      velocity = Math.abs(delta);
       lastScrollTop = now;
+      if (Date.now() >= suppressAutoLoadUntil.current && delta !== 0) {
+        scrollDirection.current = delta > 0 ? 'down' : 'up';
+        userScrollIntent.current = true;
+      } else if (Date.now() < suppressAutoLoadUntil.current) {
+        scrollDirection.current = 'none';
+        userScrollIntent.current = false;
+      }
       arm(computePrefetchRootMargin({ viewportHeight: scroller.clientHeight, velocity }));
+    };
+
+    const onWheel = (event: WheelEvent) => {
+      if (Date.now() < suppressAutoLoadUntil.current || event.deltaY === 0) return;
+      scrollDirection.current = event.deltaY > 0 ? 'down' : 'up';
+      userScrollIntent.current = true;
+      // A programmatic jump can leave the top sentinel already intersecting at
+      // scrollTop=0; a subsequent upward wheel does not create a new IO crossing.
+      // Treat that wheel as the edge intent directly so older history still loads.
+      if (event.deltaY >= 0 || scroller.scrollTop > 2 || olderEdgeLoadPending.current) return;
+      const g = guards.current;
+      if (!shouldAutoPageEdge({
+        edge: 'older',
+        isIntersecting: true,
+        allowAutoLoad: allowAutoLoad.current,
+        hasPage: g.hasOlder,
+        isLoading: g.isLoadingOlder,
+        userInitiated: true,
+        direction: 'up',
+        now: Date.now(),
+        suppressUntil: suppressAutoLoadUntil.current,
+      })) return;
+      olderEdgeLoadPending.current = true;
+      void loadOlderRef.current();
     };
 
     const onScroll = () => {
@@ -553,31 +722,53 @@ export function VirtualMessageStream({
     };
 
     scroller.addEventListener('scroll', onScroll, { passive: true });
+    scroller.addEventListener('wheel', onWheel, { passive: true });
 
     return () => {
       scroller.removeEventListener('scroll', onScroll);
+      scroller.removeEventListener('wheel', onWheel);
       window.clearTimeout(idleTimer);
       io?.disconnect();
     };
-  }, [scrollRef, virtualizer]);
+  }, [lockTailToEnd, scheduleTailLockSettle, scrollRef, virtualizer]);
 
   // Jump-to-search-hit: center the target row and pulse-highlight it.
   useEffect(() => {
-    if (!targetMessageId) return;
+    if (!targetMessageId) {
+      appliedTargetRef.current = null;
+      return;
+    }
     const index = messages.findIndex((message) => message.id === targetMessageId);
     if (index < 0) return;
+    const targetKey = `${threadId}:${targetMessageId}`;
+    if (appliedTargetRef.current === targetKey) return;
+    appliedTargetRef.current = targetKey;
     setHighlightedId(targetMessageId);
-    requestAnimationFrame(() => {
+    suppressProgrammaticAutoLoad();
+    const centerTarget = () => {
       virtualizer.scrollToIndex(index, { align: 'center' });
+      const targetEl = Array.from(scrollRef.current?.querySelectorAll<HTMLElement>('[data-message-id]') ?? [])
+        .find((el) => el.dataset.messageId === targetMessageId);
+      targetEl?.scrollIntoView({ behavior: 'auto', block: 'center' });
+    };
+    centerTarget();
+    let frame2 = 0;
+    const frame1 = requestAnimationFrame(() => {
+      centerTarget();
+      frame2 = requestAnimationFrame(centerTarget);
     });
     const timer = window.setTimeout(() => setHighlightedId((current) => (current === targetMessageId ? null : current)), 1800);
-    return () => window.clearTimeout(timer);
-  }, [messages, targetMessageId, virtualizer]);
+    return () => {
+      cancelAnimationFrame(frame1);
+      if (frame2) cancelAnimationFrame(frame2);
+      window.clearTimeout(timer);
+    };
+  }, [messages, targetMessageId, threadId, scrollRef, virtualizer]);
 
   return (
     <>
       {/* 축2: sticky 날짜 pill — 현재 보는 영역의 날짜를 상단에 고정 표시. */}
-      {topDateLabel ? (
+      {!isTailSettling && topDateLabel ? (
         <div className={s.stickyDate} aria-hidden="true">
           <span className={s.stickyDatePill}>{topDateLabel}</span>
         </div>
@@ -585,19 +776,19 @@ export function VirtualMessageStream({
       <div ref={topSentinelRef} className={s.scrollSentinel} aria-hidden="true" />
       {/* Top loading / end-of-history affordance (A6). G2: only surfaced when the
           older-page load exceeds 400ms — fast prefetches stay silent. */}
-      {showOlderLoading ? (
+      {!isTailSettling && showOlderLoading ? (
         <div className={s.loadEdge}>
           <span className={s.sp} /> 이전 대화 불러오는 중…
         </div>
-      ) : olderError ? (
+      ) : !isTailSettling && olderError ? (
         <button type="button" className={`${s.loadRetry} cwTap`} onClick={() => void loadOlderRef.current()}>
           <Icon name="retry" size="xs" decorative /> 이전 대화를 불러오지 못했어요. 다시 시도
         </button>
-      ) : !hasOlder && messages.length > 0 ? (
+      ) : !isTailSettling && !hasOlder && messages.length > 0 ? (
         <div className={s.loadEnd}>대화의 시작이에요</div>
       ) : null}
 
-      <div className={s.virtualCanvas} style={{ height: totalSize }}>
+      <div className={`${s.virtualCanvas} ${isTailSettling ? s.tailSettling : ''}`} style={{ height: totalSize }}>
         {virtualItems.map((virtualRow) => {
           const message = messages[virtualRow.index];
           if (!message) return null;
@@ -611,6 +802,7 @@ export function VirtualMessageStream({
               key={virtualRow.key}
               ref={virtualizer.measureElement}
               data-index={virtualRow.index}
+              data-message-id={message.id}
               className={[
                 s.virtualItem,
                 message.id === highlightedId ? s.virtualItemHit : '',
@@ -643,15 +835,15 @@ export function VirtualMessageStream({
       </div>
 
       {/* Bottom loading / end affordance (A6). G2: delayed like the top edge. */}
-      {showNewerLoading ? (
+      {!isTailSettling && showNewerLoading ? (
         <div className={s.loadEdge}>
           <span className={s.sp} /> 이후 대화 불러오는 중…
         </div>
-      ) : newerError ? (
+      ) : !isTailSettling && newerError ? (
         <button type="button" className={`${s.loadRetry} cwTap`} onClick={() => void loadNewerRef.current()}>
           <Icon name="retry" size="xs" decorative /> 이후 대화를 불러오지 못했어요. 다시 시도
         </button>
-      ) : hasNewer && !isLoadingNewer ? (
+      ) : !isTailSettling && hasNewer && !isLoadingNewer ? (
         <div className={s.loadEdge}>
           <SkeletonMessage />
         </div>

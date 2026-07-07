@@ -664,6 +664,9 @@
   width: 100%;
   flex: 0 0 auto;
 }
+.tailSettling {
+  visibility: hidden;
+}
 .virtualItem {
   position: absolute;
   top: 0;

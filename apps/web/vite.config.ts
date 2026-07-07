@@ -82,4 +82,43 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    // Vite 8 delegates build chunking to Rolldown. Keep the main app/vendor
+    // graph split into stable, cacheable groups, and keep the warning limit
+    // above intentionally lazy single-module chunks such as Shiki grammars.
+    // Do not group markdown/Shiki/Mermaid here: those are already loaded lazily,
+    // and forcing them into one manual chunk creates a multi-MB bundle.
+    // Docs: vite.dev/guide/build#chunking-strategy and
+    // vite.dev/config/build-options#build-chunksizewarninglimit.
+    chunkSizeWarningLimit: 900,
+    rolldownOptions: {
+      output: {
+        strictExecutionOrder: true,
+        codeSplitting: {
+          groups: [
+            {
+              name: 'vendor-react',
+              test: /node_modules[\\/](react|react-dom)[\\/]/,
+              priority: 40,
+            },
+            {
+              name: 'vendor-router-query',
+              test: /node_modules[\\/]@tanstack[\\/]/,
+              priority: 35,
+            },
+            {
+              name: 'vendor-pdf',
+              test: /node_modules[\\/](pdfjs-dist|react-pdf)[\\/]/,
+              priority: 25,
+            },
+            {
+              name: 'vendor-ui',
+              test: /node_modules[\\/](@radix-ui|lucide-react|sonner|class-variance-authority|tailwind-merge|clsx)[\\/]/,
+              priority: 20,
+            },
+          ],
+        },
+      },
+    },
+  },
 });
