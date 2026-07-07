@@ -114,7 +114,21 @@ def ingest_turn(data: dict[str, Any], *, no_embed: bool = False) -> dict[str, An
         else:
             context_text = I._contextualize(raw, topic_title, [scope_path])
         entities, edges = I._extract_entities(main, tid, raw + ' ' + context_text)
-        embedding = [] if no_embed else E.embed_one(context_text)
+        embed_model = 'none' if no_embed else E._MODEL
+        if no_embed:
+            embedding = []
+        else:
+            try:
+                embedding = E.embed_one(context_text)
+            except Exception as exc:  # noqa: BLE001
+                # H8 fail-open: a transient Gemini/embedding outage must not erase the
+                # web turn. Store the chunk without a vector so FTS + graph recall still
+                # work, and make the missing vector observable for later backfill.
+                embedding = []
+                embed_model = f'embedding_failed:{E._MODEL}'
+                sys.stderr.write(
+                    f"[consulting-web-ingest] embedding failed; stored FTS-only chunk for retry/backfill: {type(exc).__name__}: {exc}\n"
+                )
         cid = S.insert_chunk(
             con,
             tid=tid,
@@ -127,7 +141,7 @@ def ingest_turn(data: dict[str, Any], *, no_embed: bool = False) -> dict[str, An
             context_text=context_text,
             entities=entities,
             embedding=embedding,
-            embed_model='none' if no_embed else E._MODEL,
+            embed_model=embed_model,
         )
         for target_type, target_ref in edges:
             S.add_edge(
@@ -146,10 +160,58 @@ def ingest_turn(data: dict[str, Any], *, no_embed: bool = False) -> dict[str, An
         con.close()
 
 
+def backfill_missing_embeddings(topic_slug: str, *, limit: int = 100) -> dict[str, Any]:
+    """Fill vectors for consulting-web chunks that were stored FTS-only after an outage."""
+    con = S.connect()
+    try:
+        tid = S.topic_id(con, topic_slug)
+        rows = con.execute(
+            """
+            SELECT id, context_text
+            FROM dialogue_chunks
+            WHERE topic_id=?
+              AND source='consulting-web'
+              AND embed_dim=0
+              AND (embed_model IS NULL OR embed_model LIKE 'embedding_failed:%')
+            ORDER BY id
+            LIMIT ?
+            """,
+            (tid, max(1, limit)),
+        ).fetchall()
+        updated = 0
+        failed = 0
+        for row in rows:
+            try:
+                vec = E.embed_one(row['context_text'])
+                con.execute(
+                    "UPDATE dialogue_chunks SET embedding=?, embed_dim=?, embed_model=? WHERE id=?",
+                    (S.pack_vec(vec), len(vec), E._MODEL, row['id']),
+                )
+                updated += 1
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                sys.stderr.write(
+                    f"[consulting-web-ingest] embedding backfill failed for chunk {row['id']}: {type(exc).__name__}: {exc}\n"
+                )
+        con.commit()
+        return {"ok": True, "topic": topic_slug, "scanned": len(rows), "updated": updated, "failed": failed, **S.stats(con, tid)}
+    finally:
+        con.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description='consulting-web turn → existing consulting.db GraphRAG')
     parser.add_argument('--no-embed', action='store_true')
+    parser.add_argument('--backfill-missing-embeddings', action='store_true')
+    parser.add_argument('--topic')
+    parser.add_argument('--limit', type=int, default=100)
     args = parser.parse_args()
+    if args.backfill_missing_embeddings:
+        if not args.topic:
+            raise SystemExit('--topic is required with --backfill-missing-embeddings')
+        out = backfill_missing_embeddings(args.topic, limit=args.limit)
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return
     data = json.load(sys.stdin)
     out = ingest_turn(data, no_embed=args.no_embed)
     print(json.dumps(out, ensure_ascii=False, indent=2))

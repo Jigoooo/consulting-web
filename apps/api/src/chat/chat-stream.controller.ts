@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, ForbiddenException, Get, HttpCode, Inject, NotFoundException, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, ForbiddenException, Get, HttpCode, Inject, Logger, NotFoundException, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import {
   AddEvidenceRequestSchema,
@@ -31,6 +31,8 @@ import { ConsultingWebIngestService } from '../consulting/consulting-web-ingest.
 
 @Controller('chat')
 export class ChatStreamController {
+  private readonly logger = new Logger(ChatStreamController.name);
+
   constructor(
     @Inject(ChatStreamUseCase) private readonly chatStreamUseCase: ChatStreamUseCase,
     @Inject(HermesRunsClient) private readonly hermesRunsClient: HermesRunsClient,
@@ -242,7 +244,7 @@ export class ChatStreamController {
           toolUses,
         });
         if (finishState === 'complete' && assistantText.length > 0) {
-          void this.webIngest.ingestCompletedTurn({
+          await this.webIngest.ingestCompletedTurn({
             threadId: cmd.threadId,
             userText: cmd.message,
             assistantText,
@@ -259,8 +261,11 @@ export class ChatStreamController {
             refId: cmd.threadId,
           });
         }
-      } catch {
-        /* persistence must never crash the response path */
+      } catch (err) {
+        // Persistence side effects must never crash the SSE response path, but they
+        // also must not disappear silently: missing outbox rows are a real recall gap.
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`chat persistence side-effect failed: ${message}`);
       }
     };
     res.on('close', () => {

@@ -20,6 +20,20 @@ export interface ConsultingResolvedScope {
   archived: boolean;
 }
 
+export interface ConsultingRecallScope {
+  topicSlug: string;
+  topicId: number | null;
+  label: string;
+  relation: 'current' | 'cross_project';
+  weight: number;
+  archived: boolean;
+}
+
+export interface ConsultingResolvedFanout {
+  scope: ConsultingResolvedScope;
+  recallScopes: ConsultingRecallScope[];
+}
+
 type ScopeRow = {
   workspaceId: string;
   projectId: string;
@@ -57,6 +71,36 @@ export class ConsultingTopicResolver {
       scopePath: link.scopePath || this.defaultScopePath(scope),
       archived: link.status === 'archived',
     };
+  }
+
+  async resolveThreadFanout(threadId: string): Promise<ConsultingResolvedFanout | null> {
+    const scope = await this.resolveThread(threadId);
+    if (!scope) return null;
+    const recallScopes: ConsultingRecallScope[] = [{
+      topicSlug: scope.consultingTopicSlug,
+      topicId: scope.consultingTopicId,
+      label: `현재 프로젝트: ${scope.projectName}`,
+      relation: 'current',
+      weight: 1,
+      archived: scope.archived,
+    }];
+
+    const related = await this.workspaceLinks(scope);
+    const seen = new Set(recallScopes.map((item) => item.topicSlug));
+    for (const link of related) {
+      if (link.projectId === scope.projectId) continue;
+      if (seen.has(link.consultingTopicSlug)) continue;
+      seen.add(link.consultingTopicSlug);
+      recallScopes.push({
+        topicSlug: link.consultingTopicSlug,
+        topicId: link.consultingTopicId,
+        label: `다른 프로젝트: ${link.projectName}`,
+        relation: 'cross_project',
+        weight: 0.6,
+        archived: link.status === 'archived',
+      });
+    }
+    return { scope, recallScopes };
   }
 
   async scopeForThread(threadId: string): Promise<ScopeRow | null> {
@@ -109,6 +153,27 @@ export class ConsultingTopicResolver {
       if (link) return link;
     }
     return null;
+  }
+
+  private async workspaceLinks(scope: ConsultingResolvedScope): Promise<Array<LinkRow & { projectId: string; projectName: string }>> {
+    return this.db
+      .select({
+        projectId: schema.consultingTopicLinks.projectId,
+        projectName: schema.projects.name,
+        consultingTopicSlug: schema.consultingTopicLinks.consultingTopicSlug,
+        consultingTopicId: schema.consultingTopicLinks.consultingTopicId,
+        linkLevel: schema.consultingTopicLinks.linkLevel,
+        scopePath: schema.consultingTopicLinks.scopePath,
+        status: schema.consultingTopicLinks.status,
+      })
+      .from(schema.consultingTopicLinks)
+      .innerJoin(schema.projects, eq(schema.consultingTopicLinks.projectId, schema.projects.id))
+      .where(and(
+        eq(schema.consultingTopicLinks.workspaceId, scope.workspaceId),
+        eq(schema.consultingTopicLinks.status, 'active'),
+        isNull(schema.projects.deletedAt),
+      ))
+      .limit(12);
   }
 
   private normalizeLevel(level: string): ConsultingResolvedScope['linkLevel'] {

@@ -84,4 +84,36 @@ d('outbox relay → BullMQ (ADR-0005/0020)', () => {
       expect(job?.data.eventType).toBe('WorkspaceCreated');
     }
   });
+
+  it('relays consulting web ingest events with retry/backoff so failures are not one-shot lost', async () => {
+    const signup = new SignUpUseCase(db, new ScryptPasswordHasher());
+    const r = await signup.execute({
+      email: `outbox-ingest-${Date.now()}@example.com`,
+      password: 'supersecret1',
+      displayName: 'Outbox Ingest Tester',
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    users.push(r.value.userId);
+    workspaces.push(r.value.personalWorkspaceId);
+
+    await db.insert(schema.outboxEvents).values({
+      workspaceId: r.value.personalWorkspaceId,
+      eventType: 'ConsultingWebTurnCompleted',
+      aggregateType: 'thread',
+      aggregateId: r.value.personalWorkspaceId,
+      payload: { assistantText: '응답', userText: '질문' },
+      status: 'pending',
+      idempotencyKey: `consulting-web-ingest:test:${r.value.personalWorkspaceId}`,
+    });
+
+    const relay = new OutboxRelayService(db, queue);
+    await relay.relayOnce(500);
+
+    const job = await queue.getJob(`consulting-web-ingest_test_${r.value.personalWorkspaceId}`);
+    expect(job).toBeTruthy();
+    expect(job?.opts.attempts).toBeGreaterThanOrEqual(5);
+    expect(job?.opts.backoff).toMatchObject({ type: 'exponential' });
+    expect(job?.opts.removeOnFail).toBeGreaterThanOrEqual(5000);
+  });
 });

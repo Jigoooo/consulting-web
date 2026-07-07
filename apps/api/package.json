@@ -9,6 +9,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
     "test": "vitest run",
+    "test:graphrag": "python3 scripts/graphrag_eval_gate.py --rerank --top-k 2 --output ../../artifacts/graphrag-eval-baseline-rerank.json",
+    "test:ralph": "python3 scripts/ralph_graphrag_hardening.py --iterations 3 --output ../../artifacts/ralph-graphrag-hardening.json",
     "clean": "rm -rf dist .turbo *.tsbuildinfo"
   },
   "dependencies": {

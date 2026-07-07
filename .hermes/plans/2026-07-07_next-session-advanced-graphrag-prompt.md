@@ -179,6 +179,17 @@ docker exec consulting-web-api-1 sh -lc 'cd /legacy/consulting && s=$(date +%s.%
 [전 구간]  H12 Gemini 비용/레이트/degradation 정책
 ```
 
+**2026-07-07 실행 결과(현 작업 세션):**
+
+- 완료: H5·H9(outbox/queue ingest, controller fire-and-forget 제거), H8(fail-open 저장 + missing embedding backfill), H10(fake deterministic embedding + eval smoke), H1(Debian bookworm 이미지 + numpy/onnxruntime/sentence-transformers/google-generativeai/torch), H2(`rerank=cross-encoder` 컨테이너 실측), H3(60s recall timeout + 최소 45s guard), H7(hit별 `signal_breakdown`), H13(`status` ok/empty/timeout/error + `rerank_error` 관측).
+- §0 baseline 완료: `pnpm --filter @consulting/api test:graphrag` → 45문항, hit@k 0.8889, p95 5.7821s, failures 0, warning 0, rerank mode `cross-encoder`.
+- 반복 검증 완료: `pnpm --filter @consulting/api test:ralph` → 3회 반복 GREEN, static failures 0, failed consulting-web embeddings 0, dialogue FTS orphans 0, context_only cross-topic links 2, 컨테이너 runtime cross-encoder probe GREEN.
+- 추가 완료: H4 다중 topic fan-out recall 지원. `ConsultingTopicResolver.resolveThreadFanout()`가 workspace 내 active project links를 후보로 만들고, `ConsultingGraphRagBridge.recallMany()`가 중복 topic 제거·cross-project confidence ×0.6 감쇠·`다른 프로젝트` 라벨을 보존한다. ralph 3회 반복에 H4 context-builder 테스트와 single-topic recall 금지 static check를 추가했다.
+- 추가 완료: H11. 실측 결과 `dialogue_edges=339`, `file_edges=1931`로 edge substrate는 존재했고, `graph=0` 원인은 한국어 어미/조사 미정규화(`수익구조` ↔ `수익구조는`, `취약` ↔ `취약하다`)였다. legacy `dialogue_memory/search.py`에 deterministic `_term_set()` 정규화를 추가했고, `수익구조 경륜 취약` recall에서 `graph=1`, `file_graph=16`, `claim:CL-D4-01` hit를 확인했다. 또한 `cross_topic_suggest()`가 파일만 쓰고 DB `cross_topic_links`를 남기지 않던 구멍을 idempotent insert 코드 + `/tmp` DB 테스트로 닫았다. 승인 후 live `consulting.db`에 양방향 2건(`road-traffic-conditions-outlook` ↔ `changwon-org-mgmt-diagnosis`)을 `context_only/pending`으로 적용했고, 재실행 count=2로 멱등 검증했다.
+- 추가 완료: H12. `E.embed_query()`/`E.embed_file_query()` 실패가 recall 전체를 죽이지 않도록 legacy recall을 signal-level degradation으로 격리했다. Gemini quota/key/network 장애 시 `semantic`/`file_semantic`은 0으로 degrade되고 lexical/graph/file_lexical/file_graph는 계속 실행되며, 결과 JSON에 `degraded_signals`/`degraded_errors`가 붙는다. `/tmp` in-memory regression test와 `test:graphrag` GREEN.
+- 추가 완료: H6. `scripts/advanced_graphrag_write_guard.py`를 추가해 RAPTOR/Leiden/ToG류 SoT write가 `CONSULTING_ADVANCED_GRAPHRAG_WRITE_APPROVED=YES` 없이는 차단되도록 했다. derived row는 `source`와 non-empty `source_chunk_ids`를 강제하고, Leiden류 신규 의존성은 별도 `CONSULTING_ADVANCED_GRAPHRAG_DEPS_APPROVED=YES` + import probe를 통과해야 한다. ralph legacy tests에 H6 guard를 포함해 GREEN.
+- P-1 현재 상태: 13개 선결 구멍은 코드/DB/문서/ralph 기준 모두 닫힘. 이제 7개 고도화(§1~§7) 착수 가능. 단, §6 Leiden에서 실제 `igraph/leidenalg` 설치·이미지 변경이 필요해질 경우에는 별도 승인 후 진행한다.
+
 ---
 
 ## 구현 순서 — 7개 고도화

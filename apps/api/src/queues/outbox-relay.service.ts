@@ -1,9 +1,25 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import { schema } from '@consulting/db-schema';
 import { and, eq, sql } from 'drizzle-orm';
-import { Queue } from 'bullmq';
+import { Queue, type JobsOptions } from 'bullmq';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 import { OUTBOX_RELAY_QUEUE } from './queue.tokens.js';
+
+export function outboxJobOptions(eventType: string, idempotencyKey: string): JobsOptions {
+  const base: JobsOptions = {
+    jobId: idempotencyKey.replace(/:/g, '_'),
+    removeOnComplete: 1000,
+    removeOnFail: 5000,
+  };
+  if (eventType === 'ConsultingWebTurnCompleted') {
+    return {
+      ...base,
+      attempts: 5,
+      backoff: { type: 'exponential', delay: 5_000 },
+    };
+  }
+  return base;
+}
 
 /**
  * Outbox relay (ADR-0005): reads pending outbox_events, enqueues each to BullMQ
@@ -11,11 +27,40 @@ import { OUTBOX_RELAY_QUEUE } from './queue.tokens.js';
  * the row published. At-least-once; consumers must be idempotent.
  */
 @Injectable()
-export class OutboxRelayService {
+export class OutboxRelayService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(OutboxRelayService.name);
+  private relayTimer: ReturnType<typeof setInterval> | null = null;
+  private relayInFlight = false;
+
   constructor(
     @Inject(DRIZZLE) private readonly db: Db,
     @Inject(OUTBOX_RELAY_QUEUE) private readonly queue: Queue,
   ) {}
+
+  onModuleInit(): void {
+    void this.relayTick();
+    this.relayTimer = setInterval(() => {
+      void this.relayTick();
+    }, 2_000);
+  }
+
+  onModuleDestroy(): void {
+    if (this.relayTimer) clearInterval(this.relayTimer);
+    this.relayTimer = null;
+  }
+
+  private async relayTick(): Promise<void> {
+    if (this.relayInFlight) return;
+    this.relayInFlight = true;
+    try {
+      await this.relayOnce(100);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`outbox relay tick failed: ${message}`);
+    } finally {
+      this.relayInFlight = false;
+    }
+  }
 
   /** Relay up to `limit` pending events. Returns how many were published. */
   async relayOnce(limit = 100): Promise<number> {
@@ -49,12 +94,7 @@ export class OutboxRelayService {
             workspaceId: evt.workspaceId,
             payload: evt.payload,
           },
-          {
-            // BullMQ jobId cannot contain ':' — sanitize while preserving dedup semantics.
-            jobId: evt.idempotencyKey.replace(/:/g, '_'),
-            removeOnComplete: 1000,
-            removeOnFail: 5000,
-          },
+          outboxJobOptions(evt.eventType, evt.idempotencyKey),
         );
       } catch {
         // enqueue failed — revert the claim so the event is retried next pass,
