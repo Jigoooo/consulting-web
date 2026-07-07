@@ -762,7 +762,7 @@ function ContextPanel({ collapsed, onToggle }: { collapsed: boolean; onToggle: (
           <div className={s.ctxTitle}>근거 자료</div>
           <EvidencePanel threadId={activeThread} {...(activeProjectId ? { projectId: activeProjectId } : {})} />
         </div>
-      ) : (
+      ) : tab === 'members' || !activeThread ? (
         <>
           <div className={s.ctxSection}>
             <div className={s.ctxTitle}>멤버 {members?.members.length ? `· ${members.members.length}` : ''}</div>
@@ -818,7 +818,7 @@ function ContextPanel({ collapsed, onToggle }: { collapsed: boolean; onToggle: (
         <div className={s.ctxHint}>링크를 받은 사람은 가입/로그인 후 이 워크스페이스에 참여합니다. 7일 후 만료.</div>
           </div>
         </>
-      )}
+      ) : null}
       </>
       )}
     </div>
