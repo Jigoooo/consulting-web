@@ -368,19 +368,27 @@ export class HermesRunsClient {
   }
 
   async listModels(): Promise<ChatRuntimeModelsResponse> {
-    const response = await fetch(this.url('/v1/models'), {
-      method: 'GET',
-      headers: this.headers({ accept: 'application/json' }),
-    });
-    if (!response.ok) throw new Error(`Hermes models failed (${response.status})`);
-    const body = await response.json() as HermesModelsResponse;
-    const rawModels = Array.isArray(body.data) ? body.data : [];
-    const models: ChatRuntimeModel[] = rawModels.flatMap((item) => {
-      const normalized = normalizeRuntimeModel(item);
-      return normalized ? [normalized] : [];
-    });
     const configuredModels = await this.configuredModels();
-    const merged = mergeModelRoutes(configuredModels, models);
+    let upstreamModels: ChatRuntimeModel[] = [];
+    try {
+      const response = await fetch(this.url('/v1/models'), {
+        method: 'GET',
+        headers: this.headers({ accept: 'application/json' }),
+      });
+      if (response.ok) {
+        const body = await response.json() as HermesModelsResponse;
+        const rawModels = Array.isArray(body.data) ? body.data : [];
+        upstreamModels = rawModels.flatMap((item) => {
+          const normalized = normalizeRuntimeModel(item);
+          return normalized ? [normalized] : [];
+        });
+      }
+    } catch {
+      // Model listing is optional UI metadata. Chat streaming can still run
+      // with no explicit model, and configured routes remain usable even when
+      // the Hermes gateway rejects /v1/models (e.g. key rotation mismatch).
+    }
+    const merged = mergeModelRoutes(configuredModels, upstreamModels);
     return { ...(merged[0]?.route ? { defaultModel: merged[0].route } : {}), models: merged };
   }
 

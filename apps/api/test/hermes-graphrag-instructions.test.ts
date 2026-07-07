@@ -200,4 +200,36 @@ describe('HermesRunsClient GraphRAG instructions', () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it('returns configured model routes when the Hermes models endpoint rejects', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cw-hermes-config-'));
+    const configPath = join(dir, 'config.yaml');
+    await writeFile(configPath, [
+      'model:',
+      '  provider: openai-codex',
+      '  default: gpt-5.5',
+      '',
+    ].join('\n'), 'utf8');
+
+    vi.stubGlobal('fetch', async (input: unknown) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.endsWith('/v1/models')) return new Response('unauthorized', { status: 401 });
+      return new Response('not found', { status: 404 });
+    });
+
+    try {
+      const client = new HermesRunsClient({ ...env, HERMES_CONFIG_PATH: configPath });
+      const res = await client.listModels();
+
+      expect(res.defaultModel).toBe('openai-codex/gpt-5.5');
+      expect(res.models).toHaveLength(1);
+      expect(res.models[0]).toMatchObject({
+        route: 'openai-codex/gpt-5.5',
+        provider: 'openai-codex',
+        modelName: 'gpt-5.5',
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
