@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from statistics import mean
 
-DEFAULT_LEGACY_ROOT = Path(os.environ.get('CONSULTING_LEGACY_ROOT', '/home/jigoo/.hermes/workspace/consulting'))
+DEFAULT_BRAIN_ROOT = Path(os.environ.get('CONSULTING_BRAIN_ROOT', '/home/jigoo/.hermes/workspace/consulting'))
 DEFAULT_TOPIC = 'changwon-org-mgmt-diagnosis'
 
 
@@ -56,7 +56,7 @@ def build_questions(db_path: Path, topic: str) -> list[dict]:
     return questions
 
 
-def legacy_python(legacy_root: Path) -> str:
+def brain_python(brain_root: Path) -> str:
     explicit = os.environ.get('CONSULTING_EVAL_PYTHON')
     if explicit:
         return explicit
@@ -74,7 +74,7 @@ def legacy_python(legacy_root: Path) -> str:
         except Exception:
             return False
 
-    venv_python = legacy_root / '.venv' / 'bin' / 'python3'
+    venv_python = brain_root / '.venv' / 'bin' / 'python3'
     candidates = [str(venv_python)] if venv_python.exists() else []
     candidates.append(sys.executable)
     for candidate in candidates:
@@ -83,10 +83,10 @@ def legacy_python(legacy_root: Path) -> str:
     return candidates[0]
 
 
-def run_recall(legacy_root: Path, topic: str, query: str, *, top_k: int, rerank: bool, timeout: float) -> tuple[dict, float, str | None]:
+def run_recall(brain_root: Path, topic: str, query: str, *, top_k: int, rerank: bool, timeout: float) -> tuple[dict, float, str | None]:
     cmd = [
-        legacy_python(legacy_root),
-        str(legacy_root / 'scripts' / 'dialogue_memory_cli.py'),
+        brain_python(brain_root),
+        str(brain_root / 'scripts' / 'dialogue_memory_cli.py'),
         'recall',
         '--topic', topic,
         '--q', query,
@@ -96,7 +96,7 @@ def run_recall(legacy_root: Path, topic: str, query: str, *, top_k: int, rerank:
     cmd.append('--rerank' if rerank else '--no-rerank')
     start = time.perf_counter()
     try:
-        proc = subprocess.run(cmd, cwd=str(legacy_root), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False)
+        proc = subprocess.run(cmd, cwd=str(brain_root), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False)
     except subprocess.TimeoutExpired as exc:
         return {'ok': False, 'hits': [], 'rerank': None, 'signals': {}, 'error': 'timeout'}, timeout, str(exc)
     latency = time.perf_counter() - start
@@ -207,7 +207,7 @@ def validate_signal_breakdown(result: dict) -> list[str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description='Deterministic GraphRAG evaluation gate for consulting-web bridge')
-    parser.add_argument('--legacy-root', type=Path, default=DEFAULT_LEGACY_ROOT)
+    parser.add_argument('--brain-root', type=Path, default=DEFAULT_BRAIN_ROOT)
     parser.add_argument('--topic', default=DEFAULT_TOPIC)
     parser.add_argument('--top-k', type=int, default=5)
     parser.add_argument('--timeout-s', type=float, default=45.0)
@@ -221,7 +221,7 @@ def main() -> None:
     parser.add_argument('--baseline-json', type=Path, default=None)
     args = parser.parse_args()
 
-    db_path = args.legacy_root / 'db' / 'consulting.db'
+    db_path = args.brain_root / 'db' / 'consulting.db'
     questions = build_questions(db_path, args.topic)
     if len(questions) < 40:
         raise SystemExit(f'eval set too small: {len(questions)} < 40')
@@ -232,7 +232,7 @@ def main() -> None:
 
     rows = []
     for q in questions:
-        result, latency, err = run_recall(args.legacy_root, args.topic, q['query'], top_k=args.top_k, rerank=args.rerank, timeout=args.timeout_s)
+        result, latency, err = run_recall(args.brain_root, args.topic, q['query'], top_k=args.top_k, rerank=args.rerank, timeout=args.timeout_s)
         ok = bool(result.get('ok'))
         hit = hit_expected(result, q['expected'])
         rows.append({

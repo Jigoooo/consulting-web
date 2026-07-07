@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Ingest one consulting-web chat turn into the existing consulting.db GraphRAG store.
+"""Ingest one consulting-web chat turn into the shared consulting brain GraphRAG store.
 
 Input JSON is read from stdin. This keeps Postgres/web concerns in NestJS and lets this
-small bridge reuse the legacy dialogue_memory modules for contextualization, embeddings,
+small bridge reuse the consulting brain dialogue_memory modules for contextualization, embeddings,
 claim/evidence edge extraction, and FTS triggers.
 """
 from __future__ import annotations
@@ -17,11 +17,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-DEFAULT_CONSULTING_ROOT = '/legacy/consulting' if Path('/legacy/consulting').exists() else '/home/jigoo/.hermes/workspace/consulting'
-CONSULTING_ROOT = Path(os.environ.get('CONSULTING_LEGACY_ROOT', DEFAULT_CONSULTING_ROOT))
-LEGACY = CONSULTING_ROOT / 'scripts' / 'dialogue_memory'
-if str(LEGACY) not in sys.path:
-    sys.path.insert(0, str(LEGACY))
+DEFAULT_CONSULTING_ROOT = '/brain/consulting' if Path('/brain/consulting').exists() else '/home/jigoo/.hermes/workspace/consulting'
+CONSULTING_ROOT = Path(os.environ.get('CONSULTING_BRAIN_ROOT', DEFAULT_CONSULTING_ROOT))
+DIALOGUE_MEMORY = CONSULTING_ROOT / 'scripts' / 'dialogue_memory'
+if str(DIALOGUE_MEMORY) not in sys.path:
+    sys.path.insert(0, str(DIALOGUE_MEMORY))
 
 import store as S  # type: ignore  # noqa: E402
 import embeddings as E  # type: ignore  # noqa: E402

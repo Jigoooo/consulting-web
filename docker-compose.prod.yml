@@ -74,9 +74,9 @@ services:
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set in .env.docker}
       HERMES_API_BASE_URL: http://host.docker.internal:38642
       HERMES_API_KEY: ${HERMES_API_KEY:?set in .env.docker}
-      HERMES_CONFIG_PATH: /legacy/hermes.config.yaml
-      CONSULTING_LEGACY_ROOT: /legacy/consulting
-      HERMES_ENV_FILE: /legacy/hermes.env
+      HERMES_CONFIG_PATH: /brain/hermes.config.yaml
+      CONSULTING_BRAIN_ROOT: /brain/consulting
+      HERMES_ENV_FILE: /brain/hermes.env
       CONSULTING_PYTHON: python3
       CONSULTING_WEB_INGEST_SCRIPT: /app/scripts/ingest_web_dialogue.py
       # Web Push (optional — endpoints degrade to no-op when unset)
@@ -86,9 +86,9 @@ services:
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     volumes:
-      - /home/jigoo/.hermes/workspace/consulting:/legacy/consulting
-      - /home/jigoo/.hermes/.env:/legacy/hermes.env:ro
-      - /home/jigoo/.hermes/config.yaml:/legacy/hermes.config.yaml:ro
+      - /home/jigoo/.hermes/workspace/consulting:/brain/consulting
+      - /home/jigoo/.hermes/.env:/brain/hermes.env:ro
+      - /home/jigoo/.hermes/config.yaml:/brain/hermes.config.yaml:ro
     depends_on:
       pg:
         condition: service_healthy

@@ -6,7 +6,7 @@ import { users } from './identity';
 import { primaryId, timestamps } from './_shared';
 
 /**
- * Bridge between consulting-web scopes and the legacy/authoritative consulting.db GraphRAG topic.
+ * Bridge between consulting-web scopes and the shared consulting brain GraphRAG topic.
  *
  * Important naming distinction:
  * - consulting.db topic = consulting engagement/project (e.g. changwon-org-mgmt-diagnosis)

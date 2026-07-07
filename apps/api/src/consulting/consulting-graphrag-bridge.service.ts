@@ -4,10 +4,10 @@ import { promisify } from 'node:util';
 import { Injectable } from '@nestjs/common';
 
 const execFileAsync = promisify(execFile);
-const DEFAULT_CONSULTING_ROOT = existsSync('/legacy/consulting')
-  ? '/legacy/consulting'
+const DEFAULT_CONSULTING_ROOT = existsSync('/brain/consulting')
+  ? '/brain/consulting'
   : '/home/jigoo/.hermes/workspace/consulting';
-const CONSULTING_ROOT = process.env.CONSULTING_LEGACY_ROOT ?? DEFAULT_CONSULTING_ROOT;
+const CONSULTING_ROOT = process.env.CONSULTING_BRAIN_ROOT ?? DEFAULT_CONSULTING_ROOT;
 const CONSULTING_PYTHON = process.env.CONSULTING_PYTHON ?? 'python3';
 const DIALOGUE_MEMORY_CLI = `${CONSULTING_ROOT}/scripts/dialogue_memory_cli.py`;
 export const CONSULTING_RECALL_TIMEOUT_MS = Math.max(
