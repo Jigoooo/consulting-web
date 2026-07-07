@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   ForbiddenException,
   Get,
   Inject,
@@ -21,6 +22,7 @@ import {
   UploadAttachmentRequestSchema,
   UploadAttachmentResponseSchema,
   AttachmentExtractionResponseSchema,
+  OkResponseSchema,
 } from '@consulting/contracts';
 import { AccessTokenGuard, requireAuthUserId, type AuthenticatedRequest } from '../auth/access-token.guard.js';
 import { parseBody, parseResponse } from '../http/contract-adapter.js';
@@ -152,6 +154,24 @@ export class AttachmentsController {
         createdAt: r.createdAt.toISOString(),
       })),
     });
+  }
+
+  /** Delete a draft/message attachment. Soft-delete keeps auditability while removing it from UI/search/download. */
+  @Delete(':id')
+  async delete(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    const userId = requireAuthUserId(req);
+    const [row] = await this.db
+      .select({ threadId: schema.fileAttachments.threadId })
+      .from(schema.fileAttachments)
+      .where(and(eq(schema.fileAttachments.id, id), isNull(schema.fileAttachments.deletedAt)))
+      .limit(1);
+    if (!row) throw new NotFoundException({ code: 'NOT_FOUND', message: 'attachment not found' });
+    await this.requireThread(userId, row.threadId);
+    await this.db
+      .update(schema.fileAttachments)
+      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(schema.fileAttachments.id, id), isNull(schema.fileAttachments.deletedAt)));
+    return parseResponse(OkResponseSchema, { ok: true });
   }
 
   /** 축3: 파일 뷰어용 추출 텍스트. HWP/HWPX/PDF 원문을 인라인 뷰어에서 표시. */

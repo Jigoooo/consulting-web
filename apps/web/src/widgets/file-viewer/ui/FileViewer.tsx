@@ -39,68 +39,67 @@ export function FileViewer({ target, onClose }: { target: FileViewerTarget; onCl
   const blob = useAttachmentBlobUrl(target.id, needsBlob);
   const extraction = useAttachmentExtraction(target.id, needsText);
   const toast = useToast();
-
-  async function download() {
-    try {
-      await saveAttachment(target.id, target.fileName);
-    } catch {
-      toast('error', '다운로드에 실패했어요.');
-    }
-  }
-
   return (
-    <aside className={s.panel} role="dialog" aria-label={`${target.fileName} 미리보기`}>
-      <header className={s.head}>
-        <div className={s.headTitle} title={target.fileName}>
-          <Icon name="files" size="sm" decorative />
-          <span className={s.fileName}>{target.fileName}</span>
-        </div>
-        <div className={s.headActions}>
-          <button type="button" className={s.headBtn} onClick={() => void download()} title="다운로드">
-            <Icon name="download" size="sm" decorative />
-          </button>
-          <button type="button" className={s.headBtn} onClick={onClose} title="닫기" aria-label="닫기">
-            <Icon name="x" size="sm" decorative />
-          </button>
-        </div>
-      </header>
+    <div className={s.overlay} role="presentation">
+      <button type="button" className={s.scrim} aria-label="파일 미리보기 닫기" onClick={onClose} />
+      <aside className={s.panel} role="dialog" aria-label={`${target.fileName} 미리보기`}>
+        <header className={s.head}>
+          <div className={s.headTitle} title={target.fileName}>
+            <Icon name="files" size="sm" decorative />
+            <span className={s.fileName}>{target.fileName}</span>
+          </div>
+          <div className={s.headActions}>
+            <button
+              type="button"
+              className={s.headBtn}
+              title="다운로드"
+              onClick={() => void saveAttachment(target.id, target.fileName).catch(() => toast('error', '다운로드에 실패했어요.'))}
+            >
+              <Icon name="download" size="sm" decorative />
+            </button>
+            <button type="button" className={s.headBtn} title="닫기" aria-label="닫기" onClick={onClose}>
+              <Icon name="x" size="sm" decorative />
+            </button>
+          </div>
+        </header>
 
-      <div className={s.body}>
-        {kind === 'pdf' ? (
-          blob.loading ? (
+        <div className={s.body}>
+          {kind === 'pdf' ? (
+            blob.loading ? (
+              <div className={s.viewerLoading}>불러오는 중…</div>
+            ) : blob.error || !blob.url ? (
+              <div className={s.viewerError}>파일을 불러오지 못했어요.</div>
+            ) : (
+              <Suspense fallback={<div className={s.viewerLoading}>뷰어 로딩 중…</div>}>
+                <PdfView url={blob.url} />
+              </Suspense>
+            )
+          ) : kind === 'image' ? (
+            blob.loading ? (
+              <div className={s.viewerLoading}>불러오는 중…</div>
+            ) : blob.error || !blob.url ? (
+              <div className={s.viewerError}>이미지를 불러오지 못했어요.</div>
+            ) : (
+              <div className={s.imageWrap}>
+                <img src={blob.url} alt={target.fileName} className={s.image} />
+              </div>
+            )
+          ) : extraction.isLoading ? (
             <div className={s.viewerLoading}>불러오는 중…</div>
-          ) : blob.error || !blob.url ? (
-            <div className={s.viewerError}>파일을 불러오지 못했어요.</div>
+          ) : extraction.isError ? (
+            <div className={s.viewerError}>내용을 불러오지 못했어요.</div>
           ) : (
-            <Suspense fallback={<div className={s.viewerLoading}>뷰어 로딩 중…</div>}>
-              <PdfView url={blob.url} />
-            </Suspense>
-          )
-        ) : kind === 'image' ? (
-          blob.loading ? (
-            <div className={s.viewerLoading}>불러오는 중…</div>
-          ) : blob.error || !blob.url ? (
-            <div className={s.viewerError}>이미지를 불러오지 못했어요.</div>
-          ) : (
-            <div className={s.imageWrap}>
-              <img src={blob.url} alt={target.fileName} className={s.image} />
-            </div>
-          )
-        ) : extraction.isLoading ? (
-          <div className={s.viewerLoading}>불러오는 중…</div>
-        ) : extraction.isError ? (
-          <div className={s.viewerError}>내용을 불러오지 못했어요.</div>
-        ) : (
-          <ExtractedContent
-            kind={kind}
-            fileName={target.fileName}
-            content={extraction.data?.textContent ?? ''}
-            status={extraction.data?.status ?? null}
-            warnings={extraction.data?.warnings ?? []}
-          />
-        )}
-      </div>
-    </aside>
+            <ExtractedContent
+              kind={kind}
+              fileName={target.fileName}
+              content={extraction.data?.textContent ?? ''}
+              status={extraction.data?.status ?? null}
+              warnings={extraction.data?.warnings ?? []}
+            />
+          )}
+        </div>
+      </aside>
+    </div>
   );
 }
 

@@ -108,6 +108,17 @@ export function useUploadAttachment(threadId: string | undefined) {
   });
 }
 
+export function useDeleteAttachment(threadId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteAttachment(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: collabKeys.attachments(threadId ?? '') });
+      void qc.invalidateQueries({ queryKey: ['library-sources'] });
+    },
+  });
+}
+
 /** 축3: 추출 텍스트(파일 뷰어 — HWP/HWPX/PDF 원문 표시). processing이면 폴링. */
 export function useAttachmentExtraction(id: string | undefined, enabled = true) {
   return useQuery({

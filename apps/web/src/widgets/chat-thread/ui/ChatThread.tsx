@@ -10,13 +10,14 @@ import { useSelectedWorkspace } from '../../../lib/wsStore';
 import { useWorkspaceTree } from '../../../lib/spaces';
 import {
   collabKeys,
-  useAttachments,
+  useDeleteAttachment,
   useUploadAttachment,
   fileToBase64,
 } from '../../../lib/collab';
 import { ConvoMinimap, type MinimapEntry } from './ConvoMinimap';
 import { messageWindowKeys, useMessageWindow } from '../model/useMessageWindow';
 import { searchStore, useSearchState } from '../model/searchStore';
+import { appendDraftAttachment, canSubmitDraft, createDraftAttachment, draftAttachmentsForSend } from '../model/draftAttachments';
 import { RUNTIME_COMMANDS, describeRuntimeCommand, parseRuntimeCommand, resolveModelCommand, type RuntimeCommandItem } from '../model/runtimeCommands';
 import { VirtualMessageStream, type HighlightState } from './VirtualMessageStream';
 import { RunStatusBar, type RunStatusUi } from './RunStatusBar';
@@ -153,8 +154,8 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
   const { data: tree } = useWorkspaceTree(workspaceId ?? undefined);
   const history = useMessageWindow(threadId);
   const tailScrollRequest = useTailScrollRequest();
-  const attachments = useAttachments(threadId);
   const uploadAttachment = useUploadAttachment(threadId);
+  const deleteAttachment = useDeleteAttachment(threadId);
   const [fileViewer, setFileViewer] = useState<FileViewerTarget | null>(null);
   const search = useSearchState();
 
@@ -169,6 +170,8 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
   const [runtimeFlow, setRuntimeFlow] = useState<RuntimeFlowMode>('idle');
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [queuedMessage, setQueuedMessage] = useState<string | null>(null);
+  const [draftFiles, setDraftFiles] = useState<ChatMessageAttachment[]>([]);
+  const [deletingAttachmentId, setDeletingAttachmentId] = useState<string | null>(null);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const [approvalBusyChoice, setApprovalBusyChoice] = useState<ChatApprovalChoice | null>(null);
   const [modelSheetOpen, setModelSheetOpen] = useState(false);
@@ -232,6 +235,7 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
     setRuntimeFlow('idle');
     setActiveTool(null);
     setQueuedMessage(null);
+    setDraftFiles([]);
     queuedMessageRef.current = null;
     setPendingApproval(null);
     setApprovalBusyChoice(null);
@@ -416,17 +420,24 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
 
   async function send(messageOverride?: string) {
     const message = (messageOverride ?? input).trim();
-    const draftAttachments = messageOverride ? [] : (attachments.data?.attachments ?? []);
-    if (!message && draftAttachments.length === 0) return;
+    const draftAttachments = draftAttachmentsForSend(draftFiles, messageOverride);
+    if (!canSubmitDraft(message, draftAttachments)) return;
     if (!messageOverride && executeRuntimeCommand(message)) return;
     if (busy) {
+      if (draftAttachments.length > 0) {
+        toast('info', '파일 첨부 메시지는 현재 응답이 끝난 뒤 전송해주세요.');
+        return;
+      }
       queuedMessageRef.current = message;
       setQueuedMessage(message);
       setRuntimeFlow('queued');
       if (!messageOverride) setInput('');
       return;
     }
-    if (!messageOverride) setInput('');
+    if (!messageOverride) {
+      setInput('');
+      setDraftFiles([]);
+    }
     lastPromptRef.current = message;
     setBusy(true);
     setRuntimeFlow('queueing');
@@ -614,17 +625,47 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
     }
     try {
       const dataBase64 = await fileToBase64(file);
-      await uploadAttachment.mutateAsync({
+      const uploaded = await uploadAttachment.mutateAsync({
         threadId,
         fileName: file.name,
         mimeType: file.type || 'application/octet-stream',
         dataBase64,
       });
+      const draft = createDraftAttachment({
+        id: uploaded.id,
+        fileName: file.name,
+        mimeType: file.type || 'application/octet-stream',
+        sizeBytes: file.size,
+        uploaderUserId: user?.id ?? null,
+      });
+      setDraftFiles((current) => appendDraftAttachment(current, draft));
       toast('success', `첨부 완료: ${file.name}`);
     } catch {
       toast('error', '첨부에 실패했어요. 이미지/PDF/텍스트만 지원해요.');
     } finally {
       if (fileRef.current) fileRef.current.value = '';
+    }
+  }
+
+  async function removeAttachment(attachment: ChatMessageAttachment) {
+    if (deletingAttachmentId) return;
+    setDeletingAttachmentId(attachment.id);
+    try {
+      await deleteAttachment.mutateAsync(attachment.id);
+      setDraftFiles((current) => current.filter((item) => item.id !== attachment.id));
+      setLive((current) => current.map((turn) => (
+        turn.attachments
+          ? { ...turn, attachments: turn.attachments.filter((item) => item.id !== attachment.id) }
+          : turn
+      )));
+      if (fileViewer?.id === attachment.id) setFileViewer(null);
+      void qc.invalidateQueries({ queryKey: messageWindowKeys.latest(threadId) });
+      await history.resetToLatest();
+      toast('success', `첨부 삭제: ${attachment.fileName}`);
+    } catch {
+      toast('error', '첨부 삭제에 실패했어요. 권한 또는 네트워크 상태를 확인해주세요.');
+    } finally {
+      setDeletingAttachmentId(null);
     }
   }
 
@@ -715,7 +756,6 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
 
   const userName = user?.displayName ?? '나';
   const persisted = history.messages;
-  const files = attachments.data?.attachments ?? [];
   const activeModelRoute = selectedModel || defaultModel || '';
   const activeModelLabel = runtimeModels.find((model) => model.route === activeModelRoute)?.label ?? (activeModelRoute || '모델 확인 중');
 
@@ -878,6 +918,8 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
             onRetryLast={() => send(lastPromptRef.current)}
             onChoice={(choice) => void send(choice)}
             onOpenAttachment={(attachment) => setFileViewer({ id: attachment.id, fileName: attachment.fileName, mimeType: attachment.mimeType })}
+            onDeleteAttachment={removeAttachment}
+            deletingAttachmentId={deletingAttachmentId}
           />
           <JumpToLatest
             visible={!atBottom || history.hasNewer || history.mode === 'around'}
@@ -899,27 +941,42 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
             모델 변경
           </Button>
           <span className={s.modelChip} title={activeModelRoute || undefined}>{activeModelLabel}</span>
-          <Button variant="ghost" size="sm" type="button" leadingIcon="info" disabled={!runStatus?.runId} onClick={() => void refreshRunStatus(true)}>
-            상태
-          </Button>
+          {runStatus?.runId ? (
+            <Button variant="ghost" size="sm" type="button" leadingIcon="info" onClick={() => void refreshRunStatus(true)}>
+              상태
+            </Button>
+          ) : null}
           {busy ? (
             <Button variant="outline" size="sm" type="button" leadingIcon="stop" onClick={() => void stopCurrentRun()}>
               중단
             </Button>
           ) : null}
         </div>
-        {files.length > 0 ? (
+        {draftFiles.length > 0 ? (
           <div className={s.fileStrip}>
-            {files.map((f) => (
-              <button
+            {draftFiles.map((f) => (
+              <div
                 key={f.id}
-                type="button"
                 className={s.fileChip}
-                title={`미리보기 (${fmtSize(f.sizeBytes)})`}
-                onClick={() => setFileViewer({ id: f.id, fileName: f.fileName, mimeType: f.mimeType })}
               >
-                <Icon name="paperclip" size="xs" decorative /> {f.fileName} <span className={s.fileSize}>{fmtSize(f.sizeBytes)}</span>
-              </button>
+                <button
+                  type="button"
+                  className={s.fileChipMain}
+                  title={`미리보기 (${fmtSize(f.sizeBytes)})`}
+                  onClick={() => setFileViewer({ id: f.id, fileName: f.fileName, mimeType: f.mimeType })}
+                >
+                  <Icon name="paperclip" size="xs" decorative /> {f.fileName} <span className={s.fileSize}>{fmtSize(f.sizeBytes)}</span>
+                </button>
+                <button
+                  type="button"
+                  className={s.fileChipRemove}
+                  aria-label={`${f.fileName} 첨부 삭제`}
+                  disabled={deletingAttachmentId === f.id}
+                  onClick={() => void removeAttachment(f)}
+                >
+                  <Icon name="x" size="xs" decorative />
+                </button>
+              </div>
             ))}
           </div>
         ) : null}
@@ -1013,7 +1070,7 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
                 variant="primary"
                 type="button"
                 trailingIcon="send"
-                disabled={busy || (!input.trim() && files.length === 0)}
+                disabled={busy || !canSubmitDraft(input, draftFiles)}
                 onClick={() => void send()}
               >
                 전송

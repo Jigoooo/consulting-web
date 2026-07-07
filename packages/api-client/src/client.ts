@@ -398,6 +398,10 @@ export class ConsultingApiClient {
     );
   }
 
+  deleteAttachment(id: string): Promise<OkResponse> {
+    return this.http.request(`/attachments/${id}`, { method: 'DELETE' }, (d) => OkResponseSchema.parse(d));
+  }
+
   /** 축3: 추출 텍스트(파일 뷰어용). */
   getAttachmentExtraction(id: string): Promise<AttachmentExtractionResponse> {
     return this.http.request(`/attachments/${id}/extraction`, { method: 'GET' }, (d) =>

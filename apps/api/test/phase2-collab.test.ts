@@ -22,6 +22,7 @@ import {
   UploadAttachmentResponseSchema,
   ListAttachmentsResponseSchema,
   ListMessagesPageResponseSchema,
+  OkResponseSchema,
 } from '@consulting/contracts';
 import { AppModule } from '../src/app.module.js';
 
@@ -456,5 +457,45 @@ d('Phase 2 — evidence, artifacts, notifications', () => {
       .get(`/attachments/${uploaded.id}/content`)
       .set('authorization', outsider.bearer)
       .expect(403);
+  });
+
+  it('G-3: owner can delete a draft attachment and it disappears from list/download', async () => {
+    const owner = await makeUser('att-del-owner');
+    const outsider = await makeUser('att-del-out');
+    const { thread } = await makeSpaces(owner.bearer, owner.personalWorkspaceId);
+    const payload = Buffer.from('삭제 가능한 draft 첨부').toString('base64');
+    const uploaded = UploadAttachmentResponseSchema.parse(
+      (await request(app.getHttpServer())
+        .post('/attachments')
+        .set('authorization', owner.bearer)
+        .send({ threadId: thread.id, fileName: 'delete-me.txt', mimeType: 'text/plain', dataBase64: payload })
+        .expect(201)).body,
+    );
+
+    await request(app.getHttpServer())
+      .delete(`/attachments/${uploaded.id}`)
+      .set('authorization', outsider.bearer)
+      .expect(403);
+
+    const deleted = OkResponseSchema.parse(
+      (await request(app.getHttpServer())
+        .delete(`/attachments/${uploaded.id}`)
+        .set('authorization', owner.bearer)
+        .expect(200)).body,
+    );
+    expect(deleted.ok).toBe(true);
+
+    const list = ListAttachmentsResponseSchema.parse(
+      (await request(app.getHttpServer())
+        .get(`/attachments/threads/${thread.id}`)
+        .set('authorization', owner.bearer)
+        .expect(200)).body,
+    );
+    expect(list.attachments).toEqual([]);
+
+    await request(app.getHttpServer())
+      .get(`/attachments/${uploaded.id}/content`)
+      .set('authorization', owner.bearer)
+      .expect(404);
   });
 });

@@ -61,6 +61,8 @@ interface Props {
   onRetryLast: () => Promise<void> | void;
   onChoice: (choice: string) => void;
   onOpenAttachment: (attachment: ChatMessageAttachment) => void;
+  onDeleteAttachment: (attachment: ChatMessageAttachment) => Promise<void> | void;
+  deletingAttachmentId: string | null;
 }
 
 function fmtSize(bytes: number): string {
@@ -69,20 +71,43 @@ function fmtSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function AttachmentCards({ attachments, onOpenAttachment }: { attachments: ChatMessageAttachment[] | undefined; onOpenAttachment: Props['onOpenAttachment'] }) {
+function AttachmentCards({
+  attachments,
+  onOpenAttachment,
+  onDeleteAttachment,
+  deletingAttachmentId,
+}: {
+  attachments: ChatMessageAttachment[] | undefined;
+  onOpenAttachment: Props['onOpenAttachment'];
+  onDeleteAttachment: Props['onDeleteAttachment'];
+  deletingAttachmentId: string | null;
+}) {
   if (!attachments || attachments.length === 0) return null;
   return (
     <div className={s.fileStrip}>
       {attachments.map((attachment) => (
-        <button
+        <div
           key={attachment.id}
-          type="button"
           className={s.fileChip}
-          title={`미리보기 (${fmtSize(attachment.sizeBytes)})`}
-          onClick={() => onOpenAttachment(attachment)}
         >
-          <Icon name="paperclip" size="xs" decorative /> {attachment.fileName} <span className={s.fileSize}>{fmtSize(attachment.sizeBytes)}</span>
-        </button>
+          <button
+            type="button"
+            className={s.fileChipMain}
+            title={`미리보기 (${fmtSize(attachment.sizeBytes)})`}
+            onClick={() => onOpenAttachment(attachment)}
+          >
+            <Icon name="paperclip" size="xs" decorative /> {attachment.fileName} <span className={s.fileSize}>{fmtSize(attachment.sizeBytes)}</span>
+          </button>
+          <button
+            type="button"
+            className={s.fileChipRemove}
+            aria-label={`${attachment.fileName} 첨부 삭제`}
+            disabled={deletingAttachmentId === attachment.id}
+            onClick={() => void onDeleteAttachment(attachment)}
+          >
+            <Icon name="x" size="xs" decorative />
+          </button>
+        </div>
       ))}
     </div>
   );
@@ -98,6 +123,8 @@ function PersistedRow({
   onRetry,
   onChoice,
   onOpenAttachment,
+  onDeleteAttachment,
+  deletingAttachmentId,
 }: {
   message: ChatMessage;
   userName: string;
@@ -108,6 +135,8 @@ function PersistedRow({
   onRetry: Props['onRetry'];
   onChoice: Props['onChoice'];
   onOpenAttachment: Props['onOpenAttachment'];
+  onDeleteAttachment: Props['onDeleteAttachment'];
+  deletingAttachmentId: string | null;
 }) {
   const isMatch = highlight?.ids.has(message.id) ?? false;
   const highlightQuery = isMatch ? highlight?.query ?? '' : '';
@@ -158,7 +187,12 @@ function PersistedRow({
             <HighlightedText text={message.content} query={highlightQuery} />
           </div>
         )}
-        <AttachmentCards attachments={message.attachments} onOpenAttachment={onOpenAttachment} />
+        <AttachmentCards
+          attachments={message.attachments}
+          onOpenAttachment={onOpenAttachment}
+          onDeleteAttachment={onDeleteAttachment}
+          deletingAttachmentId={deletingAttachmentId}
+        />
         {message.finishState === 'error' ? (
           <div className={s.msgError}>이 응답은 오류로 중단되었어요.</div>
         ) : null}
@@ -180,6 +214,8 @@ function LiveRow({
   onRetryLast,
   onChoice,
   onOpenAttachment,
+  onDeleteAttachment,
+  deletingAttachmentId,
 }: {
   turn: LiveTurnLike;
   userName: string;
@@ -190,6 +226,8 @@ function LiveRow({
   onRetryLast: Props['onRetryLast'];
   onChoice: Props['onChoice'];
   onOpenAttachment: Props['onOpenAttachment'];
+  onDeleteAttachment: Props['onDeleteAttachment'];
+  deletingAttachmentId: string | null;
 }) {
   return (
     <div key={`live-${turn.id}`} className={`${s.msg} ${s.msgHover}`} data-turn={`l-${turn.id}`}>
@@ -226,7 +264,12 @@ function LiveRow({
         ) : (
           <>
             {turn.text ? <div className={s.text}>{turn.text}</div> : null}
-            <AttachmentCards attachments={turn.attachments} onOpenAttachment={onOpenAttachment} />
+            <AttachmentCards
+              attachments={turn.attachments}
+              onOpenAttachment={onOpenAttachment}
+              onDeleteAttachment={onDeleteAttachment}
+              deletingAttachmentId={deletingAttachmentId}
+            />
           </>
         )}
         {turn.error ? (
@@ -271,6 +314,8 @@ export function VirtualMessageStream({
   onRetryLast,
   onChoice,
   onOpenAttachment,
+  onDeleteAttachment,
+  deletingAttachmentId,
 }: Props) {
   const didInitialScroll = useRef(false);
   const allowAutoLoad = useRef(false);
@@ -543,6 +588,8 @@ export function VirtualMessageStream({
                 onRetry={onRetry}
                 onChoice={onChoice}
                 onOpenAttachment={onOpenAttachment}
+                onDeleteAttachment={onDeleteAttachment}
+                deletingAttachmentId={deletingAttachmentId}
               />
             </div>
           );
@@ -581,6 +628,8 @@ export function VirtualMessageStream({
           onRetryLast={onRetryLast}
           onChoice={onChoice}
           onOpenAttachment={onOpenAttachment}
+          onDeleteAttachment={onDeleteAttachment}
+          deletingAttachmentId={deletingAttachmentId}
         />
       ))}
       <div ref={bottomRef} />

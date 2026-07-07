@@ -1,10 +1,29 @@
-/* 파일 뷰어(축3) — 우측 슬라이드 패널. blur 금지(round6), 은은한 슬라이드. */
+/* 파일 뷰어(축3) — fixed drawer. Chat/layout flex 안에서 공간을 차지하지 않는다. */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+.scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: color-mix(in srgb, var(--text-primary) 16%, transparent);
+  cursor: default;
+  pointer-events: auto;
+}
 .panel {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
   display: flex;
   flex-direction: column;
   width: min(560px, 46vw);
   min-width: 360px;
-  height: 100%;
+  height: 100dvh;
   background: var(--surface-card);
   border-left: 1px solid var(--border-whisper);
   box-shadow: var(--shadow-pop);
@@ -191,5 +210,12 @@
 @media (prefers-reduced-motion: reduce) {
   .panel {
     animation: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .panel {
+    width: min(100vw, 560px);
+    min-width: 0;
   }
 }
