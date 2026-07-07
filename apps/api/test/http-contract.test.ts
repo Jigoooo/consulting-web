@@ -339,6 +339,7 @@ d('HTTP API contract adapters', () => {
     const hermesBase = (process.env.HERMES_API_BASE_URL ?? 'http://127.0.0.1:8642').replace(/\/$/, '');
     expect(calls).toEqual([
       `${hermesBase}/v1/runs`,
+      `${hermesBase}/v1/runs/run_test_proxy`,
       `${hermesBase}/v1/runs/run_test_proxy/events`,
     ]);
     for (const event of events) {

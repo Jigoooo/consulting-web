@@ -1,4 +1,5 @@
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
+import type { ChatApprovalChoice, ChatMessageAttachment, ChatRuntimeModel } from '@consulting/contracts';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { api } from '../../../lib/api';
@@ -16,9 +17,11 @@ import {
 import { ConvoMinimap, type MinimapEntry } from './ConvoMinimap';
 import { messageWindowKeys, useMessageWindow } from '../model/useMessageWindow';
 import { searchStore, useSearchState } from '../model/searchStore';
+import { RUNTIME_COMMANDS, describeRuntimeCommand, parseRuntimeCommand, resolveModelCommand, type RuntimeCommandItem } from '../model/runtimeCommands';
 import { VirtualMessageStream, type HighlightState } from './VirtualMessageStream';
 import { RunStatusBar, type RunStatusUi } from './RunStatusBar';
 import { JumpToLatest } from './JumpToLatest';
+import { ModelPickerSheet } from './ModelPickerSheet';
 import { Icon } from '../../../shared/icons/Icon';
 import { Button } from '../../../shared/ui/button/Button';
 import { Textarea } from '../../../shared/ui/input/Input';
@@ -32,16 +35,20 @@ interface LiveTurn {
   id: number;
   role: 'user' | 'ai';
   text: string;
+  attachments?: ChatMessageAttachment[];
   runId?: string;
   streaming?: boolean;
   error?: string;
 }
 
-interface SlashCommandItem {
-  command: string;
-  value: string;
-  title: string;
-  hint: string;
+type RuntimeFlowMode = 'idle' | 'queueing' | 'steering' | 'answering' | 'approval' | 'stopping' | 'queued';
+
+interface PendingApproval {
+  runId: string;
+  command?: string;
+  message?: string;
+  risk?: string;
+  choices: ChatApprovalChoice[];
 }
 
 interface ThreadBreadcrumb {
@@ -50,22 +57,82 @@ interface ThreadBreadcrumb {
   topicName: string;
 }
 
-const HERMES_SLASH_COMMANDS: SlashCommandItem[] = [
-  { command: '/help', value: '/help', title: '도움말', hint: 'Hermes가 지원하는 slash 명령 안내' },
-  { command: '/commands', value: '/commands', title: '명령 목록', hint: 'gateway/CLI 명령 목록을 조회' },
-  { command: '/usage', value: '/usage', title: '사용량', hint: '토큰/사용량 정보가 지원되면 표시' },
-  { command: '/status', value: '/status', title: '세션 상태', hint: '현재 Hermes 세션 상태 확인' },
-  { command: '/model', value: '/model', title: '모델 확인', hint: '현재 모델 또는 모델 변경 명령' },
-  { command: '/reasoning', value: '/reasoning show', title: 'Reasoning 표시', hint: 'reasoning 표시 상태를 확인/변경' },
-  { command: '/verbose', value: '/verbose', title: '진행 상세도', hint: '도구/진행 표시 레벨 전환' },
-  { command: '/skills', value: '/skills', title: '스킬', hint: '사용 가능한 Hermes skills 조회' },
-  { command: '/tools', value: '/tools', title: '도구', hint: '도구/툴셋 상태 조회' },
-];
+const MODEL_STORAGE_KEY = 'consulting.chat.selected-model.v1';
 
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+}
+
+function runtimeFlowCopy(mode: RuntimeFlowMode, activeTool: string | null): { label: string; detail: string } | null {
+  if (mode === 'idle') return null;
+  if (mode === 'queueing') return { label: 'Queueing', detail: 'Hermes run을 시작하는 중' };
+  if (mode === 'steering') return { label: 'Steering', detail: activeTool ? `${activeTool} 실행 준비` : '모델이 방향을 잡는 중' };
+  if (mode === 'answering') return { label: 'Answering', detail: '답변을 스트리밍하는 중' };
+  if (mode === 'approval') return { label: 'Approval', detail: '실행 승인 대기 중' };
+  if (mode === 'stopping') return { label: 'Stopping', detail: '상류 Hermes run 중단 요청 중' };
+  return { label: 'Queued', detail: '현재 답변 뒤에 이어서 보낼 메시지 대기 중' };
+}
+
+function RuntimeFlowStrip({ mode, activeTool, queuedMessage }: { mode: RuntimeFlowMode; activeTool: string | null; queuedMessage: string | null }) {
+  const copy = runtimeFlowCopy(mode, activeTool);
+  if (!copy && !queuedMessage) return null;
+  return (
+    <div className={s.flowStrip} data-mode={mode}>
+      <div className={s.flowMain}>
+        <span className={s.flowDot} />
+        <span className={s.flowLabel}>{copy?.label ?? 'Ready'}</span>
+        <span className={s.flowDetail}>{copy?.detail ?? '입력 가능'}</span>
+      </div>
+      {queuedMessage ? <div className={s.flowQueued}>다음 메시지: {queuedMessage.slice(0, 80)}</div> : null}
+    </div>
+  );
+}
+
+function ApprovalCard({
+  approval,
+  busyChoice,
+  onResolve,
+}: {
+  approval: PendingApproval;
+  busyChoice: ChatApprovalChoice | null;
+  onResolve: (choice: ChatApprovalChoice) => void;
+}) {
+  const labels: Record<ChatApprovalChoice, string> = {
+    once: '이번만 승인',
+    session: '이 세션 승인',
+    always: '항상 승인',
+    deny: '거절',
+  };
+  return (
+    <div className={s.approvalCard}>
+      <div className={s.approvalHead}>
+        <Icon name="warning" size="sm" decorative />
+        <div>
+          <strong>실행 승인이 필요합니다</strong>
+          <span>Hermes가 호스트 작업을 계속하기 전에 확인을 기다립니다.</span>
+        </div>
+      </div>
+      {approval.message ? <p>{approval.message}</p> : null}
+      {approval.command ? <pre>{approval.command}</pre> : null}
+      {approval.risk ? <div className={s.approvalRisk}>위험도: {approval.risk}</div> : null}
+      <div className={s.approvalActions}>
+        {approval.choices.map((choice) => (
+          <Button
+            key={choice}
+            type="button"
+            variant={choice === 'deny' ? 'outline' : 'primary'}
+            size="sm"
+            loading={busyChoice === choice}
+            onClick={() => onResolve(choice)}
+          >
+            {labels[choice]}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 
@@ -99,10 +166,23 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
   const [targetMessageId, setTargetMessageId] = useState<string | null>(null);
   const [runStatus, setRunStatus] = useState<RunStatusUi | null>(null);
   const [busy, setBusy] = useState(false);
+  const [runtimeFlow, setRuntimeFlow] = useState<RuntimeFlowMode>('idle');
   const [activeTool, setActiveTool] = useState<string | null>(null);
+  const [queuedMessage, setQueuedMessage] = useState<string | null>(null);
+  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
+  const [approvalBusyChoice, setApprovalBusyChoice] = useState<ChatApprovalChoice | null>(null);
+  const [modelSheetOpen, setModelSheetOpen] = useState(false);
+  const [runtimeModels, setRuntimeModels] = useState<ChatRuntimeModel[]>([]);
+  const [runtimeModelsLoading, setRuntimeModelsLoading] = useState(false);
+  const [defaultModel, setDefaultModel] = useState<string | undefined>(undefined);
+  const [selectedModel, setSelectedModel] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    return window.localStorage.getItem(MODEL_STORAGE_KEY) ?? '';
+  });
   const [atBottom, setAtBottom] = useState(true);
   const [unseen, setUnseen] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+  const queuedMessageRef = useRef<string | null>(null);
   const nextId = useRef(1);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<HTMLDivElement | null>(null);
@@ -149,7 +229,12 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
     setLive([]);
     abortRef.current?.abort();
     setBusy(false);
+    setRuntimeFlow('idle');
     setActiveTool(null);
+    setQueuedMessage(null);
+    queuedMessageRef.current = null;
+    setPendingApproval(null);
+    setApprovalBusyChoice(null);
     setSlashCursor(0);
     setSearchQuery('');
     setSearching(false);
@@ -160,6 +245,38 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
     atBottomRef.current = true;
     searchStore.reset(threadId);
   }, [threadId]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (selectedModel) window.localStorage.setItem(MODEL_STORAGE_KEY, selectedModel);
+    else window.localStorage.removeItem(MODEL_STORAGE_KEY);
+  }, [selectedModel]);
+
+  async function loadRuntimeModels() {
+    if (runtimeModelsLoading) return;
+    setRuntimeModelsLoading(true);
+    try {
+      const res = await api.listRuntimeModels();
+      setRuntimeModels(res.models.map((m) => ({ ...m, current: (selectedModel || res.defaultModel) === m.route })));
+      setDefaultModel(res.defaultModel);
+    } catch {
+      toast('error', '모델 목록을 불러오지 못했어요.');
+    } finally {
+      setRuntimeModelsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadRuntimeModels();
+  }, []);
+
+  useEffect(() => {
+    if (busy || !queuedMessage) return;
+    const next = queuedMessage;
+    queuedMessageRef.current = null;
+    setQueuedMessage(null);
+    void send(next);
+  }, [busy, queuedMessage]);
 
   function onAtBottomChange(next: boolean) {
     atBottomRef.current = next;
@@ -183,6 +300,12 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
     void focusMessageRef.current(hit.id).then((target) => setTargetMessageId(target)).catch(() => {});
   }, [search.focusedIndex, search.results, search.threadId, threadId]);
 
+  useEffect(() => {
+    if (search.threadId !== threadId || !search.targetMessageId) return;
+    lastFocusedId.current = search.targetMessageId;
+    void focusMessageRef.current(search.targetMessageId).then((target) => setTargetMessageId(target)).catch(() => {});
+  }, [search.targetMessageId, search.targetSeq, search.threadId, threadId]);
+
   // 자료실 evidence 딥링크(?m=<messageId>): 진입 시 그 답변 메시지로 정밀 점프.
   // focusMessage가 로드된 범위면 in-place 스크롤, 아니면 around 윈도우를 가져온다.
   const didDeepLinkFocus = useRef(false);
@@ -196,20 +319,126 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
     setLive((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   }
 
+  function openModelPicker() {
+    setModelSheetOpen(true);
+    if (runtimeModels.length === 0) void loadRuntimeModels();
+  }
+
+  async function refreshRunStatus(showToast = true) {
+    const runId = runStatus?.runId;
+    if (!runId) {
+      if (showToast) toast('info', '아직 조회할 실행이 없어요.');
+      return;
+    }
+    try {
+      const status = await api.runStatus(runId, threadId);
+      setRunStatus((prev) => ({
+        ...(prev ?? { startedAt: Date.now(), state: 'running' as const }),
+        runId: status.runId,
+        ...(status.model ? { model: status.model } : {}),
+        ...(status.usage ? { usage: status.usage } : {}),
+        state: status.status === 'completed' ? 'done' : status.status === 'failed' || status.status === 'cancelled' ? 'error' : 'running',
+        ...(status.status === 'completed' || status.status === 'failed' || status.status === 'cancelled' ? { finishedAt: Date.now() } : {}),
+      }));
+      if (showToast) toast('info', `상태: ${status.status}${status.model ? ` · ${status.model}` : ''}`);
+    } catch {
+      if (showToast) toast('error', '실행 상태를 조회하지 못했어요.');
+    }
+  }
+
+  async function stopCurrentRun() {
+    const runId = runStatus?.runId;
+    setRuntimeFlow('stopping');
+    try {
+      if (runId) await api.stopRun(runId, threadId);
+      abortRef.current?.abort();
+      toast('info', '중단 요청을 보냈어요.');
+    } catch {
+      abortRef.current?.abort();
+      toast('error', '상류 중단 요청은 실패했지만 로컬 스트림은 끊었어요.');
+    }
+  }
+
+  async function resolveApproval(choice: ChatApprovalChoice) {
+    if (!pendingApproval) return;
+    setApprovalBusyChoice(choice);
+    try {
+      await api.respondRunApproval(pendingApproval.runId, { threadId, choice });
+      setPendingApproval(null);
+      setRuntimeFlow('steering');
+      toast(choice === 'deny' ? 'info' : 'success', choice === 'deny' ? '거절했습니다.' : '승인했습니다.');
+    } catch {
+      toast('error', '승인 응답 전송에 실패했어요.');
+    } finally {
+      setApprovalBusyChoice(null);
+    }
+  }
+
+  function executeRuntimeCommand(raw: string): boolean {
+    const parsed = parseRuntimeCommand(raw);
+    if (!parsed) return false;
+    if (parsed.command === '/model') {
+      setInput('');
+      const resolved = resolveModelCommand(raw, runtimeModels);
+      if (resolved.action === 'select') {
+        setSelectedModel(resolved.route);
+        const label = runtimeModels.find((model) => model.route === resolved.route)?.label ?? resolved.route;
+        toast('success', `모델 선택: ${label}`);
+      } else {
+        openModelPicker();
+        if (resolved.query) toast('info', `일치하는 모델을 찾지 못했어요: ${resolved.query}`);
+      }
+      return true;
+    }
+    if (parsed.command === '/status' || parsed.command === '/usage') {
+      setInput('');
+      void refreshRunStatus(true);
+      return true;
+    }
+    if (parsed.command === '/stop') {
+      setInput('');
+      if (busy) void stopCurrentRun();
+      else toast('info', '진행 중인 실행이 없어요.');
+      return true;
+    }
+    if (parsed.command === '/help' || parsed.command === '/commands') {
+      setInput('');
+      toast('info', parsed.command === '/help' ? describeRuntimeCommand(parsed.arg) : describeRuntimeCommand());
+      return true;
+    }
+    return false;
+  }
+
+  function pickSlashItem(item: RuntimeCommandItem) {
+    setInput(`${item.command}${item.args ? ' ' : ''}`);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }
+
   async function send(messageOverride?: string) {
     const message = (messageOverride ?? input).trim();
-    if (!message || busy) return;
+    const draftAttachments = messageOverride ? [] : (attachments.data?.attachments ?? []);
+    if (!message && draftAttachments.length === 0) return;
+    if (!messageOverride && executeRuntimeCommand(message)) return;
+    if (busy) {
+      queuedMessageRef.current = message;
+      setQueuedMessage(message);
+      setRuntimeFlow('queued');
+      if (!messageOverride) setInput('');
+      return;
+    }
     if (!messageOverride) setInput('');
     lastPromptRef.current = message;
     setBusy(true);
-    setRunStatus({ startedAt: Date.now(), state: 'running' });
+    setRuntimeFlow('queueing');
+    setRunStatus({ startedAt: Date.now(), state: 'running', ...(selectedModel ? { model: selectedModel } : {}) });
     setActiveTool(null);
+    setPendingApproval(null);
     // sending pins us to the tail
     atBottomRef.current = true;
     setAtBottom(true);
     setUnseen(0);
 
-    const userTurn: LiveTurn = { id: nextId.current++, role: 'user', text: message };
+    const userTurn: LiveTurn = { id: nextId.current++, role: 'user', text: message, ...(draftAttachments.length > 0 ? { attachments: draftAttachments } : {}) };
     const aiTurn: LiveTurn = { id: nextId.current++, role: 'ai', text: '', streaming: true };
     setLive((prev) => [...prev, userTurn, aiTurn]);
 
@@ -236,8 +465,15 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
       flush();
     };
     try {
-      for await (const event of api.streamChat({ threadId, message }, controller.signal)) {
+      const attachmentIds = draftAttachments.map((file) => file.id);
+      for await (const event of api.streamChat({
+        threadId,
+        message,
+        ...(selectedModel ? { model: selectedModel } : {}),
+        ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+      }, controller.signal)) {
         if (event.type === 'start') {
+          setRuntimeFlow('steering');
           patchTurn(aiTurn.id, { runId: event.runId });
           setRunStatus((prev) => {
             const next: RunStatusUi = {
@@ -251,8 +487,10 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
           });
         } else if (event.type === 'tool') {
           // Phase 2-A: surface real tool activity in the ribbon.
+          setRuntimeFlow('steering');
           setActiveTool(event.phase === 'started' ? event.tool : null);
         } else if (event.type === 'reasoning') {
+          setRuntimeFlow('steering');
           setRunStatus((prev) => ({
             ...(prev ?? { startedAt: Date.now(), state: 'running' as const }),
             runId: event.runId,
@@ -261,9 +499,19 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
             state: 'running',
           }));
         } else if (event.type === 'delta') {
+          setRuntimeFlow('answering');
           deltaBuf.current += event.text;
           setActiveTool(null);
           scheduleFlush();
+        } else if (event.type === 'approval') {
+          setRuntimeFlow('approval');
+          setPendingApproval({
+            runId: event.runId,
+            choices: event.choices,
+            ...(event.command ? { command: event.command } : {}),
+            ...(event.message ? { message: event.message } : {}),
+            ...(event.risk ? { risk: event.risk } : {}),
+          });
         } else if (event.type === 'done') {
           cancelFlush();
           patchTurn(aiTurn.id, { streaming: false });
@@ -280,6 +528,7 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
           });
         } else if (event.type === 'error') {
           cancelFlush();
+          setRuntimeFlow('idle');
           patchTurn(aiTurn.id, { streaming: false, error: event.message });
           setRunStatus((prev) => ({
             ...(prev ?? { startedAt: Date.now(), state: 'error' as const }),
@@ -292,10 +541,13 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
       cancelFlush();
       patchTurn(aiTurn.id, { streaming: false });
       setRunStatus((prev) => prev?.state === 'running' ? { ...prev, finishedAt: Date.now(), state: 'done' } : prev);
+      setPendingApproval(null);
+      setRuntimeFlow(queuedMessageRef.current ? 'queued' : 'idle');
       // A2: if the user scrolled away during the answer, surface an unseen count.
       if (!atBottomRef.current) setUnseen((n) => n + 1);
     } catch {
       cancelFlush();
+      setRuntimeFlow(queuedMessageRef.current ? 'queued' : 'idle');
       if (controller.signal.aborted) {
         patchTurn(aiTurn.id, { streaming: false, error: '중단됨' });
       } else {
@@ -307,13 +559,14 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
       setActiveTool(null);
       abortRef.current = null;
       void qc.invalidateQueries({ queryKey: messageWindowKeys.latest(threadId), refetchType: 'none' });
+      void qc.invalidateQueries({ queryKey: collabKeys.attachments(threadId) });
       // Evidence rows settle with the assistant message — refresh the panel.
       void qc.invalidateQueries({ queryKey: collabKeys.evidence(threadId) });
     }
   }
 
   function cancel() {
-    abortRef.current?.abort();
+    void stopCurrentRun();
   }
 
   async function copyText(text: string) {
@@ -378,7 +631,7 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
   async function searchTranscript() {
     const q = searchQuery.trim();
     if (!q) {
-      searchStore.set({ query: '', results: [], focusedIndex: -1, open: false });
+      searchStore.set({ query: '', results: [], files: [], evidence: [], focusedIndex: -1, targetMessageId: null, open: false });
       return;
     }
     setSearching(true);
@@ -388,7 +641,16 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
       const res = await api.searchMessages(threadId, { q, limit: 50 });
       // Setting focusedIndex to 0 triggers the focus effect → jumps to first hit.
       lastFocusedId.current = null;
-      searchStore.set({ threadId, query: q, results: res.results, focusedIndex: res.results.length > 0 ? 0 : -1, open: true });
+      searchStore.set({
+        threadId,
+        query: q,
+        results: res.results,
+        files: res.files,
+        evidence: res.evidence,
+        focusedIndex: res.results.length > 0 ? 0 : -1,
+        targetMessageId: null,
+        open: true,
+      });
     } catch {
       toast('error', '대화 검색에 실패했어요.');
     } finally {
@@ -454,6 +716,8 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
   const userName = user?.displayName ?? '나';
   const persisted = history.messages;
   const files = attachments.data?.attachments ?? [];
+  const activeModelRoute = selectedModel || defaultModel || '';
+  const activeModelLabel = runtimeModels.find((model) => model.route === activeModelRoute)?.label ?? (activeModelRoute || '모델 확인 중');
 
   const slashQuery = input.startsWith('/') && !input.includes('\n') ? input.slice(1).trim().toLocaleLowerCase() : '';
   const showSlashMenu = input.startsWith('/') && !input.includes('\n');
@@ -461,7 +725,7 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
   const deferredSlashQuery = useDeferredValue(slashQuery);
   const slashItems = !showSlashMenu
     ? []
-    : HERMES_SLASH_COMMANDS.filter((item) => {
+    : RUNTIME_COMMANDS.filter((item) => {
         if (!deferredSlashQuery) return true;
         return item.command.slice(1).includes(deferredSlashQuery) || item.title.toLocaleLowerCase().includes(deferredSlashQuery);
       }).slice(0, 7);
@@ -518,11 +782,11 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
             <input
               className={s.threadSearchInput}
               value={searchQuery}
-              placeholder="대화 검색 (초성·띄어쓰기 무시)"
+              placeholder="대화·문서·근거 검색"
               onChange={(event) => {
                 setSearchQuery(event.target.value);
                 if (!event.target.value.trim()) {
-                  searchStore.set({ query: '', results: [], focusedIndex: -1, open: false });
+                  searchStore.set({ query: '', results: [], files: [], evidence: [], focusedIndex: -1, targetMessageId: null, open: false });
                 }
               }}
               onKeyDown={(event) => {
@@ -613,6 +877,7 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
             onRetry={send}
             onRetryLast={() => send(lastPromptRef.current)}
             onChoice={(choice) => void send(choice)}
+            onOpenAttachment={(attachment) => setFileViewer({ id: attachment.id, fileName: attachment.fileName, mimeType: attachment.mimeType })}
           />
           <JumpToLatest
             visible={!atBottom || history.hasNewer || history.mode === 'around'}
@@ -625,6 +890,24 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
       </div>
 
       <div className={s.composer}>
+        <RuntimeFlowStrip mode={runtimeFlow} activeTool={activeTool} queuedMessage={queuedMessage} />
+        {pendingApproval ? (
+          <ApprovalCard approval={pendingApproval} busyChoice={approvalBusyChoice} onResolve={(choice) => void resolveApproval(choice)} />
+        ) : null}
+        <div className={s.quickControls}>
+          <Button variant="ghost" size="sm" type="button" leadingIcon="bot" onClick={openModelPicker}>
+            모델 변경
+          </Button>
+          <span className={s.modelChip} title={activeModelRoute || undefined}>{activeModelLabel}</span>
+          <Button variant="ghost" size="sm" type="button" leadingIcon="info" disabled={!runStatus?.runId} onClick={() => void refreshRunStatus(true)}>
+            상태
+          </Button>
+          {busy ? (
+            <Button variant="outline" size="sm" type="button" leadingIcon="stop" onClick={() => void stopCurrentRun()}>
+              중단
+            </Button>
+          ) : null}
+        </div>
         {files.length > 0 ? (
           <div className={s.fileStrip}>
             {files.map((f) => (
@@ -650,7 +933,7 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
                 aria-selected={index === slashCursor}
                 className={`${s.slashItem} ${index === slashCursor ? s.slashItemOn : ''}`}
                 onMouseEnter={() => setSlashCursor(index)}
-                onClick={() => setInput(item.value)}
+                onClick={() => pickSlashItem(item)}
               >
                 <span className={s.slashCmd}>{item.command}</span>
                 <span className={s.slashTitle}>{item.title}</span>
@@ -684,12 +967,13 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
                   }
                   if (e.key === 'Tab') {
                     e.preventDefault();
-                    setInput(slashItems[slashCursor]?.value ?? input);
+                    const item = slashItems[slashCursor];
+                    if (item) pickSlashItem(item);
                     return;
                   }
-                  if (e.key === 'Enter' && !e.shiftKey && slashItems[slashCursor] && input.trim() !== slashItems[slashCursor].value) {
+                  if (e.key === 'Enter' && !e.shiftKey && slashItems[slashCursor]) {
                     e.preventDefault();
-                    setInput(slashItems[slashCursor].value);
+                    pickSlashItem(slashItems[slashCursor]);
                     return;
                   }
                 }
@@ -729,7 +1013,7 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
                 variant="primary"
                 type="button"
                 trailingIcon="send"
-                disabled={busy || !input.trim()}
+                disabled={busy || (!input.trim() && files.length === 0)}
                 onClick={() => void send()}
               >
                 전송
@@ -739,6 +1023,15 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
         </div>
       </div>
       {fileViewer ? <FileViewer target={fileViewer} onClose={() => setFileViewer(null)} /> : null}
+      <ModelPickerSheet
+        open={modelSheetOpen}
+        onOpenChange={setModelSheetOpen}
+        models={runtimeModels}
+        selectedModel={selectedModel}
+        defaultModel={defaultModel}
+        loading={runtimeModelsLoading}
+        onSelect={setSelectedModel}
+      />
     </>
   );
 }

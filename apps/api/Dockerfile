@@ -28,8 +28,7 @@ FROM node:22-alpine AS runtime
 RUN apk add --no-cache \
     pandoc typst weasyprint chromium font-noto-cjk \
     poppler-utils tesseract-ocr tesseract-ocr-data-kor tesseract-ocr-data-eng unzip \
-    libstdc++ \
-  && addgroup -S app && adduser -S app -G app
+    libstdc++
 ENV CHROME_BIN=/usr/bin/chromium-browser
 ENV TESSDATA_PREFIX=/usr/share/tessdata
 WORKDIR /app
@@ -39,12 +38,13 @@ WORKDIR /app
 COPY --from=pybuild /usr/local /usr/local
 COPY --from=pybuild /app/extractor/.venv ./extractor/.venv
 COPY apps/api/extractor/extractor_worker.py ./extractor/extractor_worker.py
+COPY apps/api/scripts ./scripts
 COPY --from=build /out .
 COPY --from=build /repo/apps/api/dist ./dist
 # migration runner needs SQL files + a runtime-only JS script (no tsx/dev deps)
 COPY --from=build /repo/packages/db-schema/drizzle ./drizzle-migrations
 COPY --from=build /repo/apps/api/docker-migrate.mjs ./docker-migrate.mjs
-RUN chown -R app:app /app && chmod 0644 /app/docker-migrate.mjs /app/drizzle-migrations/*.sql
-USER app
+RUN chown -R node:node /app && chmod 0644 /app/docker-migrate.mjs /app/drizzle-migrations/*.sql /app/scripts/*.py
+USER node
 EXPOSE 3000
 CMD ["node", "dist/main.js"]

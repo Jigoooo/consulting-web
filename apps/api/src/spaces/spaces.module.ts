@@ -11,11 +11,12 @@ import { CreateProjectUseCase } from './create-project.usecase.js';
 import { CreateWorkspaceUseCase } from './create-workspace.usecase.js';
 import { CreateTopicUseCase } from './create-topic.usecase.js';
 import { CreateThreadUseCase } from './create-thread.usecase.js';
+import { ScopeTagSeedService } from './scope-tag-seed.service.js';
 
 @Module({
   imports: [DrizzleModule, AuthModule],
   controllers: [SpacesController],
-  providers: [ScopeRepository, SpaceAccessService, SpaceReadService, SpaceMutateService, CreateChannelUseCase, CreateProjectUseCase, CreateWorkspaceUseCase, CreateTopicUseCase, CreateThreadUseCase],
-  exports: [ScopeRepository, SpaceAccessService, SpaceReadService, SpaceMutateService, CreateChannelUseCase, CreateProjectUseCase, CreateWorkspaceUseCase, CreateTopicUseCase, CreateThreadUseCase],
+  providers: [ScopeRepository, SpaceAccessService, SpaceReadService, SpaceMutateService, CreateChannelUseCase, CreateProjectUseCase, CreateWorkspaceUseCase, CreateTopicUseCase, CreateThreadUseCase, ScopeTagSeedService],
+  exports: [ScopeRepository, SpaceAccessService, SpaceReadService, SpaceMutateService, CreateChannelUseCase, CreateProjectUseCase, CreateWorkspaceUseCase, CreateTopicUseCase, CreateThreadUseCase, ScopeTagSeedService],
 })
 export class SpacesModule {}

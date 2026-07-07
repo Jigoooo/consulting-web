@@ -33,6 +33,29 @@ function versionManifest(): Plugin {
   };
 }
 
+// Dev-only guard: in this workspace Vite 8 + @vitejs/plugin-react 6 can miss
+// the React Refresh preamble, leaving `$RefreshReg$` undefined before React
+// modules evaluate. Inject the official preamble only while serving; production
+// builds never reference the dev-only /@react-refresh endpoint.
+function reactRefreshPreamble(): Plugin {
+  return {
+    name: 'consulting-react-refresh-preamble',
+    apply: 'serve',
+    transformIndexHtml() {
+      return [
+        {
+          tag: 'script',
+          attrs: { type: 'module' },
+          children: `import { injectIntoGlobalHook } from '/@react-refresh';
+injectIntoGlobalHook(window);
+window.$RefreshReg$ = () => {};
+window.$RefreshSig$ = () => (type) => type;`,
+        },
+      ];
+    },
+  };
+}
+
 // NOTE (2026-07-05, per TanStack docs): the router plugin MUST come before
 // @vitejs/plugin-react. Defaults: routesDirectory ./src/routes,
 // generatedRouteTree ./src/routeTree.gen.ts.
@@ -41,6 +64,7 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(BUILD_VERSION),
   },
   plugins: [
+    reactRefreshPreamble(),
     tanstackRouter({ target: 'react', autoCodeSplitting: true }),
     tailwindcss(),
     react(),

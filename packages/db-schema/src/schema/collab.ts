@@ -174,6 +174,8 @@ export const fileAttachments = pgTable(
     threadId: uuid('thread_id')
       .notNull()
       .references(() => threads.id, { onDelete: 'cascade' }),
+    /** Null while the composer attachment is a draft; set when a user message is sent. */
+    messageId: uuid('message_id').references(() => chatMessages.id, { onDelete: 'set null' }),
     uploaderUserId: uuid('uploader_user_id').references(() => users.id, { onDelete: 'set null' }),
     fileName: text('file_name').notNull(),
     mimeType: text('mime_type').notNull(),
@@ -184,6 +186,7 @@ export const fileAttachments = pgTable(
   },
   (t) => [
     index('file_attachments_thread_idx').on(t.threadId, t.createdAt),
+    index('file_attachments_message_idx').on(t.messageId, t.createdAt),
     index('file_attachments_workspace_idx').on(t.workspaceId),
   ],
 );

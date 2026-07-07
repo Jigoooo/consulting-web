@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useTransition, type CSSProperties, type ReactNode } from 'react';
 import { Link, useLocation, useRouter } from '@tanstack/react-router';
+import { ApiClientError } from '@consulting/api-client';
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useAuth } from '../../../lib/useAuth';
 import {
@@ -10,7 +11,9 @@ import {
   useCreateTopic,
   useCreateWorkspace,
   useRenameNode,
-  useDeleteNode,
+  useArchiveNode,
+  useArchivedScopes,
+  useRestoreArchived,
   useMembers,
   spaceKeys,
 } from '../../../lib/spaces';
@@ -37,8 +40,15 @@ import s from './AppShell.module.css';
 /** Persistent 4-pane frame: rail / sidebar(tree) / center(Outlet) / context. */
 export function AppShell({ children }: { children: ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const location = useLocation();
+  const [contextCollapsed, setContextCollapsed] = useState(false);
+  useEffect(() => {
+    if (location.pathname === '/library' || location.pathname === '/artifacts') {
+      setContextCollapsed(true);
+    }
+  }, [location.pathname]);
   return (
-    <div className={s.app}>
+    <div className={`${s.app} ${contextCollapsed ? s.appContextCollapsed : ''}`}>
       <OfflineBadge />
       <Rail />
       <Sidebar className={drawerOpen ? s.drawerOpen ?? '' : ''} onNavigate={() => setDrawerOpen(false)} />
@@ -54,7 +64,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </button>
         {children}
       </div>
-      <ContextPanel />
+      <ContextPanel collapsed={contextCollapsed} onToggle={() => setContextCollapsed((prev) => !prev)} />
     </div>
   );
 }
@@ -291,10 +301,13 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
   const createChannel = useCreateChannel(selected ?? undefined);
   const createTopic = useCreateTopic(selected ?? undefined);
   const renameNode = useRenameNode(selected ?? undefined);
-  const deleteNode = useDeleteNode(selected ?? undefined);
+  const archiveNode = useArchiveNode(selected ?? undefined);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const archivedScopes = useArchivedScopes(selected ?? undefined, archiveOpen);
+  const restoreArchived = useRestoreArchived(selected ?? undefined);
   const { prompt, dialog } = useTextPrompt();
-  const [pendingDelete, setPendingDelete] = useState<{ kind: 'projects' | 'channels' | 'topics'; id: string; label: string } | null>(null);
-  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [pendingArchive, setPendingArchive] = useState<{ kind: 'projects' | 'channels' | 'topics'; id: string; label: string } | null>(null);
+  const [archiveBusy, setArchiveBusy] = useState(false);
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
   // A3: optimistic channel selection — highlight the clicked topic instantly
   // instead of waiting for threadDetail to resolve (keepPreviousData otherwise
@@ -331,8 +344,8 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
     }
   }
 
-  function onDelete(kind: 'projects' | 'channels' | 'topics', id: string, label: string) {
-    setPendingDelete({ kind, id, label });
+  function onArchive(kind: 'projects' | 'channels' | 'topics', id: string, label: string) {
+    setPendingArchive({ kind, id, label });
   }
 
   function toggleProject(projectId: string) {
@@ -404,17 +417,30 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
     }
   }
 
-  async function confirmDelete() {
-    if (!pendingDelete || deleteBusy) return;
-    setDeleteBusy(true);
+  async function confirmArchive() {
+    if (!pendingArchive || archiveBusy) return;
+    setArchiveBusy(true);
     try {
-      await deleteNode.mutateAsync({ kind: pendingDelete.kind, id: pendingDelete.id });
-      toast('success', '삭제했어요.');
-      setPendingDelete(null);
+      await archiveNode.mutateAsync({ kind: pendingArchive.kind, id: pendingArchive.id });
+      toast('success', '보관했어요.');
+      setPendingArchive(null);
     } catch {
-      toast('error', '삭제에 실패했어요.');
+      toast('error', '보관에 실패했어요.');
     } finally {
-      setDeleteBusy(false);
+      setArchiveBusy(false);
+    }
+  }
+
+  async function restoreArchiveItem(item: { kind: 'project' | 'channel' | 'topic' | 'thread'; id: string; name: string }) {
+    try {
+      await restoreArchived.mutateAsync({ kind: item.kind, id: item.id });
+      toast('success', `"${item.name}" 복원했어요.`);
+    } catch (error) {
+      if (error instanceof ApiClientError && error.code === 'PARENT_ARCHIVED') {
+        toast('info', '상위 항목을 먼저 복원해야 해요.');
+        return;
+      }
+      toast('error', '복원에 실패했어요.');
     }
   }
 
@@ -422,15 +448,55 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
     <div className={`${s.sidebar} ${className}`}>
       {dialog}
       <ConfirmDialog
-        open={pendingDelete !== null}
-        onOpenChange={(open) => !open && !deleteBusy && setPendingDelete(null)}
-        title={`"${pendingDelete?.label ?? ''}" 삭제할까요?`}
-        description="하위 항목도 함께 숨겨집니다. 이 작업은 되돌릴 수 없어요."
-        confirmLabel="삭제"
-        destructive
-        busy={deleteBusy}
-        onConfirm={() => void confirmDelete()}
+        open={pendingArchive !== null}
+        onOpenChange={(open) => !open && !archiveBusy && setPendingArchive(null)}
+        title={`"${pendingArchive?.label ?? ''}" 보관할까요?`}
+        description="목록에서는 숨겨지지만 지구가 참고할 수 있는 지식으로 보존됩니다. 필요하면 다시 꺼낼 수 있어요."
+        confirmLabel="보관하기"
+        busy={archiveBusy}
+        onConfirm={() => void confirmArchive()}
       />
+      <DialogRoot open={archiveOpen} onOpenChange={setArchiveOpen}>
+        <DialogContent
+          className={s.archiveDialog}
+          title="보관함"
+          description="보관한 프로젝트·채널·대화는 목록에서 숨겨져도 지식은 보존됩니다. 언제든 복원할 수 있어요."
+        >
+          <div className={s.archiveList} aria-busy={archivedScopes.isFetching || undefined}>
+            {archivedScopes.isLoading ? (
+              <div className={s.archiveSkeletons}>
+                <Skeleton width="100%" height={44} />
+                <Skeleton width="82%" height={44} />
+                <Skeleton width="94%" height={44} />
+              </div>
+            ) : archivedScopes.isError ? (
+              <div className={`${s.archiveEmpty} ${s.archiveError}`}>
+                <div>보관함을 불러오지 못했어요.</div>
+                <Button size="xs" variant="secondary" loading={archivedScopes.isFetching} onClick={() => void archivedScopes.refetch()}>
+                  다시 불러오기
+                </Button>
+              </div>
+            ) : archivedScopes.data?.items.length ? (
+              archivedScopes.data.items.map((item) => (
+                <div key={`${item.kind}:${item.id}`} className={s.archiveItem}>
+                  <div className={s.archiveMeta}>
+                    <div className={s.archiveTitle}>
+                      <span className={s.archiveKind}>{archiveKindLabel[item.kind]}</span>
+                      <span>{item.name}</span>
+                    </div>
+                    <div className={s.archivePath}>{item.parentPath.length ? item.parentPath.join(' › ') : '워크스페이스 바로 아래'}</div>
+                  </div>
+                  <Button size="xs" variant="secondary" loading={restoreArchived.isPending} onClick={() => void restoreArchiveItem(item)}>
+                    복원
+                  </Button>
+                </div>
+              ))
+            ) : (
+              <div className={s.archiveEmpty}>보관한 항목이 아직 없어요.</div>
+            )}
+          </div>
+        </DialogContent>
+      </DialogRoot>
       <div className={s.wsHead}>
         <div className={s.wsIco}>{wsName.slice(0, 1)}</div>
         <div>
@@ -463,6 +529,13 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
           <small>근거·업로드 문서·산출물 모아보기</small>
         </span>
       </Link>
+      <button type="button" className={s.workspaceTool} onClick={() => setArchiveOpen(true)} disabled={!selected}>
+        <Icon name="library" size="sm" decorative />
+        <span>
+          <strong>보관함</strong>
+          <small>보관한 프로젝트·채널·대화 복원</small>
+        </span>
+      </button>
       <div className={s.tree}>
         <div className={s.secLabel}>프로젝트</div>
         {showTreeSkeleton ? (
@@ -501,7 +574,7 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
                   actions={[
                     { label: '산출물 보기', onSelect: () => void router.navigate({ to: '/artifacts', search: { projectId: p.id } }) },
                     { label: '이름 변경', onSelect: () => void onRename('projects', p.id, p.name) },
-                    { label: '삭제', danger: true, onSelect: () => void onDelete('projects', p.id, p.name) },
+                    { label: '보관하기', onSelect: () => void onArchive('projects', p.id, p.name) },
                   ]}
                 />
               </div>
@@ -534,7 +607,7 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
                           <RowMenu
                             actions={[
                               { label: '이름 변경', onSelect: () => void onRename('channels', c.id, c.name) },
-                              { label: '삭제', danger: true, onSelect: () => void onDelete('channels', c.id, c.name) },
+                              { label: '보관하기', onSelect: () => void onArchive('channels', c.id, c.name) },
                             ]}
                           />
                         </div>
@@ -564,6 +637,13 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
   );
 }
 
+const archiveKindLabel: Record<'project' | 'channel' | 'topic' | 'thread', string> = {
+  project: '프로젝트',
+  channel: '채널',
+  topic: '대화 묶음',
+  thread: '대화',
+};
+
 const roleLabel: Record<string, string> = {
   owner: '소유자',
   admin: '관리자',
@@ -572,7 +652,7 @@ const roleLabel: Record<string, string> = {
   viewer: '뷰어',
 };
 
-function ContextPanel() {
+function ContextPanel({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const selected = useSelectedWorkspace();
   const { data: members } = useMembers(selected ?? undefined);
   const toast = useToast();
@@ -593,6 +673,7 @@ function ContextPanel() {
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const inviteRoleIndex = inviteRole === 'editor' ? 0 : inviteRole === 'viewer' ? 1 : 2;
   const hasSearch = Boolean(searchState.query) && searchState.threadId === activeThread;
+  const searchCount = searchState.results.length + searchState.files.length + searchState.evidence.length;
 
   // Auto-switch to evidence when a thread opens (2-A E-4); to search when a
   // search is active (F3).
@@ -629,7 +710,18 @@ function ContextPanel() {
   }
 
   return (
-    <div className={s.context}>
+    <div className={`${s.context} ${collapsed ? s.contextCollapsed : ''}`}>
+      <button
+        type="button"
+        className={`${s.contextToggle} cwTap`}
+        onClick={onToggle}
+        aria-label={collapsed ? '우측 패널 열기' : '우측 패널 접기'}
+        title={collapsed ? '우측 패널 열기' : '우측 패널 접기'}
+      >
+        <Icon name={collapsed ? 'chevron-left' : 'chevron-right'} size="xs" decorative />
+      </button>
+      {collapsed ? null : (
+      <>
       {activeThread ? (
         <div className={s.ctxTabs}>
           <button
@@ -645,7 +737,7 @@ function ContextPanel() {
               className={`${s.ctxTab} ${tab === 'search' ? s.ctxTabOn : ''}`}
               onClick={() => setTab('search')}
             >
-              검색 {searchState.results.length}
+              검색 {searchCount}
             </button>
           ) : null}
           <button
@@ -726,6 +818,8 @@ function ContextPanel() {
         <div className={s.ctxHint}>링크를 받은 사람은 가입/로그인 후 이 워크스페이스에 참여합니다. 7일 후 만료.</div>
           </div>
         </>
+      )}
+      </>
       )}
     </div>
   );

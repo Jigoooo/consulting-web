@@ -1,5 +1,16 @@
+import { createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
-import type { ChatStreamEvent, ChatStreamRequest, ChatStreamUsage } from '@consulting/contracts';
+import type {
+  ChatApprovalChoice,
+  ChatRunActionResponse,
+  ChatRunStatusResponse,
+  ChatRuntimeCapabilitiesResponse,
+  ChatRuntimeModel,
+  ChatRuntimeModelsResponse,
+  ChatStreamEvent,
+  ChatStreamRequest,
+  ChatStreamUsage,
+} from '@consulting/contracts';
 import { ENV_TOKEN } from '../config/config.module.js';
 import type { Env } from '../config/env.schema.js';
 
@@ -18,11 +29,27 @@ interface HermesRunSseEvent {
   readonly preview?: unknown;
   readonly text?: unknown;
   readonly usage?: unknown;
+  readonly choices?: unknown;
+  readonly command?: unknown;
+  readonly message?: unknown;
+  readonly reason?: unknown;
+  readonly risk?: unknown;
 }
 
 interface HermesRunStatusResponse {
+  readonly status?: unknown;
   readonly model?: unknown;
   readonly usage?: unknown;
+  readonly last_event?: unknown;
+}
+
+interface HermesModelsResponse {
+  readonly data?: unknown;
+}
+
+interface HermesCapabilitiesResponse {
+  readonly model?: unknown;
+  readonly features?: unknown;
 }
 
 interface HermesUsageWire {
@@ -34,6 +61,66 @@ interface HermesUsageWire {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object';
+}
+
+const APPROVAL_CHOICES: ChatApprovalChoice[] = ['once', 'session', 'always', 'deny'];
+const HERMES_AGENT_BRAND_RE = /^hermes(?:\s+agent)?$/i;
+
+function stringField(record: Record<string, unknown>, names: string[]): string | undefined {
+  for (const name of names) {
+    const value = record[name];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function splitProviderModel(value: string | undefined): { provider: string; modelName: string } | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  const slash = trimmed.indexOf('/');
+  const colon = trimmed.indexOf(':');
+  const index = slash >= 0 && colon >= 0 ? Math.min(slash, colon) : Math.max(slash, colon);
+  if (index <= 0 || index >= trimmed.length - 1) return null;
+  return { provider: trimmed.slice(0, index), modelName: trimmed.slice(index + 1) };
+}
+
+function isHermesAgentBrand(value: string | undefined): boolean {
+  return Boolean(value && HERMES_AGENT_BRAND_RE.test(value.trim()));
+}
+
+function normalizeRuntimeModel(item: unknown): ChatRuntimeModel | null {
+  if (!isRecord(item)) return null;
+  const id = stringField(item, ['id', 'name']);
+  if (!id) return null;
+
+  const root = stringField(item, ['root']);
+  const rawRoute = stringField(item, ['route', 'model_route']);
+  const providerFromField = stringField(item, ['provider', 'provider_id', 'owned_by']);
+  const modelFromField = stringField(item, ['model', 'model_name']);
+  const idParts = splitProviderModel(id);
+  const rootParts = splitProviderModel(root);
+  const routeParts = splitProviderModel(rawRoute);
+  const idIsBrand = isHermesAgentBrand(id);
+
+  const provider = providerFromField ?? routeParts?.provider ?? (!idIsBrand ? idParts?.provider : undefined) ?? rootParts?.provider ?? 'unknown';
+  const modelName = modelFromField ?? routeParts?.modelName ?? (!idIsBrand ? idParts?.modelName : undefined) ?? rootParts?.modelName ?? id;
+  const routeCandidate = rawRoute ?? (idIsBrand ? root : id);
+  const route = routeCandidate && !isHermesAgentBrand(routeCandidate)
+    ? routeCandidate
+    : provider !== 'unknown'
+      ? `${provider}/${modelName}`
+      : modelName;
+  const label = provider === 'unknown' ? modelName : `${modelName} · ${provider}`;
+
+  return {
+    id,
+    route,
+    label,
+    provider,
+    modelName,
+    ...(root ? { root } : {}),
+    ...(typeof item.parent === 'string' || item.parent === null ? { parent: item.parent } : {}),
+  };
 }
 
 /**
@@ -60,7 +147,7 @@ const CONSULTING_RESPONSE_FORMAT = [
 export class HermesRunsClient {
   constructor(@Inject(ENV_TOKEN) private readonly env: Env) {}
 
-  async *streamChat(cmd: ChatStreamRequest, scope?: { workspaceId: string; projectId: string }): AsyncGenerator<ChatStreamEvent> {
+  async *streamChat(cmd: ChatStreamRequest, scope?: { workspaceId: string; projectId: string; memoryContext?: string }): AsyncGenerator<ChatStreamEvent> {
     let runId: string | undefined;
     try {
       runId = await this.startRun(cmd, scope);
@@ -94,6 +181,10 @@ export class HermesRunsClient {
           yield { type: 'reasoning', runId, text };
           continue;
         }
+        if (eventType === 'approval.request') {
+          yield this.normalizeApprovalEvent(runId, upstream);
+          continue;
+        }
         if (eventType === 'run.completed') {
           const usage = this.normalizeUsage(upstream.usage);
           yield { type: 'done', runId, ...(usage ? { usage } : {}) };
@@ -125,7 +216,7 @@ export class HermesRunsClient {
     }
   }
 
-  private async startRun(cmd: ChatStreamRequest, scope?: { workspaceId: string; projectId: string }): Promise<string> {
+  private async startRun(cmd: ChatStreamRequest, scope?: { workspaceId: string; projectId: string; memoryContext?: string }): Promise<string> {
     // #3 (B1): share Hermes dialogue memory across ALL channels of a project so
     // 지구 remembers context from sibling channels. Session is scoped by
     // workspace+project so other projects/workspaces stay fully isolated
@@ -133,18 +224,19 @@ export class HermesRunsClient {
     // unknown. NOTE: the on-screen transcript is still per-thread (chat_messages
     // is threadId-scoped) — only 지구's memory is project-wide.
     const sessionId = scope
-      ? `consulting-project:${scope.workspaceId}:${scope.projectId}`
-      : `consulting-thread:${cmd.threadId}`;
+      ? this.stableSessionId('project', scope.workspaceId, scope.projectId)
+      : this.stableSessionId('thread', cmd.threadId);
+    const payload: Record<string, unknown> = {
+      input: cmd.message,
+      session_id: sessionId,
+      // 답변 포맷 규약 + 기존 consulting GraphRAG 참고 기억을 ephemeral_system_prompt로 주입한다.
+      instructions: this.instructions(scope?.memoryContext),
+    };
+    if (cmd.model) payload.model = cmd.model;
     const response = await fetch(this.url('/v1/runs'), {
       method: 'POST',
       headers: this.headers({ 'content-type': 'application/json' }),
-      body: JSON.stringify({
-        input: cmd.message,
-        session_id: sessionId,
-        // 답변 포맷 규약 주입(상수 → 프롬프트 캐시 보존). Hermes /v1/runs가
-        // instructions를 ephemeral_system_prompt로 반영한다.
-        instructions: CONSULTING_RESPONSE_FORMAT,
-      }),
+      body: JSON.stringify(payload),
     });
     if (!response.ok) {
       throw new Error(`Hermes run start failed (${response.status})`);
@@ -165,9 +257,81 @@ export class HermesRunsClient {
     const body: unknown = await response.json();
     if (!isRecord(body)) return {};
     return {
+      ...(typeof body.status === 'string' ? { status: body.status } : {}),
       ...(typeof body.model === 'string' ? { model: body.model } : {}),
       ...(isRecord(body.usage) ? { usage: body.usage } : {}),
+      ...(typeof body.last_event === 'string' ? { last_event: body.last_event } : {}),
     };
+  }
+
+  async listModels(): Promise<ChatRuntimeModelsResponse> {
+    const response = await fetch(this.url('/v1/models'), {
+      method: 'GET',
+      headers: this.headers({ accept: 'application/json' }),
+    });
+    if (!response.ok) throw new Error(`Hermes models failed (${response.status})`);
+    const body = await response.json() as HermesModelsResponse;
+    const rawModels = Array.isArray(body.data) ? body.data : [];
+    const models: ChatRuntimeModel[] = rawModels.flatMap((item) => {
+      const normalized = normalizeRuntimeModel(item);
+      return normalized ? [normalized] : [];
+    });
+    return { ...(models[0]?.route ? { defaultModel: models[0].route } : {}), models };
+  }
+
+  async capabilities(): Promise<ChatRuntimeCapabilitiesResponse> {
+    const response = await fetch(this.url('/v1/capabilities'), {
+      method: 'GET',
+      headers: this.headers({ accept: 'application/json' }),
+    });
+    if (!response.ok) throw new Error(`Hermes capabilities failed (${response.status})`);
+    const body = await response.json() as HermesCapabilitiesResponse;
+    const features = isRecord(body.features) ? body.features : {};
+    return {
+      ...(typeof body.model === 'string' ? { model: body.model } : {}),
+      features: {
+        modelRouting: true,
+        runStop: features.run_stop === true,
+        runApprovalResponse: features.run_approval_response === true,
+        approvalEvents: features.approval_events === true,
+      },
+    };
+  }
+
+  async runStatus(runId: string): Promise<ChatRunStatusResponse> {
+    return this.normalizeRunStatus(runId, await this.getRunStatus(runId));
+  }
+
+  async stopRun(runId: string): Promise<ChatRunActionResponse> {
+    const response = await fetch(this.url(`/v1/runs/${encodeURIComponent(runId)}/stop`), {
+      method: 'POST',
+      headers: this.headers({ accept: 'application/json' }),
+    });
+    if (!response.ok) throw new Error(`Hermes stop failed (${response.status})`);
+    const body: unknown = await response.json();
+    const status = isRecord(body) && typeof body.status === 'string' ? body.status : 'stopping';
+    return { ok: true, runId, status };
+  }
+
+  async respondApproval(runId: string, choice: ChatApprovalChoice, resolveAll?: boolean): Promise<ChatRunActionResponse> {
+    const response = await fetch(this.url(`/v1/runs/${encodeURIComponent(runId)}/approval`), {
+      method: 'POST',
+      headers: this.headers({ 'content-type': 'application/json', accept: 'application/json' }),
+      body: JSON.stringify({ choice, ...(resolveAll ? { resolve_all: true } : {}) }),
+    });
+    if (!response.ok) throw new Error(`Hermes approval failed (${response.status})`);
+    return { ok: true, runId, status: choice === 'deny' ? 'denied' : 'approved' };
+  }
+
+  private stableSessionId(kind: 'project' | 'thread', ...parts: string[]): string {
+    const hash = createHash('sha256').update(parts.join(':')).digest('hex').slice(0, 40);
+    // Hermes prompt_cache_key/session key limit is 64 chars; keep a readable prefix + stable hash.
+    return `cw-${kind}:${hash}`;
+  }
+
+  private instructions(memoryContext: string | undefined): string {
+    const trimmed = memoryContext?.trim();
+    return trimmed ? `${CONSULTING_RESPONSE_FORMAT}\n\n${trimmed}` : CONSULTING_RESPONSE_FORMAT;
   }
 
   private normalizeUsage(raw: unknown): ChatStreamUsage | undefined {
@@ -179,6 +343,39 @@ export class HermesRunsClient {
     if (typeof usage.total_tokens === 'number') out.totalTokens = usage.total_tokens;
     if (typeof usage.reasoning_tokens === 'number') out.reasoningTokens = usage.reasoning_tokens;
     return Object.keys(out).length > 0 ? out : undefined;
+  }
+
+  private normalizeRunStatus(runId: string, raw: HermesRunStatusResponse): ChatRunStatusResponse {
+    const usage = this.normalizeUsage(raw.usage);
+    return {
+      runId,
+      status: typeof raw.status === 'string' ? raw.status : 'unknown',
+      ...(typeof raw.model === 'string' ? { model: raw.model } : {}),
+      ...(typeof raw.last_event === 'string' ? { lastEvent: raw.last_event } : {}),
+      ...(usage ? { usage } : {}),
+    };
+  }
+
+  private normalizeApprovalEvent(runId: string, upstream: HermesRunSseEvent): ChatStreamEvent {
+    const choices = Array.isArray(upstream.choices)
+      ? upstream.choices.filter((c): c is ChatApprovalChoice => APPROVAL_CHOICES.includes(c as ChatApprovalChoice))
+      : APPROVAL_CHOICES;
+    const command = typeof upstream.command === 'string' ? upstream.command.slice(0, 2_000) : undefined;
+    const message =
+      typeof upstream.message === 'string'
+        ? upstream.message.slice(0, 2_000)
+        : typeof upstream.reason === 'string'
+          ? upstream.reason.slice(0, 2_000)
+          : undefined;
+    const risk = typeof upstream.risk === 'string' ? upstream.risk.slice(0, 120) : undefined;
+    return {
+      type: 'approval',
+      runId,
+      choices: choices.length > 0 ? choices : APPROVAL_CHOICES,
+      ...(command ? { command } : {}),
+      ...(message ? { message } : {}),
+      ...(risk ? { risk } : {}),
+    };
   }
 
   private async *readRunEvents(runId: string): AsyncGenerator<HermesRunSseEvent> {

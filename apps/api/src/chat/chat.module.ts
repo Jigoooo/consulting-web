@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { DrizzleModule } from '../infra/drizzle.module.js';
 import { AuthModule } from '../auth/auth.module.js';
 import { SpacesModule } from '../spaces/spaces.module.js';
+import { ConsultingModule } from '../consulting/consulting.module.js';
 import { ChatStreamController } from './chat-stream.controller.js';
 import { NotificationsController } from './notifications.controller.js';
 import { PushController } from './push.controller.js';
@@ -16,7 +17,7 @@ import { DocumentExtractionService } from './document-extraction.service.js';
 import { DocumentExtractionWorker } from './document-extraction.worker.js';
 
 @Module({
-  imports: [DrizzleModule, AuthModule, SpacesModule],
+  imports: [DrizzleModule, AuthModule, SpacesModule, ConsultingModule],
   controllers: [ChatStreamController, NotificationsController, PushController, AttachmentsController],
   providers: [ChatStreamUseCase, HermesRunsClient, ChatMessageStore, EvidenceStore, NotificationStore, PushService, DocumentExtractionService, DocumentExtractionWorker],
   exports: [ChatStreamUseCase, HermesRunsClient, ChatMessageStore, EvidenceStore, NotificationStore, PushService, DocumentExtractionService, DocumentExtractionWorker],

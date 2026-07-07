@@ -26,6 +26,8 @@ Bridge
 
 ## 0. 현재 상태 (실측 2026-07-06/07)
 
+**구현 업데이트 2026-07-07:** C1~C6 및 stream-trigger형 C7이 구현·배포·E2E 검증됨. 현재 web project는 기존 `consulting.db` GraphRAG recall을 prompt에 주입하고, 완료된 web 대화는 기존 `dialogue_chunks`에 `source='consulting-web'`로 적재된다. 원 설계의 durable outbox worker는 아직 별도 worker가 아니라 stream settle 시 direct best-effort spawn으로 구현되어 있으며, 내구성/retry 보강은 Phase 7 hardening 후보다.
+
 ### consulting-web
 
 | 항목 | 현재 | 문제 |
@@ -393,9 +395,9 @@ Acceptance:
 
 ## 10. 구현 순서
 
-1. **C1~C3:** project→consulting topic link + resolver + recall bridge.
-2. **C4~C5:** MemoryContextBuilder + chat prompt injection.
-3. **C6~C7:** web chat ingest(outbox) → existing consulting.db.
+1. **C1~C3:** project→consulting topic link + resolver + recall bridge. ✅ 구현/검증 완료(2026-07-07)
+2. **C4~C5:** MemoryContextBuilder + chat prompt injection. ✅ 구현/검증 완료(2026-07-07)
+3. **C6~C7:** web chat ingest(outbox) → existing consulting.db. ✅ direct best-effort trigger 구현/실제 stream E2E 완료. durable outbox worker는 Phase 7 hardening 후보.
 4. **B1~B4:** tombstone/isLive로 ghost recall 차단.
 5. **A1~A6:** related scope graph 활성화 + cross-project recall fan-out.
 6. **C shares_memory:** 수동 고정 memory fan-out.

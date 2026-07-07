@@ -2,6 +2,12 @@ import { BadRequestException, Body, Controller, ForbiddenException, Get, HttpCod
 import type { Response } from 'express';
 import {
   AddEvidenceRequestSchema,
+  ChatApprovalResponseRequestSchema,
+  ChatRunActionRequestSchema,
+  ChatRunActionResponseSchema,
+  ChatRunStatusResponseSchema,
+  ChatRuntimeCapabilitiesResponseSchema,
+  ChatRuntimeModelsResponseSchema,
   ChatStreamEventSchema,
   ChatStreamRequestSchema,
   ListEvidenceResponseSchema,
@@ -20,6 +26,8 @@ import { ChatMessageStore, type FinishState } from './chat-message.store.js';
 import { EvidenceStore, type CapturedToolUse } from './evidence.store.js';
 import { NotificationStore } from './notification.store.js';
 import { SpaceAccessService, type SpaceAccess } from '../spaces/space-access.service.js';
+import { ConsultingMemoryContextBuilder } from '../consulting/consulting-memory-context.builder.js';
+import { ConsultingWebIngestService } from '../consulting/consulting-web-ingest.service.js';
 
 @Controller('chat')
 export class ChatStreamController {
@@ -30,6 +38,8 @@ export class ChatStreamController {
     @Inject(EvidenceStore) private readonly evidence: EvidenceStore,
     @Inject(NotificationStore) private readonly notifications: NotificationStore,
     @Inject(SpaceAccessService) private readonly access: SpaceAccessService,
+    @Inject(ConsultingMemoryContextBuilder) private readonly memoryContext: ConsultingMemoryContextBuilder,
+    @Inject(ConsultingWebIngestService) private readonly webIngest: ConsultingWebIngestService,
   ) {}
 
   /** Search persisted transcript rows inside a readable thread (J-1). */
@@ -128,6 +138,52 @@ export class ChatStreamController {
     return parseResponse(OkResponseSchema, { ok: true });
   }
 
+  /** Hermes runtime model routes for the web model picker. */
+  @Get('runtime/models')
+  @UseGuards(AccessTokenGuard)
+  async runtimeModels() {
+    return parseResponse(ChatRuntimeModelsResponseSchema, await this.hermesRunsClient.listModels());
+  }
+
+  /** Machine-readable runtime feature flags; no secrets are exposed. */
+  @Get('runtime/capabilities')
+  @UseGuards(AccessTokenGuard)
+  async runtimeCapabilities() {
+    return parseResponse(ChatRuntimeCapabilitiesResponseSchema, await this.hermesRunsClient.capabilities());
+  }
+
+  /** Poll a run after checking that the requester can read the owning thread. */
+  @Get('runtime/runs/:runId')
+  @UseGuards(AccessTokenGuard)
+  async runtimeRunStatus(
+    @Param('runId') runId: string,
+    @Query('threadId') threadId: string | undefined,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const parsed = ChatRunActionRequestSchema.safeParse({ threadId });
+    if (!parsed.success) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Invalid run status query' });
+    await this.requireThreadRead(requireAuthUserId(req), parsed.data.threadId);
+    return parseResponse(ChatRunStatusResponseSchema, await this.hermesRunsClient.runStatus(runId));
+  }
+
+  /** Stop an in-flight Hermes run, scoped by thread access. */
+  @Post('runtime/runs/:runId/stop')
+  @UseGuards(AccessTokenGuard)
+  async stopRuntimeRun(@Param('runId') runId: string, @Body() body: unknown, @Req() req: AuthenticatedRequest) {
+    const cmd = parseBody(ChatRunActionRequestSchema, body);
+    await this.requireThreadRead(requireAuthUserId(req), cmd.threadId);
+    return parseResponse(ChatRunActionResponseSchema, await this.hermesRunsClient.stopRun(runId));
+  }
+
+  /** Resolve a host-side command approval emitted by Hermes Runs SSE. */
+  @Post('runtime/runs/:runId/approval')
+  @UseGuards(AccessTokenGuard)
+  async approveRuntimeRun(@Param('runId') runId: string, @Body() body: unknown, @Req() req: AuthenticatedRequest) {
+    const cmd = parseBody(ChatApprovalResponseRequestSchema, body);
+    await this.requireThreadRead(requireAuthUserId(req), cmd.threadId);
+    return parseResponse(ChatRunActionResponseSchema, await this.hermesRunsClient.respondApproval(runId, cmd.choice, cmd.resolveAll));
+  }
+
   @Post('stream')
   @HttpCode(200)
   @UseGuards(AccessTokenGuard)
@@ -137,12 +193,21 @@ export class ChatStreamController {
     const access = await this.requireThreadRead(userId, cmd.threadId);
 
     // Persist the user turn BEFORE proxying so it survives upstream failures.
-    await this.messages.saveUserMessage({
+    const userMessageId = await this.messages.saveUserMessage({
       workspaceId: access.workspaceId,
       threadId: cmd.threadId,
       authorUserId: userId,
       content: cmd.message,
     });
+    await this.messages.bindAttachmentsToMessage({
+      workspaceId: access.workspaceId,
+      threadId: cmd.threadId,
+      messageId: userMessageId,
+      attachmentIds: cmd.attachmentIds ?? [],
+      uploaderUserId: userId,
+    });
+    const runMessage = cmd.message.trim() || '첨부 파일을 확인해주세요.';
+    const graphRagContext = await this.memoryContext.build({ threadId: cmd.threadId, query: runMessage });
 
     res.status(200);
     res.setHeader('content-type', 'text/event-stream; charset=utf-8');
@@ -177,6 +242,13 @@ export class ChatStreamController {
           toolUses,
         });
         if (finishState === 'complete' && assistantText.length > 0) {
+          void this.webIngest.ingestCompletedTurn({
+            threadId: cmd.threadId,
+            userText: cmd.message,
+            assistantText,
+            runId,
+            assistantMessageId: messageId,
+          });
           await this.notifications.notifyWorkspace({
             workspaceId: access.workspaceId,
             excludeUserId: userId,
@@ -197,7 +269,12 @@ export class ChatStreamController {
     });
 
     try {
-      for await (const event of this.hermesRunsClient.streamChat(cmd, { workspaceId: access.workspaceId, projectId: access.projectId })) {
+      const runScope: { workspaceId: string; projectId: string; memoryContext?: string } = {
+        workspaceId: access.workspaceId,
+        projectId: access.projectId,
+      };
+      if (graphRagContext) runScope.memoryContext = graphRagContext;
+      for await (const event of this.hermesRunsClient.streamChat({ ...cmd, message: runMessage }, runScope)) {
         const parsed = ChatStreamEventSchema.parse(event);
         if (parsed.type === 'start') runId = parsed.runId;
         if (parsed.type === 'delta') assistantText += parsed.text;

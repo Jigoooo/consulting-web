@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import type { ChatMessage } from '@consulting/contracts';
+import type { ChatMessage, ChatMessageAttachment } from '@consulting/contracts';
 import { Markdown } from '../../../shared/ui/markdown/Markdown';
 import { StreamingMarkdown } from '../../../shared/ui/markdown/StreamingMarkdown';
 import { Icon } from '../../../shared/icons/Icon';
@@ -18,6 +18,7 @@ interface LiveTurnLike {
   id: number;
   role: 'user' | 'ai';
   text: string;
+  attachments?: ChatMessageAttachment[];
   runId?: string;
   streaming?: boolean;
   error?: string;
@@ -59,6 +60,32 @@ interface Props {
   onRetry: (message: string) => Promise<void> | void;
   onRetryLast: () => Promise<void> | void;
   onChoice: (choice: string) => void;
+  onOpenAttachment: (attachment: ChatMessageAttachment) => void;
+}
+
+function fmtSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function AttachmentCards({ attachments, onOpenAttachment }: { attachments: ChatMessageAttachment[] | undefined; onOpenAttachment: Props['onOpenAttachment'] }) {
+  if (!attachments || attachments.length === 0) return null;
+  return (
+    <div className={s.fileStrip}>
+      {attachments.map((attachment) => (
+        <button
+          key={attachment.id}
+          type="button"
+          className={s.fileChip}
+          title={`미리보기 (${fmtSize(attachment.sizeBytes)})`}
+          onClick={() => onOpenAttachment(attachment)}
+        >
+          <Icon name="paperclip" size="xs" decorative /> {attachment.fileName} <span className={s.fileSize}>{fmtSize(attachment.sizeBytes)}</span>
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function PersistedRow({
@@ -70,6 +97,7 @@ function PersistedRow({
   onSaveArtifact,
   onRetry,
   onChoice,
+  onOpenAttachment,
 }: {
   message: ChatMessage;
   userName: string;
@@ -79,6 +107,7 @@ function PersistedRow({
   onSaveArtifact: Props['onSaveArtifact'];
   onRetry: Props['onRetry'];
   onChoice: Props['onChoice'];
+  onOpenAttachment: Props['onOpenAttachment'];
 }) {
   const isMatch = highlight?.ids.has(message.id) ?? false;
   const highlightQuery = isMatch ? highlight?.query ?? '' : '';
@@ -129,6 +158,7 @@ function PersistedRow({
             <HighlightedText text={message.content} query={highlightQuery} />
           </div>
         )}
+        <AttachmentCards attachments={message.attachments} onOpenAttachment={onOpenAttachment} />
         {message.finishState === 'error' ? (
           <div className={s.msgError}>이 응답은 오류로 중단되었어요.</div>
         ) : null}
@@ -149,6 +179,7 @@ function LiveRow({
   onSaveArtifact,
   onRetryLast,
   onChoice,
+  onOpenAttachment,
 }: {
   turn: LiveTurnLike;
   userName: string;
@@ -158,6 +189,7 @@ function LiveRow({
   onSaveArtifact: Props['onSaveArtifact'];
   onRetryLast: Props['onRetryLast'];
   onChoice: Props['onChoice'];
+  onOpenAttachment: Props['onOpenAttachment'];
 }) {
   return (
     <div key={`live-${turn.id}`} className={`${s.msg} ${s.msgHover}`} data-turn={`l-${turn.id}`}>
@@ -192,7 +224,10 @@ function LiveRow({
             <ThinkingRibbon tool={activeTool} />
           ) : null
         ) : (
-          <div className={s.text}>{turn.text}</div>
+          <>
+            {turn.text ? <div className={s.text}>{turn.text}</div> : null}
+            <AttachmentCards attachments={turn.attachments} onOpenAttachment={onOpenAttachment} />
+          </>
         )}
         {turn.error ? (
           <div className={s.liveError}>
@@ -235,6 +270,7 @@ export function VirtualMessageStream({
   onRetry,
   onRetryLast,
   onChoice,
+  onOpenAttachment,
 }: Props) {
   const didInitialScroll = useRef(false);
   const allowAutoLoad = useRef(false);
@@ -506,6 +542,7 @@ export function VirtualMessageStream({
                 onSaveArtifact={onSaveArtifact}
                 onRetry={onRetry}
                 onChoice={onChoice}
+                onOpenAttachment={onOpenAttachment}
               />
             </div>
           );
@@ -543,6 +580,7 @@ export function VirtualMessageStream({
           onSaveArtifact={onSaveArtifact}
           onRetryLast={onRetryLast}
           onChoice={onChoice}
+          onOpenAttachment={onOpenAttachment}
         />
       ))}
       <div ref={bottomRef} />

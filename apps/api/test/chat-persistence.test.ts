@@ -19,6 +19,7 @@ import {
   SearchMessagesResponseSchema,
   ThreadDetailResponseSchema,
   ListMembersResponseSchema,
+  ListThreadsResponseSchema,
   WorkspaceTreeResponseSchema,
 } from '@consulting/contracts';
 import { AppModule } from '../src/app.module.js';
@@ -230,7 +231,7 @@ d('chat persistence + space mutations (Phase 1.5)', () => {
     const outsider = await makeUser('search-outsider');
     const { thread } = await makeThread(owner, 'search');
     const base = Date.now() - 10_000;
-    await db.insert(schema.chatMessages).values([
+    const inserted = await db.insert(schema.chatMessages).values([
       {
         workspaceId: owner.personalWorkspaceId,
         threadId: thread.id,
@@ -251,7 +252,45 @@ d('chat persistence + space mutations (Phase 1.5)', () => {
         createdAt: new Date(base + 1000),
         updatedAt: new Date(base + 1000),
       },
-    ]);
+    ]).returning({ id: schema.chatMessages.id });
+    const [attachment] = await db.insert(schema.fileAttachments).values({
+      workspaceId: owner.personalWorkspaceId,
+      threadId: thread.id,
+      messageId: inserted[0]!.id,
+      uploaderUserId: owner.userId,
+      fileName: '버스-원문.txt',
+      mimeType: 'text/plain',
+      sizeBytes: 32,
+      dataBase64: Buffer.from('버스 승하차 원문').toString('base64'),
+      createdAt: new Date(base + 2000),
+      updatedAt: new Date(base + 2000),
+    }).returning({ id: schema.fileAttachments.id });
+    await db.insert(schema.documentExtractions).values({
+      workspaceId: owner.personalWorkspaceId,
+      threadId: thread.id,
+      attachmentId: attachment!.id,
+      status: 'indexed',
+      extractor: 'text/plain',
+      textContent: '창원 버스 승하차 데이터 원문',
+      textChars: 16,
+      qualityScore: 90,
+      warnings: [],
+      createdAt: new Date(base + 2000),
+      updatedAt: new Date(base + 2000),
+    });
+    await db.insert(schema.evidenceItems).values({
+      workspaceId: owner.personalWorkspaceId,
+      threadId: thread.id,
+      messageId: inserted[1]!.id,
+      runId: 'run_search',
+      sourceType: 'web',
+      ref: '버스 통계 출처',
+      excerpt: '창원 버스 이용량 근거',
+      url: 'https://example.com/bus',
+      qualitySignals: [],
+      createdAt: new Date(base + 3000),
+      updatedAt: new Date(base + 3000),
+    });
 
     const found = SearchMessagesResponseSchema.parse(
       (await request(app.getHttpServer())
@@ -260,7 +299,14 @@ d('chat persistence + space mutations (Phase 1.5)', () => {
         .expect(200)).body,
     );
     expect(found.results).toHaveLength(1);
+    expect(found.messages).toHaveLength(1);
+    expect(found.files).toHaveLength(1);
+    expect(found.evidence).toHaveLength(1);
     expect(found.results[0]!.snippet).toContain('버스');
+    expect(found.files[0]!.fileName).toContain('버스');
+    expect(found.files[0]!.messageId).toBe(inserted[0]!.id);
+    expect(found.evidence[0]!.ref).toContain('버스');
+    expect(found.evidence[0]!.messageId).toBe(inserted[1]!.id);
 
     await request(app.getHttpServer())
       .get(`/chat/threads/${thread.id}/messages/search?q=버스`)
@@ -316,11 +362,13 @@ d('chat persistence + space mutations (Phase 1.5)', () => {
     const projNode = tree.projects.find((p) => p.id === project.id);
     expect(projNode?.channels.some((c) => c.id === channel.id)).toBe(false);
 
-    // deleted topic's threads endpoint → 404 (topic soft-deleted via cascade)
-    await request(app.getHttpServer())
+    // Archived descendants stay restorable/referenceable, but normal active
+    // thread lists must not expose them.
+    const archivedThreads = ListThreadsResponseSchema.parse((await request(app.getHttpServer())
       .get(`/spaces/topics/${topic.id}/threads`)
       .set('authorization', owner.bearer)
-      .expect(404);
+      .expect(200)).body);
+    expect(archivedThreads.threads).toEqual([]);
   });
 
   it('lists workspace members with the strongest role', async () => {

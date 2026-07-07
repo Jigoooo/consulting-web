@@ -5,7 +5,6 @@ import { eq } from 'drizzle-orm';
 import { ENV_TOKEN } from '../config/config.module.js';
 import type { Env } from '../config/env.schema.js';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
-import { EvidenceStore } from './evidence.store.js';
 import { extractDocumentText } from './document-extraction.service.js';
 
 const MAX_INDEXED_TEXT_CHARS = 200_000;
@@ -41,7 +40,6 @@ export class DocumentExtractionWorker implements OnModuleInit, OnModuleDestroy {
   constructor(
     @Inject(ENV_TOKEN) private readonly env: Env,
     @Inject(DRIZZLE) private readonly db: Db,
-    @Inject(EvidenceStore) private readonly evidence: EvidenceStore,
   ) {
     this.queue = new Queue('document-extraction', {
       connection: redisConnectionFromUrl(this.env.REDIS_URL),
@@ -118,20 +116,5 @@ export class DocumentExtractionWorker implements OnModuleInit, OnModuleDestroy {
           warnings: extracted.warnings,
         },
       });
-
-    if (extracted.status === 'indexed' && extracted.text.trim().length > 0) {
-      await this.evidence.addManual({
-        workspaceId: job.workspaceId,
-        threadId: job.threadId,
-        messageId: null,
-        sourceType: 'file',
-        ref: job.fileName,
-        excerpt: extracted.text.slice(0, 4000),
-        url: null,
-        addedByUserId: job.uploaderUserId,
-        qualityScore: extracted.qualityScore,
-        qualitySignals: extracted.warnings.length > 0 ? extracted.warnings : ['document_text_indexed'],
-      });
-    }
   }
 }

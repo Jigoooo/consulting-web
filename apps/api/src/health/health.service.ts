@@ -1,5 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { HealthComponent } from '@consulting/contracts';
+import { ENV_TOKEN } from '../config/config.module.js';
+import type { Env } from '../config/env.schema.js';
 import { DB_POOL } from '../infra/db.module.js';
 import { REDIS_CLIENT } from '../infra/redis.module.js';
 import type { Pool } from 'pg';
@@ -25,6 +27,7 @@ export class HealthService {
   constructor(
     @Inject(DB_POOL) private readonly pool: Pool,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
+    @Inject(ENV_TOKEN) private readonly env: Env,
   ) {}
 
   live(): { status: 'ok'; time: string } {
@@ -32,11 +35,9 @@ export class HealthService {
   }
 
   async ready(): Promise<HealthSnapshot> {
-    const [db, redis] = await Promise.all([this.checkDb(), this.checkRedis()]);
+    const [db, redis, hermes] = await Promise.all([this.checkDb(), this.checkRedis(), this.checkHermes()]);
     // bullmq shares the redis connection health in Phase 0.
     const bullmq: HealthComponent = redis;
-    // hermes is optional in Phase 0 — degraded, not fatal.
-    const hermes: HealthComponent = 'degraded';
 
     const critical: HealthComponent[] = [db, redis];
     const status: HealthComponent = critical.every((c) => c === 'ok')
@@ -68,6 +69,30 @@ export class HealthService {
       return pong === 'PONG' ? 'ok' : 'degraded';
     } catch {
       return 'down';
+    }
+  }
+
+  private async checkHermes(): Promise<HealthComponent> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1_500);
+    try {
+      const baseUrl = this.env.HERMES_API_BASE_URL.replace(/\/$/, '');
+      const response = await fetch(`${baseUrl}/v1/health`, {
+        method: 'GET',
+        headers: {
+          accept: 'application/json',
+          authorization: `Bearer ${this.env.HERMES_API_KEY}`,
+        },
+        signal: controller.signal,
+      });
+      if (!response.ok) return 'degraded';
+      const body: unknown = await response.json().catch(() => null);
+      if (body && typeof body === 'object' && 'status' in body && body.status === 'ok') return 'ok';
+      return 'degraded';
+    } catch {
+      return 'degraded';
+    } finally {
+      clearTimeout(timeout);
     }
   }
 }

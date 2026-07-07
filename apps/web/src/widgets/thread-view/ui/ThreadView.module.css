@@ -409,6 +409,10 @@
 .msg {
   display: flex;
   gap: 13px;
+  width: 100%;
+  max-width: 940px;
+  margin: 0 auto;
+  box-sizing: border-box;
 }
 .avatar {
   width: 34px;
@@ -460,6 +464,8 @@
   font-size: 15px;
   line-height: 1.65;
   color: var(--text-primary);
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 .cursor {
   display: inline-block;
@@ -771,9 +777,14 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-bottom: 8px;
+  margin: 8px 0;
+  max-width: 100%;
 }
 .fileChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: min(100%, 360px);
   font: inherit;
   font-size: 11.5px;
   font-weight: 560;
@@ -784,6 +795,9 @@
   padding: 4px 11px;
   cursor: pointer;
   transition: all var(--dur-fast) var(--ease-out);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .fileChip:hover {
   border-color: var(--accent);
@@ -938,4 +952,239 @@
   background: transparent;
   color: var(--text-secondary);
   border-color: var(--border-whisper);
+}
+
+.flowStrip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-hair);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-card) 86%, var(--accent-soft));
+  color: var(--text-secondary);
+}
+.flowStrip[data-mode='queued'] {
+  background: color-mix(in srgb, var(--surface-card) 88%, var(--warning-soft, var(--accent-soft)));
+}
+.flowStrip[data-mode='approval'] {
+  border-color: color-mix(in srgb, var(--danger, var(--accent)) 30%, var(--border-whisper));
+  background: color-mix(in srgb, var(--surface-card) 86%, var(--danger-soft, var(--accent-soft)));
+}
+.flowMain {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.flowDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+  flex: none;
+}
+.flowLabel {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 760;
+  letter-spacing: -0.01em;
+}
+.flowDetail,
+.flowQueued {
+  min-width: 0;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.flowQueued {
+  max-width: 42%;
+  color: var(--text-muted);
+}
+
+.quickControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  min-height: 32px;
+}
+.modelChip {
+  max-width: 220px;
+  border: 1px solid var(--border-hair);
+  border-radius: 9999px;
+  padding: 5px 10px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--surface-card) 78%, transparent);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.approvalCard {
+  margin-bottom: 8px;
+  border: 1px solid color-mix(in srgb, var(--danger, var(--accent)) 28%, var(--border-whisper));
+  border-radius: 16px;
+  background: var(--surface-card);
+  box-shadow: var(--shadow-pop);
+  padding: 12px;
+}
+.approvalHead {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--text-primary);
+}
+.approvalHead strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 760;
+}
+.approvalHead span {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.approvalCard p {
+  margin: 10px 0 0;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.approvalCard pre {
+  margin: 10px 0 0;
+  max-height: 150px;
+  overflow: auto;
+  border: 1px solid var(--border-hair);
+  border-radius: 12px;
+  padding: 10px;
+  background: var(--bg-warm);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+.approvalRisk {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+.approvalActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.modelSheet {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.modelHero {
+  border: 1px solid var(--border-hair);
+  border-radius: 16px;
+  padding: 14px;
+  background: color-mix(in srgb, var(--surface-card) 84%, var(--accent-soft));
+}
+.modelHeroKicker {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 680;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.modelHeroName {
+  margin-top: 4px;
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 780;
+  letter-spacing: -0.02em;
+  word-break: break-word;
+}
+.modelHeroDesc {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.modelList {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: min(44vh, 420px);
+  overflow: auto;
+}
+.modelRow {
+  width: 100%;
+  border: 1px solid var(--border-hair);
+  border-radius: 13px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+}
+.modelRow:hover,
+.modelRowOn {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-whisper));
+  background: var(--accent-soft);
+}
+.modelRow strong,
+.modelRow em {
+  display: block;
+}
+.modelRow strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+.modelRow em {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-style: normal;
+}
+.modelRow b {
+  color: var(--accent);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.modelEmpty {
+  border: 1px dashed var(--border-whisper);
+  border-radius: 14px;
+  padding: 18px;
+  color: var(--text-muted);
+  text-align: center;
+  font-size: 13px;
+}
+.modelActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+@media (max-width: 720px) {
+  .quickControls,
+  .flowStrip {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .flowQueued,
+  .modelChip {
+    max-width: none;
+  }
 }

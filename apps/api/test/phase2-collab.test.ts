@@ -21,6 +21,7 @@ import {
   ListNotificationsResponseSchema,
   UploadAttachmentResponseSchema,
   ListAttachmentsResponseSchema,
+  ListMessagesPageResponseSchema,
 } from '@consulting/contracts';
 import { AppModule } from '../src/app.module.js';
 
@@ -60,6 +61,29 @@ function installHermesToolEventFetchMock() {
     if (u.includes('/events')) {
       return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
     }
+    return new Response('not found', { status: 404 });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+}
+
+function installHermesPlainFetchMock() {
+  const body = [
+    'data: {"event":"message.delta","run_id":"run_attachment","delta":"첨부 확인"}',
+    '',
+    'data: {"event":"run.completed","run_id":"run_attachment","output":"첨부 확인"}',
+    '',
+  ].join('\n');
+  const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const u = input instanceof Request ? input.url : String(input);
+    if (u.endsWith('/v1/runs')) {
+      const payload = JSON.parse(String(init?.body ?? '{}')) as { input?: string };
+      expect(payload.input).toBeTruthy();
+      return new Response(JSON.stringify({ run_id: 'run_attachment', status: 'started' }), {
+        status: 202,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (u.includes('/events')) return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
     return new Response('not found', { status: 404 });
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -328,7 +352,8 @@ d('Phase 2 — evidence, artifacts, notifications', () => {
     expect(memberFeed2.unreadCount).toBe(0);
   });
 
-  it('G-3: upload/list/download attachment with mime allowlist + isolation', async () => {
+  it('G-3: upload/list/send/download attachment as message attachment without auto-evidence', async () => {
+    installHermesPlainFetchMock();
     const owner = await makeUser('att-owner');
     const outsider = await makeUser('att-out');
     const { thread } = await makeSpaces(owner.bearer, owner.personalWorkspaceId);
@@ -349,7 +374,7 @@ d('Phase 2 — evidence, artifacts, notifications', () => {
       .send({ threadId: thread.id, fileName: 'x.exe', mimeType: 'application/x-msdownload', dataBase64: payload })
       .expect(400);
 
-    const list = ListAttachmentsResponseSchema.parse(
+    let list = ListAttachmentsResponseSchema.parse(
       (await request(app.getHttpServer())
         .get(`/attachments/threads/${thread.id}`)
         .set('authorization', owner.bearer)
@@ -358,22 +383,57 @@ d('Phase 2 — evidence, artifacts, notifications', () => {
     expect(list.attachments.length).toBe(1);
     expect(list.attachments[0]!.fileName).toBe('예산서.txt');
     expect(list.attachments[0]!.sizeBytes).toBeGreaterThan(0);
-    expect(list.attachments[0]!.extraction?.status).toBe('indexed');
-    expect(list.attachments[0]!.extraction?.extractor).toBe('text/plain');
-    expect(list.attachments[0]!.extraction?.textChars).toBeGreaterThan(10);
-    expect(list.attachments[0]!.extraction?.qualityScore).toBeGreaterThanOrEqual(60);
+    expect(['processing', 'indexed']).toContain(list.attachments[0]!.extraction?.status);
+    if (list.attachments[0]!.extraction?.status === 'indexed') {
+      expect(list.attachments[0]!.extraction?.extractor).toBe('text/plain');
+      expect(list.attachments[0]!.extraction?.textChars).toBeGreaterThan(10);
+      expect(list.attachments[0]!.extraction?.qualityScore).toBeGreaterThanOrEqual(60);
+    }
 
-    const evidence = ListEvidenceResponseSchema.parse(
+    // Uploading/extracting a file is NOT evidence by default. Evidence is an
+    // explicit user/tool action; attachments live as draft chips until sent.
+    const evidenceBeforeSend = ListEvidenceResponseSchema.parse(
       (await request(app.getHttpServer())
         .get(`/chat/threads/${thread.id}/evidence`)
         .set('authorization', owner.bearer)
         .expect(200)).body,
     );
-    const fileEvidence = evidence.evidence.find((e) => e.sourceType === 'file' && e.ref === '예산서.txt');
-    expect(fileEvidence).toBeDefined();
-    expect(fileEvidence!.excerpt).toContain('공공시설');
-    expect(fileEvidence!.qualityScore).toBeGreaterThanOrEqual(60);
-    expect(fileEvidence!.qualitySignals.length).toBeGreaterThan(0);
+    expect(evidenceBeforeSend.evidence).toEqual([]);
+
+    await request(app.getHttpServer())
+      .post('/chat/stream')
+      .set('authorization', owner.bearer)
+      .send({ threadId: thread.id, message: '', attachmentIds: [uploaded.id] })
+      .expect(200);
+
+    const draftAfterSend = ListAttachmentsResponseSchema.parse(
+      (await request(app.getHttpServer())
+        .get(`/attachments/threads/${thread.id}`)
+        .set('authorization', owner.bearer)
+        .expect(200)).body,
+    );
+    expect(draftAfterSend.attachments).toEqual([]);
+
+    const messages = ListMessagesPageResponseSchema.parse(
+      (await request(app.getHttpServer())
+        .get(`/chat/threads/${thread.id}/messages?page=1&limit=5`)
+        .set('authorization', owner.bearer)
+        .expect(200)).body,
+    );
+    const userMessage = messages.messages.find((m) => m.role === 'user');
+    expect(userMessage).toBeDefined();
+    expect(userMessage!.content).toBe('');
+    expect(userMessage!.attachments).toHaveLength(1);
+    expect(userMessage!.attachments![0]!.id).toBe(uploaded.id);
+    expect(userMessage!.attachments![0]!.fileName).toBe('예산서.txt');
+
+    const evidenceAfterSend = ListEvidenceResponseSchema.parse(
+      (await request(app.getHttpServer())
+        .get(`/chat/threads/${thread.id}/evidence`)
+        .set('authorization', owner.bearer)
+        .expect(200)).body,
+    );
+    expect(evidenceAfterSend.evidence).toEqual([]);
 
     const dl = await request(app.getHttpServer())
       .get(`/attachments/${uploaded.id}/content`)

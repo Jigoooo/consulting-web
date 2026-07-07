@@ -8,6 +8,7 @@ import { Button } from '../../../shared/ui/button/Button';
 import { Input, Textarea } from '../../../shared/ui/input/Input';
 import { EmptyState, Spinner } from '../../../shared/ui/feedback/EmptyState';
 import { useDelayedFlag } from '../../../shared/lib/useDelayedFlag';
+import { searchStore } from '../../chat-thread/model/searchStore';
 import s from './EvidencePanel.module.css';
 
 const sourceLabel: Record<string, string> = {
@@ -45,6 +46,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
   const [ref, setRef] = useState('');
   const [excerpt, setExcerpt] = useState('');
   const [url, setUrl] = useState('');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
   const showLoading = useDelayedFlag(isLoading, 300);
 
@@ -76,6 +78,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
   }
 
   const items = data?.evidence ?? [];
+  const selected = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
 
   return (
     <div className={s.wrap}>
@@ -117,7 +120,19 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
       {items.length > 0 ? (
         <div className={s.rows}>
           {items.map((e) => (
-            <div key={e.id} className={`${s.row} ${hovered && e.messageId === hovered ? s.rowGlow : ''}`}>
+            <div
+              key={e.id}
+              role="button"
+              tabIndex={0}
+              className={`${s.row} ${hovered && e.messageId === hovered ? s.rowGlow : ''} ${selectedId === e.id ? s.rowSelected : ''}`}
+              onClick={() => setSelectedId((prev) => (prev === e.id ? null : e.id))}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  setSelectedId((prev) => (prev === e.id ? null : e.id));
+                }
+              }}
+            >
               <span className={s.rowIcon}>
                 <Icon name={sourceIcon[e.sourceType] ?? 'info'} size="sm" decorative />
               </span>
@@ -135,6 +150,39 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
               </div>
             </div>
           ))}
+        </div>
+      ) : null}
+
+      {selected ? (
+        <div className={s.detail}>
+          <div className={s.detailHead}>
+            <span>{sourceLabel[selected.sourceType] ?? selected.sourceType}</span>
+            <button type="button" className={s.detailClose} onClick={() => setSelectedId(null)} aria-label="근거 상세 닫기">
+              <Icon name="x" size="xs" decorative />
+            </button>
+          </div>
+          <div className={s.detailRef}>{selected.ref}</div>
+          <div className={s.detailExcerpt}>{selected.excerpt}</div>
+          <div className={s.detailMeta}>
+            {selected.qualityScore !== null ? <span>품질 {selected.qualityScore}</span> : null}
+            {selected.runId ? <span>run {selected.runId}</span> : null}
+            <span>{new Date(selected.createdAt).toLocaleString('ko-KR')}</span>
+          </div>
+          {selected.qualitySignals.length > 0 ? (
+            <div className={s.detailSignals}>{selected.qualitySignals.map((signal) => <span key={signal}>{signal}</span>)}</div>
+          ) : null}
+          <div className={s.detailActions}>
+            {selected.messageId ? (
+              <button type="button" className={`${s.detailAction} cwTap`} onClick={() => searchStore.jumpMessage(selected.messageId!, threadId)}>
+                메시지로 이동
+              </button>
+            ) : null}
+            {selected.url ? (
+              <a className={s.detailAction} href={selected.url} target="_blank" rel="noreferrer noopener">
+                출처 열기
+              </a>
+            ) : null}
+          </div>
         </div>
       ) : null}
 

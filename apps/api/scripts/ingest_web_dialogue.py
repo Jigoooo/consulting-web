@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""Ingest one consulting-web chat turn into the existing consulting.db GraphRAG store.
+
+Input JSON is read from stdin. This keeps Postgres/web concerns in NestJS and lets this
+small bridge reuse the legacy dialogue_memory modules for contextualization, embeddings,
+claim/evidence edge extraction, and FTS triggers.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import sqlite3
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+DEFAULT_CONSULTING_ROOT = '/legacy/consulting' if Path('/legacy/consulting').exists() else '/home/jigoo/.hermes/workspace/consulting'
+CONSULTING_ROOT = Path(os.environ.get('CONSULTING_LEGACY_ROOT', DEFAULT_CONSULTING_ROOT))
+LEGACY = CONSULTING_ROOT / 'scripts' / 'dialogue_memory'
+if str(LEGACY) not in sys.path:
+    sys.path.insert(0, str(LEGACY))
+
+import store as S  # type: ignore  # noqa: E402
+import embeddings as E  # type: ignore  # noqa: E402
+import ingest as I  # type: ignore  # noqa: E402
+
+SCOPES_DDL = """
+CREATE TABLE IF NOT EXISTS dialogue_session_scopes (
+  topic_id INTEGER NOT NULL,
+  session_id TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'consulting-web',
+  workspace_id TEXT,
+  project_id TEXT,
+  channel_id TEXT,
+  web_topic_id TEXT,
+  thread_id TEXT,
+  scope_path TEXT NOT NULL DEFAULT '',
+  bound_at TEXT NOT NULL,
+  PRIMARY KEY(topic_id, session_id)
+);
+"""
+
+
+def _require_str(data: dict[str, Any], key: str) -> str:
+    value = data.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f'missing required string: {key}')
+    return value.strip()
+
+
+def _optional_str(data: dict[str, Any], key: str) -> str | None:
+    value = data.get(key)
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _write_scope(con: sqlite3.Connection, tid: int, data: dict[str, Any], session_id: str) -> None:
+    con.executescript(SCOPES_DDL)
+    con.execute(
+        """
+        INSERT INTO dialogue_session_scopes(
+          topic_id, session_id, source, workspace_id, project_id, channel_id, web_topic_id, thread_id, scope_path, bound_at
+        ) VALUES (?, ?, 'consulting-web', ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(topic_id, session_id) DO UPDATE SET
+          workspace_id=excluded.workspace_id,
+          project_id=excluded.project_id,
+          channel_id=excluded.channel_id,
+          web_topic_id=excluded.web_topic_id,
+          thread_id=excluded.thread_id,
+          scope_path=excluded.scope_path,
+          bound_at=excluded.bound_at
+        """,
+        (
+            tid,
+            session_id,
+            _optional_str(data, 'workspaceId'),
+            _optional_str(data, 'projectId'),
+            _optional_str(data, 'channelId'),
+            _optional_str(data, 'topicId'),
+            _optional_str(data, 'threadId'),
+            _optional_str(data, 'scopePath') or '',
+            S.now(),
+        ),
+    )
+
+
+def ingest_turn(data: dict[str, Any], *, no_embed: bool = False) -> dict[str, Any]:
+    topic_slug = _require_str(data, 'consultingTopicSlug')
+    session_id = _require_str(data, 'sessionId')
+    user_text = _require_str(data, 'userText')
+    assistant_text = _require_str(data, 'assistantText')
+    scope_path = _optional_str(data, 'scopePath') or topic_slug
+    ts = float(data.get('timestamp') or time.time())
+    raw = f"사용자: {user_text}\n지구: {assistant_text}"
+    content_hash = hashlib.sha256((topic_slug + '|consulting-web|' + session_id + '|' + raw).encode('utf-8')).hexdigest()[:24]
+
+    con = S.connect()
+    main = sqlite3.connect(S.DB)
+    main.row_factory = sqlite3.Row
+    try:
+        tid = S.topic_id(con, topic_slug)
+        _write_scope(con, tid, data, session_id)
+        S.bind_session(con, tid, session_id)
+        if S.chunk_exists(con, content_hash):
+            con.commit()
+            return {"ok": True, "topic": topic_slug, "ingested": 0, "duplicate": True, **S.stats(con, tid)}
+
+        topic_row = con.execute("SELECT title FROM topics WHERE id=?", (tid,)).fetchone()
+        topic_title = topic_row['title'] if topic_row and topic_row['title'] else topic_slug
+        if no_embed:
+            context_text = f"[{topic_title}] {scope_path}\n{raw}"
+        else:
+            context_text = I._contextualize(raw, topic_title, [scope_path])
+        entities, edges = I._extract_entities(main, tid, raw + ' ' + context_text)
+        embedding = [] if no_embed else E.embed_one(context_text)
+        cid = S.insert_chunk(
+            con,
+            tid=tid,
+            content_hash=content_hash,
+            source='consulting-web',
+            session_id=session_id,
+            ts=ts,
+            role_mix='assistant+user',
+            raw_text=raw,
+            context_text=context_text,
+            entities=entities,
+            embedding=embedding,
+            embed_model='none' if no_embed else E._MODEL,
+        )
+        for target_type, target_ref in edges:
+            S.add_edge(
+                con,
+                tid=tid,
+                chunk_id=cid,
+                target_type=target_type,
+                target_ref=target_ref,
+                relation='about' if target_type == 'claim' else 'mentions',
+            )
+        S.set_checkpoint(con, tid, 'consulting-web', ts)
+        con.commit()
+        return {"ok": True, "topic": topic_slug, "ingested": 1, "chunk_id": cid, **S.stats(con, tid)}
+    finally:
+        main.close()
+        con.close()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description='consulting-web turn → existing consulting.db GraphRAG')
+    parser.add_argument('--no-embed', action='store_true')
+    args = parser.parse_args()
+    data = json.load(sys.stdin)
+    out = ingest_turn(data, no_embed=args.no_embed)
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+
+
+if __name__ == '__main__':
+    main()

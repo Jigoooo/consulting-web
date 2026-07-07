@@ -10,7 +10,7 @@ import { Icon } from '../shared/icons/Icon';
 import type { IconName } from '../shared/icons/registry';
 import { EmptyState, Spinner } from '../shared/ui/feedback/EmptyState';
 import { useDelayedFlag } from '../shared/lib/useDelayedFlag';
-import { formatDateLabel } from '../shared/lib/formatDate';
+import { formatDateLabel, formatFullDateTime } from '../shared/lib/formatDate';
 import { FileViewer, type FileViewerTarget } from '../widgets/file-viewer/ui/FileViewer';
 import s from '../components/library/Library.module.css';
 
@@ -147,7 +147,7 @@ function LibraryPage() {
                 <span className={s.itemMeta}>
                   <span className={s.itemType}>{TYPE_LABEL[item.sourceType] ?? item.sourceType}</span>
                   {item.channelName ? <span className={s.itemChannel}>{item.channelName}</span> : null}
-                  <span className={s.itemDate}>{formatDateLabel(item.createdAt)}</span>
+                  <span className={s.itemDate} title={formatFullDateTime(item.createdAt)}>{formatDateLabel(item.createdAt)}</span>
                   {item.status === 'processing' ? <span className={s.itemProcessing}>분석 중</span> : null}
                   {item.status === 'failed' ? <span className={s.itemFail}>추출 실패</span> : null}
                 </span>

@@ -74,12 +74,19 @@ services:
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set in .env.docker}
       HERMES_API_BASE_URL: http://host.docker.internal:38642
       HERMES_API_KEY: ${HERMES_API_KEY:?set in .env.docker}
+      CONSULTING_LEGACY_ROOT: /legacy/consulting
+      HERMES_ENV_FILE: /legacy/hermes.env
+      CONSULTING_PYTHON: python3
+      CONSULTING_WEB_INGEST_SCRIPT: /app/scripts/ingest_web_dialogue.py
       # Web Push (optional — endpoints degrade to no-op when unset)
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@localhost}
     extra_hosts:
       - 'host.docker.internal:host-gateway'
+    volumes:
+      - /home/jigoo/.hermes/workspace/consulting:/legacy/consulting
+      - /home/jigoo/.hermes/.env:/legacy/hermes.env:ro
     depends_on:
       pg:
         condition: service_healthy

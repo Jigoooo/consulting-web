@@ -8,6 +8,10 @@
 - Hermes API Server가 현재 안정적으로 제공하는 것은 **run 제출/상태/SSE/중단/승인응답/모델 route alias 조회**다. TUI의 `slash.exec`/`config.set` 같은 제어면은 API Server에 없다.
 - 따라서 consulting-web 적용은 “Hermes 모든 slash를 웹에 복제”가 아니라, **웹용 Runtime Command Layer**를 두고 `지원 가능 / 약한 대체 / 미지원`을 명확히 분리해야 한다.
 - 1차 구현의 핵심은 네 가지다: **(1) `/model` 웹 picker + per-run model route 적용, (2) `approval.request` 이벤트를 실제 버튼 UI로 노출, (3) `/stop`을 Hermes upstream stop까지 연결, (4) slash 제안을 ‘문자열 삽입’이 아닌 ‘웹 커맨드 실행’으로 바꾸기.**
+- 이번 승인 범위에서는 **Hermes native source 수정도 허용**한다. 단, 제품 레이어에서 해결 가능한 것은 consulting-web에서 먼저 해결하고, API Server/TUI/adapter의 실제 한계 때문에 막히는 지점만 Hermes core에 최소 패치한다.
+- Hermes core 패치는 업데이트 때 초기화되지 않도록 **기존 local patch 체계에 편입**한다. 즉 `~/.hermes/local-patches/*.patch` + `~/.hermes/scripts/apply_*.sh` + 통합 `hermes_update_preserve_patches.sh`에 등록해 `hermes update` 후 자동 재적용/검증되게 한다.
+- 웹 UI는 단순 기능 노출이 아니라 **SaaS-grade command center**로 설계한다. `/model`, 승인, 상태, 중단, 선택지는 모두 세련된 sheet/panel/card/chip으로 제공하고, 키보드·검색·설명·위험도·모바일·다크모드까지 일관된 고급 UX를 목표로 한다.
+- slash command는 계속 지원하되 **초보 사용자에게는 버튼/퀵액션/상태바/설정 sheet로 같은 기능을 노출**한다. 즉 `/model`을 몰라도 “모델 변경” 버튼으로 열 수 있고, `/status`를 몰라도 상태 pill 클릭으로 확인할 수 있어야 한다.
 
 ---
 
@@ -198,6 +202,107 @@ Nest API:
 
 **중요:** approval/stop은 보안·권한 경계다. runId만 알면 아무나 승인하지 못하게, Nest API에서 반드시 현재 사용자와 thread ownership을 확인한다.
 
+### 3.4 Hermes native source 확장 허용 범위
+
+이번 설계에서는 Hermes native source 수정이 승인되었다. 다만 적용 순서는 다음 원칙을 따른다.
+
+1. **제품 레이어 우선:** consulting-web의 frontend/backend proxy에서 해결 가능한 것은 native patch로 보내지 않는다.
+2. **최소 core patch:** API Server가 실제로 이벤트/엔드포인트를 누락해서 제품 레이어가 불가능할 때만 Hermes core를 수정한다.
+3. **관측 가능한 계약부터:** core 수정은 “웹이 더 예뻐 보이게”가 아니라, 명확한 API 계약을 추가/보강하는 방향이어야 한다.
+4. **테스트 동반:** Hermes core patch는 regression test 또는 endpoint contract test가 같이 있어야 한다. 순수 cosmetic TUI patch만 예외다.
+5. **업데이트 내구성:** 모든 native patch는 local patch 보존 체계에 등록한다. `~/.hermes/hermes-agent`에 직접 수정만 남기면 update 때 사라진다.
+
+Native patch 후보:
+
+| 후보 | 필요성 | 판단 |
+|---|---|---|
+| `/v1/runs` `tool.completed.result` 선택적 노출 | 근거/출처 라이브러리의 실제 tool 결과 캡처가 필요할 때 | P1. privacy/redaction/size cap 동반 필수 |
+| `/v1/slash/commands` read-only catalog | 웹 command palette가 Hermes registry와 drift 없이 동기화되어야 할 때 | P2. read-only라 비교적 안전 |
+| `/v1/slash/execute` 제한 실행 | `/model`, `/reasoning` 등 config/run-control을 웹에서 native 실행해야 할 때 | P3. 권한·admin scope가 크므로 보류 후 별도 설계 |
+| structured `interaction.request` / `interaction.respond` | 진짜 blocking clarify/resume이 필요할 때 | P3. API/session state 설계가 커서 제품 검증 후 |
+| API Server model route metadata 보강 | alias 설명, 비용등급, 권장 태그를 UI에 보여줄 때 | P1/P2. schema 작고 UX 효과 큼 |
+
+Native patch 금지/보류:
+
+- consulting-web 사용자 액션이 Hermes global config를 직접 바꾸는 패치.
+- `/yolo`, `/update`, `/restart`, `/tools` 같은 host admin 기능을 일반 웹 사용자에게 열기 위한 패치.
+- 제품 UX 편의를 위해 credential/provider secret을 API에 노출하는 패치.
+- 테스트 없이 `~/.hermes/hermes-agent`만 직접 수정하고 끝내는 패치.
+
+### 3.5 local patch 보존 전략
+
+Hermes core 수정이 발생하면 다음 파일 세트를 반드시 만든다.
+
+```text
+~/.hermes/local-patches/hermes-api-runtime-interactions.patch
+~/.hermes/scripts/apply_hermes_api_runtime_interactions_patch.sh
+~/.hermes/scripts/hermes_update_preserve_patches.sh
+```
+
+기존 local patch들과 함께 적용되도록 **통합 wrapper**를 사용한다. wrapper는 patch별 스크립트를 배열로 관리한다.
+
+```bash
+PATCHES=(
+  "~/.hermes/local-patches/langfuse-shutdown-context.patch::~/.hermes/scripts/apply_langfuse_shutdown_context_patch.sh"
+  "~/.hermes/local-patches/anthropic-tool-result-order.patch::~/.hermes/scripts/apply_anthropic_tool_result_order_patch.sh"
+  "~/.hermes/local-patches/hermes-api-runtime-interactions.patch::~/.hermes/scripts/apply_hermes_api_runtime_interactions_patch.sh"
+)
+```
+
+필수 동작:
+
+1. update 전 현재 적용된 patch는 `git apply --reverse --check` 후 임시 제거.
+2. `hermes update` 실행.
+3. 모든 patch apply script를 순서대로 재실행.
+4. 실패 시 trap으로 제거했던 patch를 다시 복구.
+5. `HERMES_UPDATE_BIN=echo` dry-run으로 실제 update 없이 제거→재적용 round-trip 검증.
+
+개별 apply script 규칙:
+
+- repo 경로 기본값: `~/.hermes/hermes-agent`, env override 허용.
+- stable marker grep으로 “이미 적용됨” 판정.
+- `git apply --check` 후 `git apply`.
+- reverse-check로 “이미 upstream 반영됨”도 성공 처리.
+- regression test 파일이 있으면 narrow test 실행.
+- 충돌 시 명확히 `manual rebase needed`로 실패.
+
+patch 생성 규칙:
+
+```bash
+cd ~/.hermes/hermes-agent
+git diff -- gateway/platforms/api_server.py tests/gateway/test_api_server_runtime_interactions.py \
+  > ~/.hermes/local-patches/hermes-api-runtime-interactions.patch
+```
+
+새 테스트 파일이 untracked이면 반드시 `git add -N tests/...` 후 diff를 뜬다. 그렇지 않으면 patch가 테스트 파일을 빠뜨린다.
+
+### 3.6 SaaS-grade UI/UX 목표
+
+웹 UI는 “터미널 명령을 웹에 옮긴 것”처럼 보이면 안 된다. 목표는 **고급 SaaS command center**다.
+
+구성 원칙:
+
+- **Command Palette:** `/` 입력 시 Linear/Slack식 command palette. 검색, 그룹, 위험도, 지원 여부, 설명, 단축키를 한눈에 표시.
+- **Beginner Quick Controls:** slash를 모르는 사용자를 위해 header/composer/status 영역에 `모델 변경`, `상태 보기`, `중단`, `자주 쓰는 선택지` 버튼을 별도로 둔다. slash는 고급 단축 경로이고, 버튼은 발견 가능한 기본 경로다.
+- **Model Picker Sheet:** `/model`은 compact sheet. 추천/현재/비용/속도/용도 badge를 보여주고, route alias의 기술명은 detail에 숨긴다.
+- **Approval Card:** 위험 명령은 redacted command preview + 영향 설명 + 버튼 3개(`이번만`, `세션`, `거부`) 중심. `항상 허용`은 2차 confirm 또는 고급 설정에 둔다.
+- **Run Status Popover:** pill은 짧게, 클릭하면 상세. raw run id는 기본 노출 금지, `기술 정보` 안에서 copy 가능.
+- **Choice Chips/Form:** `::choices`는 버튼 chip, multi-select는 tokenized chip, form은 mini-card. 모두 키보드 접근 가능해야 한다.
+- **Motion:** 120~180ms micro-interaction, `prefers-reduced-motion` 준수. 큰 blur/backdrop-filter 금지.
+- **Dark mode:** hardcoded `#fff`, `rgba(255,255,255,...)`를 token으로 치환. overlay는 blur 대신 plain dim.
+- **Hit target:** 모든 row/card/button은 실제 클릭 영역과 시각 영역이 일치해야 한다. `elementFromPoint`/브라우저 클릭 QA로 검증.
+
+추천 visual language:
+
+| 영역 | UI 방향 |
+|---|---|
+| command palette | Slack/Linear식 리스트, 좌측 icon, 중앙 설명, 우측 shortcut/status badge |
+| beginner quick controls | header/composer에 작고 명확한 버튼. `모델 변경`, `상태`, `중단`, `추천 액션`처럼 명령어 지식 없이 클릭 가능 |
+| model picker | shadcn/Radix Select + segmented recommendation cards |
+| approval | low-saturation amber/red accent, command는 monospace card, destructive color 남발 금지 |
+| status | 작은 pill + popover detail, 정보 밀도는 높되 기본 화면은 조용하게 |
+| unsupported | disabled row + “웹 미지원/관리자 전용” one-line reason, agent에게 보내지 않음 |
+
 ---
 
 ## 4. `/model` 설계 상세
@@ -361,7 +466,65 @@ submit: 조건 적용
 - `/usage` last run usage panel.
 - `RunStatusBar`에 현재 selected model alias와 actual model 차이를 표시.
 
-### Phase 5 — weak choice extensions
+### Phase 5 — SaaS-grade UI/UX 고도화
+
+- slash palette를 command center로 승격:
+  - command grouping: `실행`, `모델`, `상태`, `선택`, `관리자 전용`.
+  - 각 command에 icon, 설명, risk badge, availability badge.
+  - unsupported command는 disabled row + 이유 표시.
+- 초보 사용자용 quick controls 추가:
+  - header/status pill의 `모델 변경` 버튼 → 같은 `ModelPickerSheet` 열기.
+  - run 중 composer 옆 `중단` 버튼 → 같은 stop action 호출.
+  - `상태` pill 클릭 → `/status`와 같은 runtime detail panel.
+  - 자주 쓰는 선택/응답 포맷은 chip/button으로 노출하고 slash는 고급 단축키로 유지.
+- model picker 고급화:
+  - 현재 선택, 추천 route, 속도/품질/비용 성격 badge.
+  - route alias 기술명은 detail/tooltip에 숨기고 사용자 문구는 쉬운 이름 사용.
+- approval card 고급화:
+  - command preview는 redacted + 줄바꿈 + overflow-safe.
+  - `이번만 허용`, `이 세션 허용`, `거부`를 기본 3버튼으로 구성.
+  - `항상 허용`은 기본 숨김 또는 2단 confirm.
+- status/help panel 고급화:
+  - raw run id는 `기술 정보` disclosure 안에 넣고 copy button 제공.
+  - unavailable metric은 `n/a`로 표시하고 가짜 context/quota 수치 금지.
+- 브라우저 QA는 실제 click/hit-test, keyboard navigation, mobile width, dark mode까지 포함.
+
+### Phase 6 — Hermes native patch 필요성 판정
+
+제품 레이어 구현 후에도 아래가 막히면 Hermes core patch로 승격한다.
+
+- `/v1/runs`가 필요한 event payload를 누락한다.
+- model route metadata가 부족해 UI가 alias만 보여줄 수밖에 없다.
+- 진짜 blocking interaction/resume이 제품 요구사항으로 확정된다.
+- read-only slash catalog가 없어 command registry drift가 커진다.
+
+각 native patch는 별도 mini-design을 작성한다.
+
+| patch | core file 후보 | test 후보 |
+|---|---|---|
+| run event payload 보강 | `gateway/platforms/api_server.py` | `tests/gateway/test_api_server_runs_events.py` |
+| slash catalog endpoint | `gateway/platforms/api_server.py`, `hermes_cli/commands.py` | `tests/gateway/test_api_server_slash_catalog.py` |
+| interaction request/respond | `gateway/run.py`, `gateway/platforms/api_server.py` | 별도 state-machine test |
+| model route metadata | config/model route resolver 주변 | route serialization contract test |
+
+### Phase 7 — local patch persistence
+
+- `~/.hermes/local-patches/hermes-api-runtime-interactions.patch` 생성.
+- `~/.hermes/scripts/apply_hermes_api_runtime_interactions_patch.sh` 생성.
+- 기존 통합 wrapper `~/.hermes/scripts/hermes_update_preserve_patches.sh`의 `PATCHES` 배열에 등록.
+- dry-run:
+
+```bash
+HERMES_UPDATE_BIN=echo ~/.hermes/scripts/hermes_update_preserve_patches.sh
+```
+
+- 검증 기준:
+  - patch reverse remove → fake update → reapply 성공.
+  - regression test 통과.
+  - `git diff --check` 또는 문법 검사 통과.
+  - `grep '^diff --git'`로 patch에 code+test 파일 모두 포함 확인.
+
+### Phase 8 — weak choice extensions
 
 - `parseChoiceBlock` 확장 또는 새 parser(`parseInteractionBlocks`) 추가.
 - multi-select/form/approve chip UI.
@@ -384,6 +547,16 @@ pnpm -C apps/web build
 pnpm -C apps/api test
 ```
 
+Hermes native patch gate가 추가되는 경우:
+
+```bash
+cd ~/.hermes/hermes-agent
+pytest tests/gateway/test_api_server_runtime_interactions.py -q
+bash -n ~/.hermes/scripts/apply_hermes_api_runtime_interactions_patch.sh
+~/.hermes/scripts/apply_hermes_api_runtime_interactions_patch.sh
+HERMES_UPDATE_BIN=echo ~/.hermes/scripts/hermes_update_preserve_patches.sh
+```
+
 브라우저 QA:
 
 1. composer에 `/` 입력 → command list 표시.
@@ -394,6 +567,10 @@ pnpm -C apps/api test
 6. 위험 command prompt → approval card 표시 → `이번만 허용/거부` 버튼 동작.
 7. 미지원 command(`/tools`, `/update` 등)는 즉시 “웹 미지원/관리자 전용” 안내.
 8. 모바일 폭에서도 sheet/popup이 composer/sidebar에 가려지지 않음(portal/fixed positioning 확인).
+9. `/model` sheet에서 keyboard navigation, Esc close, focus return이 정상 동작.
+10. dark mode에서 approval/card/sheet에 흰색 artifact 또는 blur smear가 없음.
+11. command palette의 visible row와 실제 click target이 일치.
+12. slash를 모르는 사용자가 `모델 변경` 버튼, 상태 pill, `중단` 버튼만으로 같은 기능을 수행할 수 있음.
 
 Docker/prod 주의:
 
@@ -412,6 +589,9 @@ Docker/prod 주의:
 | active run ownership in-memory | 서버 재시작 시 live approval/stop은 유실 가능. live run 제어라 허용 가능. 장기적으로 DB active_runs 필요 |
 | slash 전체 노출 욕심 | 실행 불가 command가 UX를 망친다. 웹 지원 subset만 노출 |
 | TUI/Discord와 100% 동일 UX 요구 | API 표면이 달라 불가능. 동일한 “원칙”(intercept + component + structured event)을 웹 방식으로 구현 |
+| Hermes native source 수정 | 이번 범위에서 허용. 단, 제품 레이어가 불가능한 경우만 최소 patch + test + local patch wrapper 등록 |
+| local patch update 충돌 | `hermes_update_preserve_patches.sh`에 기존 patch들과 함께 등록하고 dry-run으로 remove→update→reapply 검증 |
+| UI가 기능만 있고 조잡해질 위험 | Phase 5를 별도 UI/UX gate로 분리. sheet/card/palette/panel의 visual QA를 구현 완료 조건에 포함 |
 
 ---
 
@@ -423,6 +603,9 @@ Docker/prod 주의:
 - `/yolo`, `/update`, `/restart`, `/tools` 같은 운영 command를 일반 command palette에 노출하지 말 것.
 - approval을 run ownership 확인 없이 runId만으로 처리하지 말 것.
 - `model` field에 arbitrary full model id를 넣으면 동작한다고 가정하지 말 것. 현재는 `model_routes` alias 중심이다.
+- Hermes core를 수정하고 patch 파일/적용 스크립트/통합 update wrapper 등록 없이 끝내지 말 것.
+- 기존 local patch wrapper를 복제해서 patch마다 wrapper를 늘리지 말 것. 반드시 통합 `PATCHES` 배열에 편입한다.
+- UI를 단순 form/select/button 나열로 끝내지 말 것. 선택 흐름은 사용자가 이해하기 쉬운 sheet/card/palette 중심으로 설계한다.
 
 ---
 
@@ -432,7 +615,10 @@ Docker/prod 주의:
 2. **P0:** `ChatStreamRequest.model` → Hermes `/v1/runs model` 전달.
 3. **P0:** `approval.request` event/schema/UI/proxy 추가.
 4. **P0:** cancel이 upstream `/stop`까지 호출하게 수정.
-5. **P1:** `/status`, `/usage`, `/commands` local runtime panels.
-6. **P1:** 미지원 command 안내 UX.
-7. **P2:** `::choices` 확장(`multi`, `approve`, `form`).
-8. **P3:** upstream Hermes API에 `/v1/slash/commands`/`execute`/native interaction resume 제안 — 별도 본체 변경 승인 필요.
+5. **P0:** command palette/model picker/approval card/초보자 quick controls를 SaaS-grade UI로 고도화하고 browser hit-test까지 통과.
+6. **P1:** `/status`, `/usage`, `/commands` local runtime panels.
+7. **P1:** 미지원 command 안내 UX.
+8. **P1:** 제품 레이어로 막히는 지점만 Hermes native patch 후보로 판정.
+9. **P1:** native patch가 생기면 `~/.hermes/local-patches` + apply script + 통합 update wrapper에 편입.
+10. **P2:** `::choices` 확장(`multi`, `approve`, `form`).
+11. **P3:** upstream Hermes API에 `/v1/slash/commands`/`execute`/native interaction resume 제안 — local patch로 검증 후 upstream PR/제안.

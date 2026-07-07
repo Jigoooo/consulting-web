@@ -29,7 +29,17 @@ import {
   type CreateThreadResponse,
   type ChatStreamRequest,
   type ChatStreamEvent,
+  ChatRuntimeModelsResponseSchema,
+  ChatRuntimeCapabilitiesResponseSchema,
+  ChatRunStatusResponseSchema,
+  ChatRunActionResponseSchema,
+  type ChatRuntimeModelsResponse,
+  type ChatRuntimeCapabilitiesResponse,
+  type ChatRunStatusResponse,
+  type ChatApprovalResponseRequest,
+  type ChatRunActionResponse,
   ListWorkspacesResponseSchema,
+  ListArchivedScopesResponseSchema,
   WorkspaceTreeResponseSchema,
   ListThreadsResponseSchema,
   ThreadDetailResponseSchema,
@@ -39,6 +49,8 @@ import {
   ListMembersResponseSchema,
   OkResponseSchema,
   type ListWorkspacesResponse,
+  type ArchivedScopeKind,
+  type ListArchivedScopesResponse,
   type WorkspaceTreeResponse,
   type ListThreadsResponse,
   type ThreadDetailResponse,
@@ -190,6 +202,12 @@ export class ConsultingApiClient {
     );
   }
 
+  listArchivedScopes(workspaceId: string): Promise<ListArchivedScopesResponse> {
+    return this.http.request(`/spaces/workspaces/${workspaceId}/archive`, { method: 'GET' }, (d) =>
+      ListArchivedScopesResponseSchema.parse(d),
+    );
+  }
+
   // --- spaces (mutate, N-4) ---
   renameNode(kind: 'projects' | 'channels' | 'topics', id: string, name: string): Promise<OkResponse> {
     return this.http.request(`/spaces/${kind}/${id}`, { method: 'PATCH', body: { name } }, (d) =>
@@ -203,8 +221,12 @@ export class ConsultingApiClient {
     );
   }
 
-  deleteNode(kind: 'projects' | 'channels' | 'topics' | 'threads', id: string): Promise<OkResponse> {
+  archiveNode(kind: 'projects' | 'channels' | 'topics' | 'threads', id: string): Promise<OkResponse> {
     return this.http.request(`/spaces/${kind}/${id}`, { method: 'DELETE' }, (d) => OkResponseSchema.parse(d));
+  }
+
+  restoreArchived(kind: ArchivedScopeKind, id: string): Promise<OkResponse> {
+    return this.http.request(`/spaces/archive/${kind}/${id}/restore`, { method: 'POST' }, (d) => OkResponseSchema.parse(d));
   }
 
   // --- spaces ---
@@ -251,6 +273,38 @@ export class ConsultingApiClient {
       timeoutMs: false,
     });
     yield* readChatSseStream(response);
+  }
+
+  // --- Hermes runtime control (slash/model/status/approval/stop) ---
+  listRuntimeModels(): Promise<ChatRuntimeModelsResponse> {
+    return this.http.request('/chat/runtime/models', { method: 'GET' }, (d) =>
+      ChatRuntimeModelsResponseSchema.parse(d),
+    );
+  }
+
+  runtimeCapabilities(): Promise<ChatRuntimeCapabilitiesResponse> {
+    return this.http.request('/chat/runtime/capabilities', { method: 'GET' }, (d) =>
+      ChatRuntimeCapabilitiesResponseSchema.parse(d),
+    );
+  }
+
+  runStatus(runId: string, threadId: string): Promise<ChatRunStatusResponse> {
+    const params = new URLSearchParams({ threadId });
+    return this.http.request(`/chat/runtime/runs/${encodeURIComponent(runId)}?${params.toString()}`, { method: 'GET' }, (d) =>
+      ChatRunStatusResponseSchema.parse(d),
+    );
+  }
+
+  stopRun(runId: string, threadId: string): Promise<ChatRunActionResponse> {
+    return this.http.request(`/chat/runtime/runs/${encodeURIComponent(runId)}/stop`, { method: 'POST', body: { threadId } }, (d) =>
+      ChatRunActionResponseSchema.parse(d),
+    );
+  }
+
+  respondRunApproval(runId: string, body: ChatApprovalResponseRequest): Promise<ChatRunActionResponse> {
+    return this.http.request(`/chat/runtime/runs/${encodeURIComponent(runId)}/approval`, { method: 'POST', body }, (d) =>
+      ChatRunActionResponseSchema.parse(d),
+    );
   }
 
   // --- evidence (Phase 2-A) ---

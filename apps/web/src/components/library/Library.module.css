@@ -131,13 +131,17 @@
   color: var(--text-secondary);
   font-weight: 550;
 }
-.itemChannel::before {
-  content: '·';
-  margin-right: 8px;
-}
-.itemDate::before {
-  content: '·';
-  margin-right: 8px;
+.itemChannel,
+.itemDate {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 1px 7px;
+  border: 1px solid var(--border-hair);
+  border-radius: 999px;
+  background: var(--surface-panel);
+  color: var(--text-secondary);
+  font-weight: 540;
 }
 .itemFail {
   padding: 1px 7px;

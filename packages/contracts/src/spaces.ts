@@ -105,6 +105,26 @@ export const WorkspaceTreeResponseSchema = z
   .strict();
 export type WorkspaceTreeResponse = z.infer<typeof WorkspaceTreeResponseSchema>;
 
+export const ArchivedScopeKindSchema = z.enum(['project', 'channel', 'topic', 'thread']);
+export type ArchivedScopeKind = z.infer<typeof ArchivedScopeKindSchema>;
+
+export const ArchivedScopeItemSchema = z
+  .object({
+    kind: ArchivedScopeKindSchema,
+    id: UuidSchema,
+    name: z.string().min(1).max(200),
+    /** Human breadcrumb excluding the archived item itself, e.g. project → channel. */
+    parentPath: z.array(z.string().min(1).max(200)),
+    archivedAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+export type ArchivedScopeItem = z.infer<typeof ArchivedScopeItemSchema>;
+
+export const ListArchivedScopesResponseSchema = z
+  .object({ items: z.array(ArchivedScopeItemSchema) })
+  .strict();
+export type ListArchivedScopesResponse = z.infer<typeof ListArchivedScopesResponseSchema>;
+
 export const ThreadSummarySchema = z
   .object({
     id: UuidSchema,
@@ -136,6 +156,28 @@ export const ThreadDetailResponseSchema = z
 export type ThreadDetailResponse = z.infer<typeof ThreadDetailResponseSchema>;
 
 /** Persisted chat message (N-1). assistant rows carry runId; user rows carry authorUserId. */
+export const ChatMessageAttachmentSchema = z
+  .object({
+    id: UuidSchema,
+    fileName: z.string(),
+    mimeType: z.string(),
+    sizeBytes: z.number().int().nonnegative(),
+    extraction: z
+      .object({
+        status: z.enum(['processing', 'indexed', 'skipped', 'failed']),
+        extractor: z.string().nullable(),
+        textChars: z.number().int().nonnegative(),
+        qualityScore: z.number().int().min(0).max(100),
+        warnings: z.array(z.string()).max(20),
+      })
+      .strict()
+      .nullable(),
+    uploaderUserId: UuidSchema.nullable(),
+    createdAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+export type ChatMessageAttachment = z.infer<typeof ChatMessageAttachmentSchema>;
+
 export const ChatMessageSchema = z
   .object({
     id: UuidSchema,
@@ -146,6 +188,7 @@ export const ChatMessageSchema = z
     runId: z.string().nullable(),
     finishState: z.enum(['complete', 'cancelled', 'error']),
     createdAt: z.string().datetime({ offset: true }),
+    attachments: z.array(ChatMessageAttachmentSchema).optional(),
   })
   .strict();
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
@@ -208,8 +251,41 @@ export const MessageSearchHitSchema = z
   .strict();
 export type MessageSearchHit = z.infer<typeof MessageSearchHitSchema>;
 
+export const FileSearchHitSchema = z
+  .object({
+    id: UuidSchema,
+    fileName: z.string(),
+    mimeType: z.string(),
+    snippet: z.string(),
+    messageId: UuidSchema.nullable(),
+    status: z.enum(['processing', 'indexed', 'skipped', 'failed']).nullable(),
+    createdAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+export type FileSearchHit = z.infer<typeof FileSearchHitSchema>;
+
+export const EvidenceSearchHitSchema = z
+  .object({
+    id: UuidSchema,
+    sourceType: z.enum(['gbrain', 'web', 'file', 'tool', 'manual']),
+    ref: z.string(),
+    snippet: z.string(),
+    url: z.string().nullable(),
+    messageId: UuidSchema.nullable(),
+    runId: z.string().nullable(),
+    createdAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+export type EvidenceSearchHit = z.infer<typeof EvidenceSearchHitSchema>;
+
 export const SearchMessagesResponseSchema = z
-  .object({ results: z.array(MessageSearchHitSchema) })
+  .object({
+    /** Backward-compatible alias for message hits; used by header navigator. */
+    results: z.array(MessageSearchHitSchema),
+    messages: z.array(MessageSearchHitSchema),
+    files: z.array(FileSearchHitSchema),
+    evidence: z.array(EvidenceSearchHitSchema),
+  })
   .strict();
 export type SearchMessagesResponse = z.infer<typeof SearchMessagesResponseSchema>;
 

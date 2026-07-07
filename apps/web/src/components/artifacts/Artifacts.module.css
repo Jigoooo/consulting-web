@@ -1,6 +1,6 @@
 .page {
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
   height: 100%;
   overflow: hidden;
 }
@@ -11,10 +11,14 @@
   background: var(--bg-sidebar);
 }
 .listHead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 6px 12px;
+  background: var(--bg-sidebar);
   font-size: 13.5px;
   font-weight: 600;
 }
@@ -33,20 +37,6 @@
 }
 .backBtn {
   color: var(--text-secondary);
-}
-.newBtn {
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border: none;
-  border-radius: 7px;
-  padding: 5px 10px;
-  cursor: pointer;
-}
-.newBtn:hover {
-  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .muted {
   padding: 20px 8px;
@@ -83,12 +73,26 @@
   color: var(--accent);
 }
 .itemMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   color: var(--text-muted);
 }
+.dateChip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 1px 7px;
+  border: 1px solid var(--border-hair);
+  border-radius: 999px;
+  background: var(--surface-panel);
+  color: var(--text-secondary);
+  font-weight: 560;
+}
 .viewer {
   overflow-y: auto;
-  padding: 22px 28px;
+  padding: 24px clamp(24px, 4vw, 52px);
   background: var(--bg-canvas);
   display: flex;
   flex-direction: column;
@@ -153,15 +157,23 @@
 .doc {
   border: 1px solid var(--border-hair);
   border-radius: var(--radius-card);
-  padding: 20px 24px;
+  padding: clamp(20px, 3vw, 34px);
   background: var(--bg-canvas);
   box-shadow: var(--shadow-card);
+  max-width: 980px;
+  width: 100%;
 }
 .editor {
   display: flex;
   flex-direction: column;
   gap: 8px;
   margin-bottom: 16px;
+}
+.formActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 .editorTitle {
   font-size: 15px;
@@ -187,28 +199,4 @@
   font-family: var(--font-mono);
   font-size: 12.5px;
   line-height: 1.6;
-}
-.primary {
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  padding: 8px 18px;
-  border: none;
-  border-radius: 8px;
-  background: var(--accent);
-  color: #fff;
-  cursor: pointer;
-}
-.primary:disabled {
-  opacity: 0.6;
-}
-.ghost {
-  font: inherit;
-  font-size: 13px;
-  padding: 8px 14px;
-  border: 1px solid var(--border-whisper);
-  border-radius: 8px;
-  background: none;
-  color: var(--text-secondary);
-  cursor: pointer;
 }

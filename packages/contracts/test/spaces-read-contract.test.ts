@@ -5,6 +5,7 @@ import {
   ListThreadsResponseSchema,
   ListMessagesPageRequestSchema,
   ListMessagesPageResponseSchema,
+  ListArchivedScopesResponseSchema,
   SearchMessagesRequestSchema,
   SearchMessagesResponseSchema,
 } from '../src/index.js';
@@ -130,9 +131,23 @@ describe('space read contracts (Phase 1-M)', () => {
           createdAt: '2026-07-06T01:00:00.000Z',
         },
       ],
+      messages: [
+        {
+          id: uuid(8),
+          role: 'user' as const,
+          snippet: '창원 컨설팅 질문',
+          createdAt: '2026-07-06T01:00:00.000Z',
+        },
+      ],
+      files: [],
+      evidence: [],
     };
     expect(SearchMessagesResponseSchema.parse(res)).toEqual(res);
     expect(() => SearchMessagesRequestSchema.parse({ q: '', limit: 10 })).toThrow();
     expect(() => SearchMessagesRequestSchema.parse({ q: 'x', limit: 1000 })).toThrow();
+  });
+
+  it('parses an empty archive as a valid non-error response', () => {
+    expect(ListArchivedScopesResponseSchema.parse({ items: [] })).toEqual({ items: [] });
   });
 });

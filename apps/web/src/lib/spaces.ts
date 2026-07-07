@@ -4,6 +4,7 @@ import { api } from './api';
 export const spaceKeys = {
   workspaces: ['workspaces'] as const,
   tree: (workspaceId: string) => ['tree', workspaceId] as const,
+  archive: (workspaceId: string) => ['archive', workspaceId] as const,
   threads: (topicId: string) => ['threads', topicId] as const,
 };
 
@@ -19,6 +20,14 @@ export function useWorkspaceTree(workspaceId: string | undefined) {
     queryKey: spaceKeys.tree(workspaceId ?? ''),
     queryFn: () => api.workspaceTree(workspaceId!),
     enabled: Boolean(workspaceId),
+  });
+}
+
+export function useArchivedScopes(workspaceId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: spaceKeys.archive(workspaceId ?? ''),
+    queryFn: () => api.listArchivedScopes(workspaceId!),
+    enabled: Boolean(workspaceId) && enabled,
   });
 }
 
@@ -91,7 +100,7 @@ export function useCreateThread(topicId: string | undefined) {
   });
 }
 
-/** Rename/delete mutations (N-4) — invalidate the tree (or threads) on success. */
+/** Rename/archive mutations (N-4) — invalidate the tree (or threads) on success. */
 export function useRenameNode(workspaceId: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
@@ -101,12 +110,28 @@ export function useRenameNode(workspaceId: string | undefined) {
   });
 }
 
-export function useDeleteNode(workspaceId: string | undefined) {
+export function useArchiveNode(workspaceId: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: { kind: 'projects' | 'channels' | 'topics'; id: string }) =>
-      api.deleteNode(input.kind, input.id),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: spaceKeys.tree(workspaceId ?? '') }),
+      api.archiveNode(input.kind, input.id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: spaceKeys.tree(workspaceId ?? '') });
+      void qc.invalidateQueries({ queryKey: spaceKeys.archive(workspaceId ?? '') });
+    },
+  });
+}
+
+export function useRestoreArchived(workspaceId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { kind: 'project' | 'channel' | 'topic' | 'thread'; id: string }) => api.restoreArchived(input.kind, input.id),
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: spaceKeys.tree(workspaceId ?? '') }),
+        qc.invalidateQueries({ queryKey: spaceKeys.archive(workspaceId ?? '') }),
+      ]);
+    },
   });
 }
 
@@ -121,10 +146,10 @@ export function useRenameThread(topicId: string | undefined) {
   });
 }
 
-export function useDeleteThread(topicId: string | undefined) {
+export function useArchiveThread(topicId: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.deleteNode('threads', id),
+    mutationFn: (id: string) => api.archiveNode('threads', id),
     onSuccess: () => void qc.invalidateQueries({ queryKey: spaceKeys.threads(topicId ?? '') }),
   });
 }

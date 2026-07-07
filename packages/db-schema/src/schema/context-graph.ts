@@ -1,4 +1,4 @@
-import { pgTable, text, uuid, numeric, boolean, jsonb, index, unique } from 'drizzle-orm/pg-core';
+import { pgTable, text, uuid, numeric, boolean, jsonb, index, unique, timestamp } from 'drizzle-orm/pg-core';
 import { scopeType, originType, edgeType, policyType } from './enums';
 import { workspaces } from './organization';
 import { primaryId, timestamps } from './_shared';
@@ -32,6 +32,7 @@ export const scopeTags = pgTable(
     origin: originType('origin').notNull(),
     confidence: numeric('confidence'),
     locked: boolean('locked').notNull().default(false),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
     ...timestamps,
   },
   (t) => [
@@ -56,6 +57,7 @@ export const contextEdges = pgTable(
     edgeType: edgeType('edge_type').notNull(),
     origin: originType('origin').notNull(),
     confidence: numeric('confidence'),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
     ...timestamps,
   },
   (t) => [
@@ -68,6 +70,7 @@ export const contextEdges = pgTable(
     ),
     index('context_edges_workspace_idx').on(t.workspaceId),
     index('context_edges_from_idx').on(t.fromScopeType, t.fromScopeId),
+    index('context_edges_to_idx').on(t.toScopeType, t.toScopeId),
   ],
 );
 

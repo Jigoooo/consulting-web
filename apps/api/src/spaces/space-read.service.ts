@@ -2,6 +2,8 @@ import { Inject, Injectable } from '@nestjs/common';
 import { schema } from '@consulting/db-schema';
 import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import type {
+  ArchivedScopeItem,
+  ListArchivedScopesResponse,
   ListWorkspacesResponse,
   WorkspaceTreeResponse,
   ListThreadsResponse,
@@ -59,7 +61,7 @@ export class SpaceReadService {
     const projects = await this.db
       .select({ id: schema.projects.id, name: schema.projects.name, slug: schema.projects.slug })
       .from(schema.projects)
-      .where(and(eq(schema.projects.workspaceId, workspaceId), isNull(schema.projects.deletedAt)))
+      .where(and(eq(schema.projects.workspaceId, workspaceId), eq(schema.projects.status, 'active'), isNull(schema.projects.deletedAt)))
       .orderBy(asc(schema.projects.createdAt));
     if (projects.length === 0) return { workspaceId, projects: [] };
 
@@ -72,7 +74,7 @@ export class SpaceReadService {
         slug: schema.channels.slug,
       })
       .from(schema.channels)
-      .where(and(inArray(schema.channels.projectId, projectIds), isNull(schema.channels.deletedAt)))
+      .where(and(inArray(schema.channels.projectId, projectIds), eq(schema.channels.status, 'active'), isNull(schema.channels.deletedAt)))
       .orderBy(asc(schema.channels.createdAt));
 
     const channelIds = channels.map((c) => c.id);
@@ -85,7 +87,7 @@ export class SpaceReadService {
             slug: schema.topics.slug,
           })
           .from(schema.topics)
-          .where(and(inArray(schema.topics.channelId, channelIds), isNull(schema.topics.deletedAt)))
+          .where(and(inArray(schema.topics.channelId, channelIds), eq(schema.topics.status, 'active'), isNull(schema.topics.deletedAt)))
           .orderBy(asc(schema.topics.createdAt))
       : [];
 
@@ -118,10 +120,81 @@ export class SpaceReadService {
     const rows = await this.db
       .select({ id: schema.threads.id, title: schema.threads.title, createdAt: schema.threads.createdAt })
       .from(schema.threads)
-      .where(and(eq(schema.threads.topicId, topicId), isNull(schema.threads.deletedAt)))
+      .innerJoin(schema.topics, eq(schema.threads.topicId, schema.topics.id))
+      .innerJoin(schema.channels, eq(schema.topics.channelId, schema.channels.id))
+      .innerJoin(schema.projects, eq(schema.channels.projectId, schema.projects.id))
+      .where(and(
+        eq(schema.threads.topicId, topicId),
+        eq(schema.threads.status, 'active'),
+        eq(schema.topics.status, 'active'),
+        eq(schema.channels.status, 'active'),
+        eq(schema.projects.status, 'active'),
+        isNull(schema.threads.deletedAt),
+        isNull(schema.topics.deletedAt),
+        isNull(schema.channels.deletedAt),
+        isNull(schema.projects.deletedAt),
+      ))
       .orderBy(asc(schema.threads.createdAt));
     return {
       threads: rows.map((r) => ({ id: r.id, title: r.title, createdAt: r.createdAt.toISOString() })),
     };
+  }
+
+  /** Archived scopes for the workspace archive view. Deleted_soft rows stay hidden. */
+  async listArchivedScopes(workspaceId: string): Promise<ListArchivedScopesResponse> {
+    const [projects, channels, topics, threads] = await Promise.all([
+      this.db
+        .select({ id: schema.projects.id, name: schema.projects.name, updatedAt: schema.projects.updatedAt })
+        .from(schema.projects)
+        .where(and(eq(schema.projects.workspaceId, workspaceId), eq(schema.projects.status, 'archived'), isNull(schema.projects.deletedAt)))
+        .orderBy(asc(schema.projects.updatedAt)),
+      this.db
+        .select({
+          id: schema.channels.id,
+          name: schema.channels.name,
+          updatedAt: schema.channels.updatedAt,
+          projectName: schema.projects.name,
+        })
+        .from(schema.channels)
+        .innerJoin(schema.projects, eq(schema.channels.projectId, schema.projects.id))
+        .where(and(eq(schema.channels.workspaceId, workspaceId), eq(schema.channels.status, 'archived'), isNull(schema.channels.deletedAt)))
+        .orderBy(asc(schema.channels.updatedAt)),
+      this.db
+        .select({
+          id: schema.topics.id,
+          name: schema.topics.name,
+          updatedAt: schema.topics.updatedAt,
+          projectName: schema.projects.name,
+          channelName: schema.channels.name,
+        })
+        .from(schema.topics)
+        .innerJoin(schema.channels, eq(schema.topics.channelId, schema.channels.id))
+        .innerJoin(schema.projects, eq(schema.channels.projectId, schema.projects.id))
+        .where(and(eq(schema.topics.workspaceId, workspaceId), eq(schema.topics.status, 'archived'), isNull(schema.topics.deletedAt)))
+        .orderBy(asc(schema.topics.updatedAt)),
+      this.db
+        .select({
+          id: schema.threads.id,
+          name: schema.threads.title,
+          updatedAt: schema.threads.updatedAt,
+          projectName: schema.projects.name,
+          channelName: schema.channels.name,
+          topicName: schema.topics.name,
+        })
+        .from(schema.threads)
+        .innerJoin(schema.topics, eq(schema.threads.topicId, schema.topics.id))
+        .innerJoin(schema.channels, eq(schema.topics.channelId, schema.channels.id))
+        .innerJoin(schema.projects, eq(schema.channels.projectId, schema.projects.id))
+        .where(and(eq(schema.threads.workspaceId, workspaceId), eq(schema.threads.status, 'archived'), isNull(schema.threads.deletedAt)))
+        .orderBy(asc(schema.threads.updatedAt)),
+    ]);
+
+    const items: ArchivedScopeItem[] = [
+      ...projects.map((p) => ({ kind: 'project' as const, id: p.id, name: p.name, parentPath: [], archivedAt: p.updatedAt.toISOString() })),
+      ...channels.map((c) => ({ kind: 'channel' as const, id: c.id, name: c.name, parentPath: [c.projectName], archivedAt: c.updatedAt.toISOString() })),
+      ...topics.map((t) => ({ kind: 'topic' as const, id: t.id, name: t.name, parentPath: [t.projectName, t.channelName], archivedAt: t.updatedAt.toISOString() })),
+      ...threads.map((t) => ({ kind: 'thread' as const, id: t.id, name: t.name, parentPath: [t.projectName, t.channelName, t.topicName], archivedAt: t.updatedAt.toISOString() })),
+    ];
+    return { items };
   }
 }

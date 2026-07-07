@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, ForbiddenException, Get, Inject, NotFoundException, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, HttpCode, Inject, NotFoundException, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import {
   CreateProjectRequestSchema,
   CreateProjectResponseSchema,
@@ -11,12 +11,14 @@ import {
   CreateThreadRequestSchema,
   CreateThreadResponseSchema,
   ListWorkspacesResponseSchema,
+  ListArchivedScopesResponseSchema,
   WorkspaceTreeResponseSchema,
   ListThreadsResponseSchema,
   ThreadDetailResponseSchema,
   ListMembersResponseSchema,
   RenameRequestSchema,
   RenameThreadRequestSchema,
+  ArchivedScopeKindSchema,
   OkResponseSchema,
 } from '@consulting/contracts';
 import { AccessTokenGuard, requireAuthUserId, type AuthenticatedRequest } from '../auth/access-token.guard.js';
@@ -28,7 +30,7 @@ import { CreateTopicUseCase } from './create-topic.usecase.js';
 import { CreateThreadUseCase } from './create-thread.usecase.js';
 import { SpaceAccessService, type SpaceAccess } from './space-access.service.js';
 import { SpaceReadService } from './space-read.service.js';
-import { SpaceMutateService } from './space-mutate.service.js';
+import { RestoreParentNotActiveError, SpaceMutateService } from './space-mutate.service.js';
 
 @Controller('spaces')
 @UseGuards(AccessTokenGuard)
@@ -62,6 +64,13 @@ export class SpacesController {
     const userId = requireAuthUserId(req);
     this.throwIfDenied(await this.access.workspaceMember(userId, workspaceId));
     return parseResponse(ListMembersResponseSchema, await this.mutate.listMembers(workspaceId));
+  }
+
+  @Get('workspaces/:workspaceId/archive')
+  async archive(@Param('workspaceId') workspaceId: string, @Req() req: AuthenticatedRequest) {
+    const userId = requireAuthUserId(req);
+    this.throwIfDenied(await this.access.workspaceMember(userId, workspaceId));
+    return parseResponse(ListArchivedScopesResponseSchema, await this.reads.listArchivedScopes(workspaceId));
   }
 
   @Get('topics/:topicId/threads')
@@ -113,32 +122,57 @@ export class SpacesController {
     return parseResponse(OkResponseSchema, { ok: true });
   }
 
-  // --- soft delete (N-4) ---
+  // --- user-facing archive (N-4) ---
   @Delete('projects/:id')
   async deleteProject(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     await this.requireNodeMember(requireAuthUserId(req), 'project', id);
-    await this.mutate.softDeleteNode('project', id);
+    await this.mutate.archiveNode('project', id);
     return parseResponse(OkResponseSchema, { ok: true });
   }
 
   @Delete('channels/:id')
   async deleteChannel(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     await this.requireNodeMember(requireAuthUserId(req), 'channel', id);
-    await this.mutate.softDeleteNode('channel', id);
+    await this.mutate.archiveNode('channel', id);
     return parseResponse(OkResponseSchema, { ok: true });
   }
 
   @Delete('topics/:id')
   async deleteTopic(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     await this.requireNodeMember(requireAuthUserId(req), 'topic', id);
-    await this.mutate.softDeleteNode('topic', id);
+    await this.mutate.archiveNode('topic', id);
     return parseResponse(OkResponseSchema, { ok: true });
   }
 
   @Delete('threads/:id')
   async deleteThread(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     await this.requireThreadMember(requireAuthUserId(req), id);
-    await this.mutate.softDeleteThread(id);
+    await this.mutate.archiveThread(id);
+    return parseResponse(OkResponseSchema, { ok: true });
+  }
+
+  @Post('archive/:kind/:id/restore')
+  @HttpCode(200)
+  async restoreArchived(@Param('kind') kindRaw: string, @Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    const kind = ArchivedScopeKindSchema.safeParse(kindRaw);
+    if (!kind.success) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'invalid archive scope kind' });
+
+    if (kind.data === 'thread') {
+      await this.requireThreadMember(requireAuthUserId(req), id);
+    } else {
+      await this.requireNodeMember(requireAuthUserId(req), kind.data, id);
+    }
+
+    try {
+      if (kind.data === 'thread') await this.mutate.restoreThread(id);
+      else await this.mutate.restoreNode(kind.data, id);
+    } catch (error) {
+      if (error instanceof RestoreParentNotActiveError) {
+        throw new ConflictException({ code: 'PARENT_ARCHIVED', message: '상위 항목을 먼저 복원해야 합니다.' });
+      }
+      throw error;
+    }
+
     return parseResponse(OkResponseSchema, { ok: true });
   }
 

@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { schema } from '@consulting/db-schema';
-import { and, asc, desc, eq, gt, isNull, lt, or } from 'drizzle-orm';
-import type { ChatMessage, ListMessagesPageRequest, ListMessagesPageResponse, ListMessagesResponse, SearchMessagesResponse } from '@consulting/contracts';
+import { and, asc, desc, eq, gt, inArray, isNull, lt, or } from 'drizzle-orm';
+import type { ChatMessage, ChatMessageAttachment, ListMessagesPageRequest, ListMessagesPageResponse, ListMessagesResponse, SearchMessagesResponse } from '@consulting/contracts';
 import { hangulMatch, highlightRanges, isChosungQuery } from '@consulting/contracts';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 
@@ -34,15 +34,37 @@ export class ChatMessageStore {
     threadId: string;
     authorUserId: string;
     content: string;
-  }): Promise<void> {
-    await this.db.insert(schema.chatMessages).values({
+  }): Promise<string> {
+    const [row] = await this.db.insert(schema.chatMessages).values({
       workspaceId: input.workspaceId,
       threadId: input.threadId,
       role: 'user',
       authorUserId: input.authorUserId,
       content: input.content,
       finishState: 'complete',
-    });
+    }).returning({ id: schema.chatMessages.id });
+    return row!.id;
+  }
+
+  async bindAttachmentsToMessage(input: {
+    workspaceId: string;
+    threadId: string;
+    messageId: string;
+    attachmentIds: string[];
+    uploaderUserId: string;
+  }): Promise<void> {
+    if (input.attachmentIds.length === 0) return;
+    await this.db
+      .update(schema.fileAttachments)
+      .set({ messageId: input.messageId })
+      .where(and(
+        eq(schema.fileAttachments.workspaceId, input.workspaceId),
+        eq(schema.fileAttachments.threadId, input.threadId),
+        eq(schema.fileAttachments.uploaderUserId, input.uploaderUserId),
+        isNull(schema.fileAttachments.messageId),
+        isNull(schema.fileAttachments.deletedAt),
+        inArray(schema.fileAttachments.id, input.attachmentIds),
+      ));
   }
 
   async saveAssistantMessage(input: {
@@ -71,7 +93,7 @@ export class ChatMessageStore {
       .where(this.visibleThread(threadId))
       .orderBy(asc(schema.chatMessages.createdAt), asc(schema.chatMessages.id));
 
-    return { messages: rows.map((r) => this.toMessage(r)) };
+    return { messages: await this.attachmentsForMessages(rows.map((r) => this.toMessage(r))) };
   }
 
   async listMessagesPage(threadId: string, input: ListMessagesPageRequest): Promise<ListMessagesPageResponse> {
@@ -84,7 +106,7 @@ export class ChatMessageStore {
 
   async searchMessages(threadId: string, query: string, limit = 20): Promise<SearchMessagesResponse> {
     const q = query.trim();
-    if (!q) return { results: [] };
+    if (!q) return { results: [], messages: [], files: [], evidence: [] };
     // F2: hangul-aware match (초성/합성/띄어쓰기무시) done in JS over the thread's
     // messages. Pull a bounded recent slice (thread-scoped, capped) and filter.
     const rows = await this.selectBase()
@@ -92,22 +114,97 @@ export class ChatMessageStore {
       .orderBy(desc(schema.chatMessages.createdAt), desc(schema.chatMessages.id))
       .limit(2000);
     const cap = Math.min(Math.max(limit, 1), 100);
-    const results: SearchMessagesResponse['results'] = [];
+    const messages: SearchMessagesResponse['messages'] = [];
     const isCho = isChosungQuery(q);
     for (const row of rows) {
       if (!hangulMatch(row.content, q)) continue;
       const ranges = highlightRanges(row.content, q);
       const matchKind = ranges.length > 0 ? 'text' : isCho ? 'chosung' : 'jamo';
-      results.push({
+      messages.push({
         id: row.id,
         role: row.role,
         snippet: this.snippet(row.content, q, ranges[0]?.[0] ?? -1),
         createdAt: row.createdAt.toISOString(),
         matchKind,
       });
+      if (messages.length >= cap) break;
+    }
+    const [files, evidence] = await Promise.all([
+      this.searchFiles(threadId, q, cap),
+      this.searchEvidence(threadId, q, cap),
+    ]);
+    return { results: messages, messages, files, evidence };
+  }
+
+  private async searchFiles(threadId: string, q: string, cap: number): Promise<SearchMessagesResponse['files']> {
+    const rows = await this.db
+      .select({
+        id: schema.fileAttachments.id,
+        fileName: schema.fileAttachments.fileName,
+        mimeType: schema.fileAttachments.mimeType,
+        messageId: schema.fileAttachments.messageId,
+        createdAt: schema.fileAttachments.createdAt,
+        status: schema.documentExtractions.status,
+        textContent: schema.documentExtractions.textContent,
+      })
+      .from(schema.fileAttachments)
+      .leftJoin(schema.documentExtractions, eq(schema.documentExtractions.attachmentId, schema.fileAttachments.id))
+      .where(and(eq(schema.fileAttachments.threadId, threadId), isNull(schema.fileAttachments.deletedAt)))
+      .orderBy(desc(schema.fileAttachments.createdAt), desc(schema.fileAttachments.id))
+      .limit(2000);
+    const results: SearchMessagesResponse['files'] = [];
+    for (const row of rows) {
+      const haystack = `${row.fileName}\n${row.textContent ?? ''}`;
+      if (!hangulMatch(haystack, q)) continue;
+      const ranges = highlightRanges(row.textContent ?? '', q);
+      results.push({
+        id: row.id,
+        fileName: row.fileName,
+        mimeType: row.mimeType,
+        snippet: ranges.length > 0 ? this.snippet(row.textContent ?? '', q, ranges[0]?.[0] ?? -1) : row.fileName,
+        messageId: row.messageId,
+        status: row.status as 'processing' | 'indexed' | 'skipped' | 'failed' | null,
+        createdAt: row.createdAt.toISOString(),
+      });
       if (results.length >= cap) break;
     }
-    return { results };
+    return results;
+  }
+
+  private async searchEvidence(threadId: string, q: string, cap: number): Promise<SearchMessagesResponse['evidence']> {
+    const rows = await this.db
+      .select({
+        id: schema.evidenceItems.id,
+        sourceType: schema.evidenceItems.sourceType,
+        ref: schema.evidenceItems.ref,
+        excerpt: schema.evidenceItems.excerpt,
+        url: schema.evidenceItems.url,
+        messageId: schema.evidenceItems.messageId,
+        runId: schema.evidenceItems.runId,
+        createdAt: schema.evidenceItems.createdAt,
+      })
+      .from(schema.evidenceItems)
+      .where(and(eq(schema.evidenceItems.threadId, threadId), isNull(schema.evidenceItems.deletedAt)))
+      .orderBy(desc(schema.evidenceItems.createdAt), desc(schema.evidenceItems.id))
+      .limit(2000);
+    const results: SearchMessagesResponse['evidence'] = [];
+    for (const row of rows) {
+      const haystack = `${row.ref}\n${row.excerpt}`;
+      if (!hangulMatch(haystack, q)) continue;
+      const ranges = highlightRanges(row.excerpt, q);
+      results.push({
+        id: row.id,
+        sourceType: row.sourceType,
+        ref: row.ref,
+        snippet: ranges.length > 0 ? this.snippet(row.excerpt, q, ranges[0]?.[0] ?? -1) : row.excerpt.slice(0, 140),
+        url: row.url,
+        messageId: row.messageId,
+        runId: row.runId,
+        createdAt: row.createdAt.toISOString(),
+      });
+      if (results.length >= cap) break;
+    }
+    return results;
   }
 
   private async listLatest(threadId: string, limit: number): Promise<ListMessagesPageResponse> {
@@ -182,7 +279,7 @@ export class ChatMessageStore {
         .orderBy(asc(schema.chatMessages.createdAt), asc(schema.chatMessages.id))
         .limit(afterCount + 1)
       : [];
-    const page = this.page(
+    const page = await this.page(
       [...olderRows.slice(0, beforeCount).reverse(), anchor, ...newerRows.slice(0, afterCount)],
       olderRows.length > beforeCount,
       newerRows.length > afterCount,
@@ -217,8 +314,8 @@ export class ChatMessageStore {
     return and(eq(schema.chatMessages.threadId, threadId), isNull(schema.chatMessages.deletedAt));
   }
 
-  private page(rows: ReadonlyArray<DbMessageRow | MessageRow>, hasOlder: boolean, hasNewer: boolean): ListMessagesPageResponse {
-    const messages = rows.map((r) => ('createdAtDate' in r ? this.stripDate(r) : this.toMessage(r)));
+  private async page(rows: ReadonlyArray<DbMessageRow | MessageRow>, hasOlder: boolean, hasNewer: boolean): Promise<ListMessagesPageResponse> {
+    const messages = await this.attachmentsForMessages(rows.map((r) => ('createdAtDate' in r ? this.stripDate(r) : this.toMessage(r))));
     return {
       messages,
       hasOlder,
@@ -252,6 +349,56 @@ export class ChatMessageStore {
       finishState: (r.finishState as FinishState) ?? 'complete',
       createdAt: r.createdAt.toISOString(),
     };
+  }
+
+  private async attachmentsForMessages(messages: ChatMessage[]): Promise<ChatMessage[]> {
+    const messageIds = messages.map((message) => message.id);
+    if (messageIds.length === 0) return messages;
+    const rows = await this.db
+      .select({
+        id: schema.fileAttachments.id,
+        messageId: schema.fileAttachments.messageId,
+        fileName: schema.fileAttachments.fileName,
+        mimeType: schema.fileAttachments.mimeType,
+        sizeBytes: schema.fileAttachments.sizeBytes,
+        uploaderUserId: schema.fileAttachments.uploaderUserId,
+        createdAt: schema.fileAttachments.createdAt,
+        extractionStatus: schema.documentExtractions.status,
+        extractionExtractor: schema.documentExtractions.extractor,
+        extractionTextChars: schema.documentExtractions.textChars,
+        extractionQualityScore: schema.documentExtractions.qualityScore,
+        extractionWarnings: schema.documentExtractions.warnings,
+      })
+      .from(schema.fileAttachments)
+      .leftJoin(schema.documentExtractions, eq(schema.documentExtractions.attachmentId, schema.fileAttachments.id))
+      .where(and(inArray(schema.fileAttachments.messageId, messageIds), isNull(schema.fileAttachments.deletedAt)))
+      .orderBy(asc(schema.fileAttachments.createdAt), asc(schema.fileAttachments.id));
+    const byMessage = new Map<string, ChatMessageAttachment[]>();
+    for (const row of rows) {
+      if (!row.messageId) continue;
+      const attachment: ChatMessageAttachment = {
+        id: row.id,
+        fileName: row.fileName,
+        mimeType: row.mimeType,
+        sizeBytes: row.sizeBytes,
+        extraction: row.extractionStatus
+          ? {
+              status: row.extractionStatus as 'processing' | 'indexed' | 'skipped' | 'failed',
+              extractor: row.extractionExtractor,
+              textChars: row.extractionTextChars ?? 0,
+              qualityScore: row.extractionQualityScore ?? 0,
+              warnings: row.extractionWarnings ?? [],
+            }
+          : null,
+        uploaderUserId: row.uploaderUserId,
+        createdAt: row.createdAt.toISOString(),
+      };
+      byMessage.set(row.messageId, [...(byMessage.get(row.messageId) ?? []), attachment]);
+    }
+    return messages.map((message) => {
+      const attachments = byMessage.get(message.id);
+      return attachments && attachments.length > 0 ? { ...message, attachments } : message;
+    });
   }
 
   private snippet(content: string, query: string, hintIndex = -1): string {

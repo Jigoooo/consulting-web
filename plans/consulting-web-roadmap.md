@@ -1,14 +1,37 @@
 # Consulting Web Roadmap
 
-Last updated: 2026-07-05
+Last updated: 2026-07-07
 
 ## 현재 위치
 
 Phase 1 기반 앱: ██████████ 100%
 Phase 2 협업/증거/문서지능: ██████████ 100%
+GraphRAG Bridge Phase 1 기존 consulting.db recall 연결: ██████████ 100%
+GraphRAG Bridge Phase 2 web 대화 → 기존 GraphRAG 인제스트: ██████████ 100%
+GraphRAG Bridge Phase 3 lifecycle/tombstone 안전화: ██████████ 100%
+GraphRAG Bridge Phase 4 context graph 기반 구축: ██░░░░░░░░ 20%
+Advanced GraphRAG 7개 고도화: ░░░░░░░░░░ 0% (새 세션 handoff 준비 완료)
 Phase 3 Cloudflare/외부 노출: ░░░░░░░░░░ 0%
 
 ## 이번 완료 묶음
+
+- 운영 Docker 배포 완료 (2026-07-07)
+  - 배포 전 전체 게이트 재측정: `pnpm test`, `pnpm typecheck`, `pnpm build`, `pnpm lint`, compose config 모두 GREEN.
+  - 운영 백업 생성: `/tmp/cw_pre_operational_deploy_20260707_001840.dump`.
+  - `migrate/api/web` 이미지를 재빌드하고, 새 migrate 이미지로 `0012_backfill_deleted_scope_graph_tombstones.sql`까지 skip/complete 확인.
+  - 운영 컨테이너 교체 완료: `consulting-web-api-1` healthy, `consulting-web-web-1` running, `127.0.0.1:8088->80`.
+  - 운영 smoke: root/version/sw/cache header/health/signup/login/scope CRUD/chat SSE/message persistence/search contract 전부 통과.
+  - 실제 브라우저 로그인 후 AppShell 렌더링 확인, 콘솔 JS error 0건.
+  - smoke 임시 계정 cleanup 확인: `smoke_users_remaining=0`.
+  - DB ghost-reference 최종 probe: `live_edges_to_deleted=0`, `live_tags_to_deleted=0`.
+
+- Existing consulting.db GraphRAG bridge Phase 1~2 (2026-07-07)
+  - `consulting_topic_links`로 web project/scope → 기존 `consulting.db.topics.slug` 매핑 추가, 창원 project 3건 active link 적용.
+  - `ConsultingTopicResolver` + `ConsultingGraphRagBridge` + `ConsultingMemoryContextBuilder`로 기존 `dialogue_memory_cli.py recall --no-rerank` 결과를 Hermes run instructions에 주입.
+  - `apps/api/scripts/ingest_web_dialogue.py` + `ConsultingWebIngestService`로 stream 완료 user+assistant 턴을 기존 `consulting.db.dialogue_chunks`에 `source='consulting-web'`로 직접 적재.
+  - Docker runtime 보강: `/legacy/consulting` mount, `/legacy/hermes.env` env-file mount, `/app/scripts` copy, `USER node`(UID 1000)로 bind-mounted `consulting.db`/`.env` 권한 정합.
+  - 실제 E2E: `/api/chat/stream` 완료 답변이 legacy `dialogue_chunks`에 `source='consulting-web'`, `embed_dim=3072`, `dialogue_session_scopes.scope_path='E2E smoke / legacy GraphRAG bridge'`로 적재됨 확인 후 smoke row cleanup 0.
+  - 중간 발견/수정: Hermes run id는 UUID가 아니라 opaque `run_...` → error SSE `runId` schema를 string으로 수정. Project-wide session id 92자가 Hermes prompt_cache_key 64자 제한을 초과 → `cw-project:<sha256 40>` 안정 키로 수정.
 
 - UI 현대화/FSD 패스
   - 텍스트·이모지 아이콘 금지 회귀 테스트 추가 및 GREEN
@@ -62,17 +85,32 @@ Phase 3 Cloudflare/외부 노출: ░░░░░░░░░░ 0%
 - HWPX sample extraction smoke
 - `docker compose --env-file .env.docker -f docker-compose.prod.yml config --quiet`
 - `docker compose --env-file .env.docker -f docker-compose.prod.yml build api web`
+- `docker compose --env-file .env.docker -f docker-compose.prod.yml build migrate api web`
+- `docker compose --env-file .env.docker -f docker-compose.prod.yml up --force-recreate --no-deps migrate` → `0012`까지 skip/complete, exit 0
+- `docker compose --env-file .env.docker -f docker-compose.prod.yml up -d --force-recreate --no-deps api` → healthy
+- `docker compose --env-file .env.docker -f docker-compose.prod.yml up -d --force-recreate --no-deps web` → `127.0.0.1:8088->80`
+- Container no-embed ingest smoke: `/app/scripts/ingest_web_dialogue.py --no-embed` → `source='consulting-web'` row + `dialogue_session_scopes` 확인 후 cleanup 0
+- Real stream E2E: signup→project/channel/topic/thread→temporary `consulting_topic_links`→`/api/chat/stream`→legacy `dialogue_chunks` `embed_dim=3072` 확인 후 Postgres/SQLite smoke cleanup
+- 운영 smoke/API/browser QA: `root_html_200`, `version_json_20260707-0025`, `health_ready ok`, signup/login, scope CRUD, chat SSE, persisted messages, typed search contract, browser AppShell 렌더링, console error 0, smoke users cleanup 0
 
 ## 다음 우선순위
 
-1. React Compiler interaction profiling
+1. Advanced GraphRAG 7개 고도화는 새 세션에서 진행
+   - 시작 문서: `.hermes/plans/2026-07-07_next-session-advanced-graphrag-prompt.md`
+   - 선행 문서: `.hermes/plans/2026-07-07_final-audit-bugfix-and-advanced-graphrag-handoff.md`
+   - 순서: 평가셋/품질게이트 → RRF+reranker → CRAG/Self-RAG evaluator → citation post-check → RAGAS/STaRK 벤치 → RAPTOR → Microsoft GraphRAG community → ToG-2 deep mode.
+
+2. GraphRAG Bridge Phase 4 context graph 기반 구축
+   - `ScopeTagSeedService` 테스트는 GREEN. 운영 dry-run/CLI와 related_to/references/shares_memory_with 쓰기·읽기 활성화는 다음 구현 구간.
+
+3. React Compiler interaction profiling
    - 빌드 비용은 측정됨. 실제 UI interaction 기준 이득은 별도 브라우저 profiling 필요.
 
-2. 구형 HWP 런타임 패키징 결정
+4. 구형 HWP 런타임 패키징 결정
    - 현재 API rail은 있으나 로컬에는 `hwp5txt` 없음.
    - Alpine runtime에 안정 패키징할지, 변환 서비스로 분리할지 결정 필요.
 
-3. Phase 3 Cloudflare
+5. Phase 3 Cloudflare
    - 계정/도메인/tunnel token 준비 후 외부 노출 게이트 진행.
 
 ## 2026-07-06 완료 — 로그인 디테일 완성 + API 타임아웃 (Phase 1~6)

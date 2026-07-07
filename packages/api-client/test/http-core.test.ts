@@ -33,7 +33,7 @@ describe('HttpCore fetch binding', () => {
     const calls: string[] = [];
     const fakeFetch = vi.fn((url: string | URL | Request) => {
       calls.push(String(url));
-      return Promise.resolve(new Response(JSON.stringify({ results: [] }), { status: 200, headers: { 'content-type': 'application/json' } }));
+      return Promise.resolve(new Response(JSON.stringify({ results: [], messages: [], files: [], evidence: [] }), { status: 200, headers: { 'content-type': 'application/json' } }));
     });
     const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
     await client.searchMessages('00000000-0000-4000-8000-000000000009', { q: '창원 버스', limit: 7 });
@@ -74,6 +74,82 @@ describe('HttpCore fetch binding', () => {
     const client = new ConsultingApiClient({ baseUrl: '/api/', fetch: fakeFetch as unknown as typeof fetch });
     await client.login({ email: 'a@b.com', password: 'supersecret1' }).catch(() => undefined);
     expect(calls[0]).toBe('/api/auth/login');
+  });
+
+  it('calls runtime control endpoints with typed payloads', async () => {
+    const calls: Array<{ url: string; body: string | null; method: string | undefined }> = [];
+    const fakeFetch = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), body: typeof init?.body === 'string' ? init.body : null, method: init?.method });
+      if (String(url).endsWith('/chat/runtime/models')) {
+        return Promise.resolve(new Response(JSON.stringify({
+          defaultModel: 'openai-codex/gpt-5.5',
+          models: [{
+            id: 'Hermes Agent',
+            route: 'openai-codex/gpt-5.5',
+            label: 'gpt-5.5 · openai-codex',
+            provider: 'openai-codex',
+            modelName: 'gpt-5.5',
+          }],
+        }), { status: 200, headers: { 'content-type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ ok: true, runId: 'run_123', status: 'stopping' }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    });
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+
+    await client.listRuntimeModels();
+    await client.stopRun('run_123', '00000000-0000-4000-8000-000000000009');
+    await client.respondRunApproval('run_123', { threadId: '00000000-0000-4000-8000-000000000009', choice: 'once' });
+
+    expect(calls.map((c) => c.url)).toEqual([
+      '/api/chat/runtime/models',
+      '/api/chat/runtime/runs/run_123/stop',
+      '/api/chat/runtime/runs/run_123/approval',
+    ]);
+    expect(calls[1]?.method).toBe('POST');
+    expect(JSON.parse(calls[2]?.body ?? '{}')).toEqual({ threadId: '00000000-0000-4000-8000-000000000009', choice: 'once' });
+  });
+
+  it('calls archive list and restore endpoints', async () => {
+    const calls: Array<{ url: string; method: string | undefined }> = [];
+    const fakeFetch = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), method: init?.method });
+      if (String(url).endsWith('/archive')) {
+        return Promise.resolve(new Response(JSON.stringify({
+          items: [{
+            kind: 'channel',
+            id: '11111111-1111-4111-8111-111111111111',
+            name: '보관된 채널',
+            parentPath: ['프로젝트'],
+            archivedAt: '2026-07-06T16:00:00.000Z',
+          }],
+        }), { status: 200, headers: { 'content-type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    });
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+
+    const archive = await client.listArchivedScopes('00000000-0000-4000-8000-000000000001');
+    await client.restoreArchived('channel', '11111111-1111-4111-8111-111111111111');
+
+    expect(archive.items[0]?.parentPath).toEqual(['프로젝트']);
+    expect(calls).toEqual([
+      { url: '/api/spaces/workspaces/00000000-0000-4000-8000-000000000001/archive', method: 'GET' },
+      { url: '/api/spaces/archive/channel/11111111-1111-4111-8111-111111111111/restore', method: 'POST' },
+    ]);
+  });
+
+  it('preserves PARENT_ARCHIVED restore errors as typed ApiClientError codes', async () => {
+    const fakeFetch = vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      code: 'PARENT_ARCHIVED',
+      message: '상위 항목을 먼저 복원해야 합니다.',
+    }), { status: 409, headers: { 'content-type': 'application/json' } })));
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+
+    const err = await client.restoreArchived('channel', '11111111-1111-4111-8111-111111111111').catch((e) => e);
+
+    expect(err).toBeInstanceOf(ApiClientError);
+    expect((err as ApiClientError).code).toBe('PARENT_ARCHIVED');
+    expect((err as ApiClientError).status).toBe(409);
   });
 });
 

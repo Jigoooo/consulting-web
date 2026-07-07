@@ -4,6 +4,9 @@
   height: 100vh;
   overflow: hidden;
 }
+.appContextCollapsed {
+  grid-template-columns: var(--w-rail) var(--w-sidebar) minmax(560px, 1fr) 42px;
+}
 
 /* RAIL */
 .rail {
@@ -406,11 +409,42 @@
 
 /* CONTEXT */
 .context {
+  position: relative;
   background: var(--bg-sidebar);
   border-left: 1px solid var(--border-whisper);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+}
+.contextCollapsed {
+  align-items: center;
+  overflow: hidden;
+}
+.contextToggle {
+  position: sticky;
+  top: 8px;
+  z-index: 4;
+  align-self: flex-start;
+  width: 28px;
+  height: 28px;
+  margin: 8px 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-hair);
+  border-radius: 8px;
+  background: var(--surface-card);
+  color: var(--text-muted);
+  cursor: pointer;
+  box-shadow: var(--shadow-ring);
+}
+.contextToggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.contextCollapsed .contextToggle {
+  align-self: center;
+  margin: 10px 0;
 }
 /* 2-A / B4: evidence/member/search tabs — underline-indicator style */
 .ctxTabs {
@@ -594,6 +628,7 @@
 .workspaceTool {
   margin: 10px 12px 4px;
   padding: 10px;
+  width: calc(100% - 24px);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -602,8 +637,15 @@
   background: var(--surface-card);
   color: var(--text-primary);
   text-decoration: none;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
   box-shadow: var(--shadow-card);
   transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.workspaceTool:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 .workspaceTool:hover,
 .workspaceToolOn {
@@ -623,6 +665,83 @@
 .workspaceTool small {
   font-size: 11px;
   color: var(--text-muted);
+}
+
+.archiveDialog {
+  width: min(520px, calc(100vw - 32px));
+}
+.archiveList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(54vh, 520px);
+  overflow: auto;
+  padding-top: 4px;
+}
+.archiveSkeletons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.archiveItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--border-hair);
+  border-radius: 11px;
+  background: var(--surface-card);
+}
+.archiveMeta {
+  min-width: 0;
+}
+.archiveTitle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: var(--fw-strong);
+  color: var(--text-primary);
+}
+.archiveTitle span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.archiveKind {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-warm);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: var(--fw-ui);
+}
+.archivePath {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.archiveEmpty {
+  padding: 18px 12px;
+  border: 1px dashed var(--border-whisper);
+  border-radius: 11px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  background: var(--surface-panel);
+}
+.archiveError {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
 }
 
 /* Tree hierarchy: 프로젝트 카드 → 채널 블록 → 토픽 행 */
@@ -1165,6 +1284,9 @@
 /* responsive: collapse context then sidebar */
 @media (max-width: 1120px) {
   .app {
+    grid-template-columns: var(--w-rail) var(--w-sidebar) minmax(480px, 1fr);
+  }
+  .appContextCollapsed {
     grid-template-columns: var(--w-rail) var(--w-sidebar) minmax(480px, 1fr);
   }
   .context {

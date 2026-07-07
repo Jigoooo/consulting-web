@@ -127,7 +127,11 @@ export class AttachmentsController {
       })
       .from(schema.fileAttachments)
       .leftJoin(schema.documentExtractions, eq(schema.documentExtractions.attachmentId, schema.fileAttachments.id))
-      .where(and(eq(schema.fileAttachments.threadId, threadId), isNull(schema.fileAttachments.deletedAt)))
+      .where(and(
+        eq(schema.fileAttachments.threadId, threadId),
+        isNull(schema.fileAttachments.messageId),
+        isNull(schema.fileAttachments.deletedAt),
+      ))
       .orderBy(asc(schema.fileAttachments.createdAt));
     return parseResponse(ListAttachmentsResponseSchema, {
       attachments: rows.map((r) => ({
