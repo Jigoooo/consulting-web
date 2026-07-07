@@ -138,6 +138,46 @@ describe('HttpCore fetch binding', () => {
     ]);
   });
 
+  it('calls context edge endpoints with strict payloads', async () => {
+    const calls: Array<{ url: string; body: string | null; method: string | undefined }> = [];
+    const fakeFetch = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), body: typeof init?.body === 'string' ? init.body : null, method: init?.method });
+      if (init?.method === 'POST') {
+        return Promise.resolve(new Response(JSON.stringify({ edgeId: '00000000-0000-4000-8000-000000000001' }), { status: 200, headers: { 'content-type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ edges: [] }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    });
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+
+    await client.createContextEdge({
+      fromScopeType: 'topic',
+      fromScopeId: '00000000-0000-4000-8000-000000000001',
+      toScopeType: 'topic',
+      toScopeId: '00000000-0000-4000-8000-000000000002',
+      edgeType: 'related_to',
+      confidence: 0.9,
+    });
+    await client.listContextEdges({ scopeType: 'topic', scopeId: '00000000-0000-4000-8000-000000000001', limit: 5 });
+
+    expect(calls[0]).toEqual({
+      url: '/api/spaces/context-edges',
+      method: 'POST',
+      body: JSON.stringify({
+        fromScopeType: 'topic',
+        fromScopeId: '00000000-0000-4000-8000-000000000001',
+        toScopeType: 'topic',
+        toScopeId: '00000000-0000-4000-8000-000000000002',
+        edgeType: 'related_to',
+        confidence: 0.9,
+      }),
+    });
+    expect(calls[1]).toEqual({
+      url: '/api/spaces/context-edges?scopeType=topic&scopeId=00000000-0000-4000-8000-000000000001&limit=5',
+      method: 'GET',
+      body: null,
+    });
+  });
+
   it('preserves PARENT_ARCHIVED restore errors as typed ApiClientError codes', async () => {
     const fakeFetch = vi.fn(() => Promise.resolve(new Response(JSON.stringify({
       code: 'PARENT_ARCHIVED',

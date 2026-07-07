@@ -30,10 +30,15 @@ function makeController() {
     softDeleteNode: vi.fn().mockResolvedValue(undefined),
     softDeleteThread: vi.fn().mockResolvedValue(undefined),
   };
+  const contextGraph = {
+    createManualEdge: vi.fn(),
+    traverseRelatedScopes: vi.fn().mockResolvedValue([]),
+  };
   const controller = new SpacesController(
     access as any,
     reads as any,
     mutate as any,
+    contextGraph as any,
     {} as any,
     {} as any,
     {} as any,

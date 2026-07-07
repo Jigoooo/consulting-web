@@ -11,9 +11,10 @@ import {
   defaultConsultingWebIngestRunner,
 } from './consulting-web-ingest.worker.js';
 import { ConsultingTopicResolver } from './consulting-topic-resolver.service.js';
+import { SpacesModule } from '../spaces/spaces.module.js';
 
 @Module({
-  imports: [DrizzleModule],
+  imports: [DrizzleModule, SpacesModule],
   providers: [
     ConsultingTopicResolver,
     ConsultingGraphRagBridge,

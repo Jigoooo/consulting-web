@@ -8,6 +8,9 @@ import {
   CreateTopicResponseSchema,
   CreateThreadRequestSchema,
   CreateThreadResponseSchema,
+  CreateContextEdgeRequestSchema,
+  CreateContextEdgeResponseSchema,
+  ListContextEdgesResponseSchema,
 } from '../src/index.js';
 
 const uuid = '00000000-0000-4000-8000-000000000001';
@@ -41,5 +44,45 @@ describe('space creation contracts', () => {
     expect(CreateTopicResponseSchema.parse(response)).toEqual(response);
     expect(CreateThreadResponseSchema.parse(response)).toEqual(response);
     expect(() => CreateThreadResponseSchema.parse({ ...response, jwtSecret: 'secret' })).toThrow();
+  });
+});
+
+describe('context graph contracts', () => {
+  it('accepts manual context edge creation and strict traversal responses', () => {
+    const request = {
+      fromScopeType: 'topic',
+      fromScopeId: uuid,
+      toScopeType: 'topic',
+      toScopeId: '00000000-0000-4000-8000-000000000002',
+      edgeType: 'related_to',
+      confidence: 0.9,
+    };
+    expect(CreateContextEdgeRequestSchema.parse(request)).toEqual(request);
+    expect(() => CreateContextEdgeRequestSchema.parse({ ...request, edgeType: 'parent_of' })).toThrow();
+    expect(CreateContextEdgeResponseSchema.parse({ edgeId: uuid })).toEqual({ edgeId: uuid });
+
+    const response = {
+      edges: [{
+        scopeType: 'topic',
+        scopeId: uuid,
+        projectId: '00000000-0000-4000-8000-000000000003',
+        projectName: '창원 프로젝트',
+        channelId: '00000000-0000-4000-8000-000000000004',
+        channelName: '분석',
+        topicId: uuid,
+        topicName: '예산',
+        threadId: null,
+        threadTitle: null,
+        name: '예산',
+        scopePath: '창원 프로젝트 > 분석 > 예산',
+        edgeType: 'related_to',
+        origin: 'manual',
+        confidence: 0.9,
+        relation: 'cross_project',
+        weight: 0.6,
+      }],
+    };
+    expect(ListContextEdgesResponseSchema.parse(response)).toEqual(response);
+    expect(() => ListContextEdgesResponseSchema.parse({ ...response, secret: 'x' })).toThrow();
   });
 });

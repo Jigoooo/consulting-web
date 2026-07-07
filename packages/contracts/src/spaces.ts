@@ -108,6 +108,64 @@ export type WorkspaceTreeResponse = z.infer<typeof WorkspaceTreeResponseSchema>;
 export const ArchivedScopeKindSchema = z.enum(['project', 'channel', 'topic', 'thread']);
 export type ArchivedScopeKind = z.infer<typeof ArchivedScopeKindSchema>;
 
+export const ContextGraphScopeTypeSchema = z.enum(['project', 'channel', 'topic', 'thread']);
+export type ContextGraphScopeType = z.infer<typeof ContextGraphScopeTypeSchema>;
+export const CreateContextEdgeTypeSchema = z.enum(['related_to', 'references', 'shares_memory_with']);
+export const ContextGraphEdgeTypeSchema = z.enum(['related_to', 'references', 'shares_memory_with', 'derived_from', 'supersedes']);
+export const ContextGraphOriginSchema = z.enum(['manual', 'classifier', 'system', 'bot', 'import', 'inherited']);
+
+export const CreateContextEdgeRequestSchema = z
+  .object({
+    fromScopeType: ContextGraphScopeTypeSchema,
+    fromScopeId: UuidSchema,
+    toScopeType: ContextGraphScopeTypeSchema,
+    toScopeId: UuidSchema,
+    edgeType: CreateContextEdgeTypeSchema,
+    confidence: z.number().min(0).max(1).optional(),
+  })
+  .strict();
+export type CreateContextEdgeRequest = z.infer<typeof CreateContextEdgeRequestSchema>;
+
+export const CreateContextEdgeResponseSchema = z.object({ edgeId: UuidSchema }).strict();
+export type CreateContextEdgeResponse = z.infer<typeof CreateContextEdgeResponseSchema>;
+
+export const ListContextEdgesRequestSchema = z
+  .object({
+    scopeType: ContextGraphScopeTypeSchema,
+    scopeId: UuidSchema,
+    limit: z.coerce.number().int().min(1).max(50).optional(),
+  })
+  .strict();
+export type ListContextEdgesRequest = z.infer<typeof ListContextEdgesRequestSchema>;
+
+export const ContextEdgeScopeSchema = z
+  .object({
+    edgeId: UuidSchema.optional(),
+    scopeType: ContextGraphScopeTypeSchema,
+    scopeId: UuidSchema,
+    projectId: UuidSchema,
+    projectName: z.string().min(1).max(200),
+    channelId: UuidSchema.nullable(),
+    channelName: z.string().min(1).max(200).nullable(),
+    topicId: UuidSchema.nullable(),
+    topicName: z.string().min(1).max(200).nullable(),
+    threadId: UuidSchema.nullable(),
+    threadTitle: z.string().min(1).max(200).nullable(),
+    name: z.string().min(1).max(200),
+    scopePath: z.string().min(1).max(800),
+    edgeType: ContextGraphEdgeTypeSchema,
+    origin: ContextGraphOriginSchema,
+    confidence: z.number().min(0).max(1).nullable(),
+    direction: z.enum(['out', 'in']).optional(),
+    relation: z.enum(['same_project', 'cross_project']),
+    weight: z.number().min(0).max(1),
+  })
+  .strict();
+export type ContextEdgeScope = z.infer<typeof ContextEdgeScopeSchema>;
+
+export const ListContextEdgesResponseSchema = z.object({ edges: z.array(ContextEdgeScopeSchema) }).strict();
+export type ListContextEdgesResponse = z.infer<typeof ListContextEdgesResponseSchema>;
+
 export const ArchivedScopeItemSchema = z
   .object({
     kind: ArchivedScopeKindSchema,

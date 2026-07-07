@@ -1,4 +1,4 @@
-import { BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, HttpCode, Inject, NotFoundException, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, HttpCode, Inject, NotFoundException, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import {
   CreateProjectRequestSchema,
   CreateProjectResponseSchema,
@@ -18,6 +18,10 @@ import {
   ListMembersResponseSchema,
   RenameRequestSchema,
   RenameThreadRequestSchema,
+  CreateContextEdgeRequestSchema,
+  CreateContextEdgeResponseSchema,
+  ListContextEdgesRequestSchema,
+  ListContextEdgesResponseSchema,
   ArchivedScopeKindSchema,
   OkResponseSchema,
 } from '@consulting/contracts';
@@ -31,6 +35,7 @@ import { CreateThreadUseCase } from './create-thread.usecase.js';
 import { SpaceAccessService, type SpaceAccess } from './space-access.service.js';
 import { SpaceReadService } from './space-read.service.js';
 import { RestoreParentNotActiveError, SpaceMutateService } from './space-mutate.service.js';
+import { ContextGraphService, type ContextGraphRelatedScope, type ContextGraphScopeType } from './context-graph.service.js';
 
 @Controller('spaces')
 @UseGuards(AccessTokenGuard)
@@ -39,6 +44,7 @@ export class SpacesController {
     @Inject(SpaceAccessService) private readonly access: SpaceAccessService,
     @Inject(SpaceReadService) private readonly reads: SpaceReadService,
     @Inject(SpaceMutateService) private readonly mutate: SpaceMutateService,
+    @Inject(ContextGraphService) private readonly contextGraph: ContextGraphService,
     @Inject(CreateProjectUseCase) private readonly createProject: CreateProjectUseCase,
     @Inject(CreateWorkspaceUseCase) private readonly createWorkspace: CreateWorkspaceUseCase,
     @Inject(CreateChannelUseCase) private readonly createChannel: CreateChannelUseCase,
@@ -71,6 +77,25 @@ export class SpacesController {
     const userId = requireAuthUserId(req);
     this.throwIfDenied(await this.access.workspaceMember(userId, workspaceId));
     return parseResponse(ListArchivedScopesResponseSchema, await this.reads.listArchivedScopes(workspaceId));
+  }
+
+  @Post('context-edges')
+  async createContextEdge(@Body() body: unknown, @Req() req: AuthenticatedRequest) {
+    const cmd = parseBody(CreateContextEdgeRequestSchema, body);
+    const userId = requireAuthUserId(req);
+    await this.requireScopeMember(userId, cmd.fromScopeType, cmd.fromScopeId);
+    await this.requireScopeMember(userId, cmd.toScopeType, cmd.toScopeId);
+    const result = await this.contextGraph.createManualEdge(cmd);
+    if (!result.ok) return throwDomainError(result.error);
+    return parseResponse(CreateContextEdgeResponseSchema, result.value);
+  }
+
+  @Get('context-edges')
+  async contextEdges(@Query() query: unknown, @Req() req: AuthenticatedRequest) {
+    const cmd = parseBody(ListContextEdgesRequestSchema, query);
+    await this.requireScopeMember(requireAuthUserId(req), cmd.scopeType, cmd.scopeId);
+    const edges = await this.contextGraph.traverseRelatedScopes(cmd);
+    return parseResponse(ListContextEdgesResponseSchema, { edges: edges.map((edge) => this.contextEdgeResponse(edge)) });
   }
 
   @Get('topics/:topicId/threads')
@@ -174,6 +199,35 @@ export class SpacesController {
     }
 
     return parseResponse(OkResponseSchema, { ok: true });
+  }
+
+  private async requireScopeMember(userId: string, kind: ContextGraphScopeType, id: string): Promise<void> {
+    if (kind === 'thread') await this.requireThreadMember(userId, id);
+    else await this.requireNodeMember(userId, kind, id);
+  }
+
+  private contextEdgeResponse(edge: ContextGraphRelatedScope) {
+    return {
+      edgeId: edge.edgeId,
+      scopeType: edge.scopeType,
+      scopeId: edge.scopeId,
+      projectId: edge.projectId,
+      projectName: edge.projectName,
+      channelId: edge.channelId,
+      channelName: edge.channelName,
+      topicId: edge.topicId,
+      topicName: edge.topicName,
+      threadId: edge.threadId,
+      threadTitle: edge.threadTitle,
+      name: edge.name,
+      scopePath: edge.scopePath,
+      edgeType: edge.edgeType,
+      origin: edge.origin,
+      confidence: edge.confidence,
+      direction: edge.direction,
+      relation: edge.relation,
+      weight: edge.weight,
+    };
   }
 
   private async requireNodeMember(userId: string, kind: 'project' | 'channel' | 'topic', id: string): Promise<void> {

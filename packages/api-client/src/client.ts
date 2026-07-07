@@ -47,6 +47,8 @@ import {
   ListMessagesPageResponseSchema,
   SearchMessagesResponseSchema,
   ListMembersResponseSchema,
+  CreateContextEdgeResponseSchema,
+  ListContextEdgesResponseSchema,
   OkResponseSchema,
   type ListWorkspacesResponse,
   type ArchivedScopeKind,
@@ -60,6 +62,10 @@ import {
   type SearchMessagesRequest,
   type SearchMessagesResponse,
   type ListMembersResponse,
+  type CreateContextEdgeRequest,
+  type CreateContextEdgeResponse,
+  type ListContextEdgesRequest,
+  type ListContextEdgesResponse,
   type OkResponse,
   ListEvidenceResponseSchema,
   ListArtifactsResponseSchema,
@@ -205,6 +211,22 @@ export class ConsultingApiClient {
   listArchivedScopes(workspaceId: string): Promise<ListArchivedScopesResponse> {
     return this.http.request(`/spaces/workspaces/${workspaceId}/archive`, { method: 'GET' }, (d) =>
       ListArchivedScopesResponseSchema.parse(d),
+    );
+  }
+
+  createContextEdge(body: CreateContextEdgeRequest): Promise<CreateContextEdgeResponse> {
+    return this.http.request('/spaces/context-edges', { method: 'POST', body }, (d) =>
+      CreateContextEdgeResponseSchema.parse(d),
+    );
+  }
+
+  listContextEdges(query: ListContextEdgesRequest): Promise<ListContextEdgesResponse> {
+    const params = new URLSearchParams();
+    params.set('scopeType', query.scopeType);
+    params.set('scopeId', query.scopeId);
+    if (query.limit !== undefined) params.set('limit', String(query.limit));
+    return this.http.request(`/spaces/context-edges?${params.toString()}`, { method: 'GET' }, (d) =>
+      ListContextEdgesResponseSchema.parse(d),
     );
   }
 

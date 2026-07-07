@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { schema } from '@consulting/db-schema';
 import { and, eq, isNull } from 'drizzle-orm';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
+import { ContextGraphService, type ContextGraphRelatedScope } from '../spaces/context-graph.service.js';
 
 export interface ConsultingResolvedScope {
   workspaceId: string;
@@ -56,7 +57,10 @@ type LinkRow = {
 
 @Injectable()
 export class ConsultingTopicResolver {
-  constructor(@Inject(DRIZZLE) private readonly db: Db) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: Db,
+    @Inject(ContextGraphService) private readonly contextGraph: ContextGraphService,
+  ) {}
 
   async resolveThread(threadId: string): Promise<ConsultingResolvedScope | null> {
     const scope = await this.scopeForThread(threadId);
@@ -85,18 +89,21 @@ export class ConsultingTopicResolver {
       archived: scope.archived,
     }];
 
-    const related = await this.workspaceLinks(scope);
+    const related = await this.contextGraphLinks(scope);
     const seen = new Set(recallScopes.map((item) => item.topicSlug));
-    for (const link of related) {
-      if (link.projectId === scope.projectId) continue;
+    for (const relatedScope of related) {
+      const link = await this.bestLinkForGraphScope(relatedScope);
+      if (!link) continue;
       if (seen.has(link.consultingTopicSlug)) continue;
       seen.add(link.consultingTopicSlug);
       recallScopes.push({
         topicSlug: link.consultingTopicSlug,
         topicId: link.consultingTopicId,
-        label: `다른 프로젝트: ${link.projectName}`,
-        relation: 'cross_project',
-        weight: 0.6,
+        label: relatedScope.relation === 'cross_project'
+          ? `다른 프로젝트: ${relatedScope.projectName}`
+          : `관련 범위: ${relatedScope.scopePath}`,
+        relation: relatedScope.relation === 'cross_project' ? 'cross_project' : 'current',
+        weight: relatedScope.weight,
         archived: link.status === 'archived',
       });
     }
@@ -155,25 +162,49 @@ export class ConsultingTopicResolver {
     return null;
   }
 
-  private async workspaceLinks(scope: ConsultingResolvedScope): Promise<Array<LinkRow & { projectId: string; projectName: string }>> {
-    return this.db
-      .select({
-        projectId: schema.consultingTopicLinks.projectId,
-        projectName: schema.projects.name,
-        consultingTopicSlug: schema.consultingTopicLinks.consultingTopicSlug,
-        consultingTopicId: schema.consultingTopicLinks.consultingTopicId,
-        linkLevel: schema.consultingTopicLinks.linkLevel,
-        scopePath: schema.consultingTopicLinks.scopePath,
-        status: schema.consultingTopicLinks.status,
-      })
-      .from(schema.consultingTopicLinks)
-      .innerJoin(schema.projects, eq(schema.consultingTopicLinks.projectId, schema.projects.id))
-      .where(and(
-        eq(schema.consultingTopicLinks.workspaceId, scope.workspaceId),
-        eq(schema.consultingTopicLinks.status, 'active'),
-        isNull(schema.projects.deletedAt),
-      ))
-      .limit(12);
+  private async bestLinkForGraphScope(scope: ContextGraphRelatedScope): Promise<LinkRow | null> {
+    const queries = [];
+    if (scope.threadId) queries.push(and(eq(schema.consultingTopicLinks.threadId, scope.threadId), eq(schema.consultingTopicLinks.linkLevel, 'thread'), eq(schema.consultingTopicLinks.status, 'active')));
+    if (scope.topicId) queries.push(and(eq(schema.consultingTopicLinks.webTopicId, scope.topicId), eq(schema.consultingTopicLinks.linkLevel, 'topic'), eq(schema.consultingTopicLinks.status, 'active')));
+    if (scope.channelId) queries.push(and(eq(schema.consultingTopicLinks.channelId, scope.channelId), eq(schema.consultingTopicLinks.linkLevel, 'channel'), eq(schema.consultingTopicLinks.status, 'active')));
+    queries.push(and(eq(schema.consultingTopicLinks.projectId, scope.projectId), eq(schema.consultingTopicLinks.linkLevel, 'project'), eq(schema.consultingTopicLinks.status, 'active')));
+
+    for (const where of queries) {
+      const [link] = await this.db
+        .select({
+          consultingTopicSlug: schema.consultingTopicLinks.consultingTopicSlug,
+          consultingTopicId: schema.consultingTopicLinks.consultingTopicId,
+          linkLevel: schema.consultingTopicLinks.linkLevel,
+          scopePath: schema.consultingTopicLinks.scopePath,
+          status: schema.consultingTopicLinks.status,
+        })
+        .from(schema.consultingTopicLinks)
+        .where(and(eq(schema.consultingTopicLinks.workspaceId, scope.workspaceId), where))
+        .limit(1);
+      if (link) return link;
+    }
+    return null;
+  }
+
+  private async contextGraphLinks(scope: ConsultingResolvedScope): Promise<ContextGraphRelatedScope[]> {
+    const anchors = [
+      { scopeType: 'thread' as const, scopeId: scope.threadId },
+      { scopeType: 'topic' as const, scopeId: scope.topicId },
+      { scopeType: 'channel' as const, scopeId: scope.channelId },
+      { scopeType: 'project' as const, scopeId: scope.projectId },
+    ];
+    const seen = new Set<string>();
+    const out: ContextGraphRelatedScope[] = [];
+    for (const anchor of anchors) {
+      const links = await this.contextGraph.traverseRelatedScopes(anchor);
+      for (const link of links) {
+        const key = `${link.scopeType}:${link.scopeId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(link);
+      }
+    }
+    return out.sort((a, b) => b.weight - a.weight || (b.confidence ?? 0) - (a.confidence ?? 0) || a.scopePath.localeCompare(b.scopePath));
   }
 
   private normalizeLevel(level: string): ConsultingResolvedScope['linkLevel'] {
