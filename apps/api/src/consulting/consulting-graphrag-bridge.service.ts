@@ -115,6 +115,7 @@ export function buildConsultingRecallArgs(input: { topicSlug: string; query: str
     '--q', input.query,
     '--top-k', String(topK),
     '--format', 'json',
+    '--backend', 'pg',
     '--rerank',
   ];
 }

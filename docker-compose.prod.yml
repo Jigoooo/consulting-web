@@ -79,6 +79,14 @@ services:
       HERMES_ENV_FILE: /brain/hermes.env
       CONSULTING_PYTHON: python3
       CONSULTING_WEB_INGEST_SCRIPT: /app/scripts/ingest_web_dialogue.py
+      # Phase 11 PG18 controlled runtime cutover: PG is the active runtime;
+      # SQLite remains mounted only for explicit fallback/rollback diagnostics.
+      CONSULTING_BRAIN_BACKEND: pg
+      CONSULTING_BRAIN_WRITE_BACKEND: pg
+      CONSULTING_PG_DSN_DRIVER: psycopg
+      CONSULTING_PG_DSN: postgres://consulting:${PG_PASSWORD:?set in .env.docker}@pg18-rehearsal:5432/consulting
+      CONSULTING_SHADOW_LOG_DIR: /brain/consulting/backups/pg18-migration/shadow-api
+      CONSULTING_WRITE_LOG_DIR: /brain/consulting/backups/pg18-migration/write-shadow-api
       # Web Push (optional — endpoints degrade to no-op when unset)
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}

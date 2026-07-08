@@ -2,7 +2,7 @@
 """Sync Changwon Telegram topic conversations into consulting-web.
 
 Source of truth for "Changwon Telegram conversation" is the consulting dialogue
-binding table: consulting.db dialogue_topic_sessions for topic slug
+binding table: brain_raw.dialogue_topic_sessions for topic slug
 changwon-org-mgmt-diagnosis. That avoids accidentally importing unrelated
 Telegram topics while still catching older sessions whose Telegram thread_id was
 not recorded in Hermes state.db.
@@ -24,6 +24,8 @@ from pathlib import Path
 ROOT = Path(os.environ.get("CONSULTING_WEB_ROOT", "/home/jigoo/.hermes/workspace/consulting-web"))
 STATE_DB = Path(os.environ.get("HERMES_STATE_DB", "/home/jigoo/.hermes/state.db"))
 CONSULTING_DB = Path(os.environ.get("CONSULTING_DB", "/home/jigoo/.hermes/workspace/consulting/db/consulting.db"))
+BRAIN_SESSION_BACKEND = os.environ.get("CHANGWON_SYNC_BOUND_SESSION_BACKEND", "pg").strip().lower()
+BRAIN_PG_CONTAINER = os.environ.get("CONSULTING_PG18_CONTAINER", "consulting-web-pg18-rehearsal-pg18-1")
 TOPIC_SLUG = os.environ.get("CHANGWON_TOPIC_SLUG", "changwon-org-mgmt-diagnosis")
 WORKSPACE_NAME = os.environ.get("TARGET_WORKSPACE_NAME", "김지우's Workspace")
 PROJECT_NAME = os.environ.get("TARGET_PROJECT_NAME", "창원시 컨설팅")
@@ -53,7 +55,35 @@ def clean_content(role: str, content: str) -> str:
     return text
 
 
-def bound_sessions() -> list[str]:
+def brain_psql(sql: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "docker", "exec", "-i", BRAIN_PG_CONTAINER, "sh", "-lc",
+            'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -qAtX -v ON_ERROR_STOP=1',
+        ],
+        input=sql,
+        text=True,
+        capture_output=True,
+    )
+
+
+def bound_sessions_pg() -> list[str]:
+    sql = f"""
+    SELECT dts.session_id
+    FROM brain_raw.dialogue_topic_sessions dts
+    JOIN brain_raw.topics t ON t.id = dts.topic_id
+    WHERE t.slug = {sql_literal(TOPIC_SLUG)}
+    ORDER BY dts.session_id;
+    """
+    proc = brain_psql(sql)
+    if proc.returncode != 0:
+        if proc.stderr.strip():
+            print(proc.stderr.strip(), file=sys.stderr)
+        raise SystemExit(proc.returncode)
+    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+
+def bound_sessions_sqlite() -> list[str]:
     with sqlite3.connect(CONSULTING_DB) as con:
         rows = con.execute(
             """
@@ -66,6 +96,14 @@ def bound_sessions() -> list[str]:
             (TOPIC_SLUG,),
         ).fetchall()
     return [r[0] for r in rows]
+
+
+def bound_sessions() -> list[str]:
+    if BRAIN_SESSION_BACKEND == "pg":
+        return bound_sessions_pg()
+    if BRAIN_SESSION_BACKEND == "sqlite":
+        return bound_sessions_sqlite()
+    raise SystemExit("CHANGWON_SYNC_BOUND_SESSION_BACKEND must be pg|sqlite")
 
 
 def load_messages(session_ids: list[str]) -> list[SourceMessage]:

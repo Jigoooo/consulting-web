@@ -1,0 +1,37 @@
+# PG18 rehearsal sidecar only. Do not use this file for production cutover.
+# Starts an isolated pgvector PostgreSQL 18 container on localhost:55418.
+
+name: consulting-web-pg18-rehearsal
+
+services:
+  pg18:
+    image: pgvector/pgvector:pg18
+    container_name: consulting-web-pg18-rehearsal-pg18-1
+    environment:
+      POSTGRES_USER: consulting
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?set in .env.docker}
+      POSTGRES_DB: consulting
+    ports:
+      - '127.0.0.1:55418:5432'
+    volumes:
+      - pg18-rehearsal-data:/var/lib/postgresql
+    networks:
+      default:
+      consulting_web:
+        aliases:
+          - pg18-rehearsal
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U consulting -d consulting']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: 'no'
+
+volumes:
+  pg18-rehearsal-data:
+
+networks:
+  consulting_web:
+    external: true
+    name: consulting-web_default

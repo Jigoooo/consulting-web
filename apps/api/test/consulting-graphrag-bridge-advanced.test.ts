@@ -7,6 +7,8 @@ describe('ConsultingGraphRagBridge advanced recall contract', () => {
 
     expect(args).toContain('--rerank');
     expect(args).not.toContain('--no-rerank');
+    expect(args).toContain('--backend');
+    expect(args[args.indexOf('--backend') + 1]).toBe('pg');
     expect(args).toContain('--top-k');
     expect(args[args.indexOf('--top-k') + 1]).toBe('10');
     expect(CONSULTING_RECALL_TIMEOUT_MS).toBeGreaterThanOrEqual(45_000);

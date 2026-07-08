@@ -19,6 +19,8 @@ from typing import Any
 
 DEFAULT_CONSULTING_ROOT = '/brain/consulting' if Path('/brain/consulting').exists() else '/home/jigoo/.hermes/workspace/consulting'
 CONSULTING_ROOT = Path(os.environ.get('CONSULTING_BRAIN_ROOT', DEFAULT_CONSULTING_ROOT))
+os.environ.setdefault('CONSULTING_BRAIN_WRITE_BACKEND', 'pg')
+os.environ.setdefault('CONSULTING_BRAIN_BACKEND', 'pg')
 DIALOGUE_MEMORY = CONSULTING_ROOT / 'scripts' / 'dialogue_memory'
 if str(DIALOGUE_MEMORY) not in sys.path:
     sys.path.insert(0, str(DIALOGUE_MEMORY))
@@ -56,7 +58,10 @@ def _optional_str(data: dict[str, Any], key: str) -> str | None:
     return value if isinstance(value, str) and value.strip() else None
 
 
-def _write_scope(con: sqlite3.Connection, tid: int, data: dict[str, Any], session_id: str) -> None:
+def _write_scope(con: sqlite3.Connection | None, tid: int, data: dict[str, Any], session_id: str) -> None:
+    if S.resolve_write_backend() == 'pg':
+        return
+    assert con is not None
     con.executescript(SCOPES_DDL)
     con.execute(
         """
@@ -96,19 +101,20 @@ def ingest_turn(data: dict[str, Any], *, no_embed: bool = False) -> dict[str, An
     raw = f"사용자: {user_text}\n지구: {assistant_text}"
     content_hash = hashlib.sha256((topic_slug + '|consulting-web|' + session_id + '|' + raw).encode('utf-8')).hexdigest()[:24]
 
-    con = S.connect()
-    main = sqlite3.connect(S.DB)
-    main.row_factory = sqlite3.Row
+    con = S.connect_optional()
+    main = None
+    if S.resolve_write_backend() != 'pg':
+        main = sqlite3.connect(S.DB)
+        main.row_factory = sqlite3.Row
     try:
         tid = S.topic_id(con, topic_slug)
         _write_scope(con, tid, data, session_id)
         S.bind_session(con, tid, session_id)
         if S.chunk_exists(con, content_hash):
-            con.commit()
+            S.commit_optional(con)
             return {"ok": True, "topic": topic_slug, "ingested": 0, "duplicate": True, **S.stats(con, tid)}
 
-        topic_row = con.execute("SELECT title FROM topics WHERE id=?", (tid,)).fetchone()
-        topic_title = topic_row['title'] if topic_row and topic_row['title'] else topic_slug
+        topic_title = S.topic_title(con, tid, topic_slug)
         if no_embed:
             context_text = f"[{topic_title}] {scope_path}\n{raw}"
         else:
@@ -153,18 +159,29 @@ def ingest_turn(data: dict[str, Any], *, no_embed: bool = False) -> dict[str, An
                 relation='about' if target_type == 'claim' else 'mentions',
             )
         S.set_checkpoint(con, tid, 'consulting-web', ts)
-        con.commit()
+        S.commit_optional(con)
         return {"ok": True, "topic": topic_slug, "ingested": 1, "chunk_id": cid, **S.stats(con, tid)}
     finally:
-        main.close()
-        con.close()
+        if main is not None:
+            main.close()
+        if con is not None:
+            con.close()
 
 
 def backfill_missing_embeddings(topic_slug: str, *, limit: int = 100) -> dict[str, Any]:
-    """Fill vectors for consulting-web chunks that were stored FTS-only after an outage."""
-    con = S.connect()
+    """Fill vectors for legacy SQLite consulting-web chunks after an outage.
+
+    PG-only runtime writes new web turns straight to PostgreSQL. The old SQLite
+    backfill path is intentionally disabled there so this maintenance command
+    cannot keep consulting.db as a hidden write dependency.
+    """
+    con = S.connect_optional()
     try:
         tid = S.topic_id(con, topic_slug)
+        if S.resolve_write_backend() == 'pg':
+            return {"ok": True, "topic": topic_slug, "scanned": 0, "updated": 0, "failed": 0,
+                    "note": "pg-only runtime: SQLite embedding backfill is disabled", **S.stats(con, tid)}
+        assert con is not None
         rows = con.execute(
             """
             SELECT id, context_text
@@ -196,7 +213,8 @@ def backfill_missing_embeddings(topic_slug: str, *, limit: int = 100) -> dict[st
         con.commit()
         return {"ok": True, "topic": topic_slug, "scanned": len(rows), "updated": updated, "failed": failed, **S.stats(con, tid)}
     finally:
-        con.close()
+        if con is not None:
+            con.close()
 
 
 def main() -> None:

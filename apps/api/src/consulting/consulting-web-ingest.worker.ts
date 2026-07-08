@@ -79,7 +79,14 @@ export async function defaultConsultingWebIngestRunner(payload: ConsultingWebTur
 
 export function runPythonJson(command: string, args: string[], payload: unknown, timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+    const child = spawn(command, args, {
+      stdio: ['pipe', 'ignore', 'pipe'],
+      env: {
+        ...process.env,
+        CONSULTING_BRAIN_WRITE_BACKEND: process.env.CONSULTING_BRAIN_WRITE_BACKEND ?? 'pg',
+        CONSULTING_BRAIN_BACKEND: process.env.CONSULTING_BRAIN_BACKEND ?? 'pg',
+      },
+    });
     let stderr = '';
     const timer = setTimeout(() => {
       child.kill('SIGTERM');

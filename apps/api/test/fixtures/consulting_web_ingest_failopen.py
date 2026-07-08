@@ -16,6 +16,8 @@ with tempfile.TemporaryDirectory() as tmp:
     db_path = Path(tmp) / 'consulting.db'
     os.environ['CONSULTING_DB'] = str(db_path)
     os.environ['CONSULTING_LOCK_DIR'] = tmp
+    os.environ['CONSULTING_BRAIN_WRITE_BACKEND'] = 'sqlite'
+    os.environ['CONSULTING_BRAIN_BACKEND'] = 'sqlite'
 
     import ingest_web_dialogue as web  # noqa: E402
 

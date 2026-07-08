@@ -1,30 +1,57 @@
 # consulting SQLite → PostgreSQL 전환 검토
 
-> Last measured: 2026-07-08
+> Last measured: 2026-07-09
 > Scope: `/home/jigoo/.hermes/workspace/consulting/db/consulting.db`, `consulting-web` Postgres runtime.
-> 상태: 읽기전용 감사 결과. 실제 마이그레이션/컨테이너/스키마 변경은 별도 승인 필요.
+> 상태: Phase 11 runtime cutover 반영. 활성 dialogue/file GraphRAG는 PG18/pgvector sidecar, SQLite는 rollback/fallback snapshot.
 
 ## 0. 결론
 
-가능하다. 하지만 현재 `consulting.db`는 단순 GraphRAG 캐시가 아니라 **컨설팅 OS 전체 DB**에 가깝다. 따라서 “SQLite 파일을 Postgres로 한 번에 복사”가 아니라, 다음 순서가 안전하다.
+가능하며, 2026-07-09 기준 GraphRAG hot path는 PostgreSQL 18/pgvector sidecar로 전환됐다. 단, `consulting.db`는 단순 GraphRAG 캐시가 아니라 **컨설팅 OS 전체 DB**에 가깝기 때문에 즉시 `rm`은 금지하고 rollback/fallback snapshot으로 보관한다.
 
 ```text
-1단계: GraphRAG hot path를 Postgres에 read-only mirror
-2단계: SQLite/PG recall 결과를 같은 eval로 비교
-3단계: writer를 adapter/dual-write로 전환
-4단계: 안정화 후 SQLite를 archive/fallback으로 격하
+1단계: GraphRAG hot path를 Postgres에 read-only mirror             완료
+2단계: SQLite/PG recall 결과를 같은 eval로 비교                   완료
+3단계: writer를 adapter/dual-write/pg-only 경계로 전환             완료(핵심 dialogue/file)
+4단계: API/cron PG-only smoke                                      완료
+5단계: SQLite를 archive/fallback으로 격하                          진행 중(24h 관찰 후 quarantine)
+```
+
+2026-07-09 실측:
+
+```text
+PG18 brain_raw:
+  dialogue_chunks 170 / embedded 170
+  dialogue_edges  483
+  file_chunks     1,526 / embedded 1,526
+  file_edges      1,949
+
+SQLite fallback consulting.db:
+  dialogue_chunks 160 / embedded 160
+  dialogue_edges  444
+  file_chunks     1,526 / embedded 1,526
+  file_edges      1,949
+```
+
+운영 판정:
+
+```text
+- consulting-web API env: CONSULTING_BRAIN_BACKEND=pg, CONSULTING_BRAIN_WRITE_BACKEND=pg
+- web-turn ingest smoke: CONSULTING_DB=/tmp/... 상태에서 PG insert 성공 후 marker cleanup 완료
+- weekly KPI cron: 기본 pg backend, 수동 cron last_status=ok
+- consulting-dialogue-ingest / sync-changwon / public-health cron: 수동 run ok
+- SQLite 물리삭제: 금지. final backup/checksum 후 24h 관찰 → quarantine rename → smoke → 14일 뒤 삭제 순서
 ```
 
 현재 병목은 “Postgres 16이 너무 낮다”가 아니라:
 
 ```text
-- 현재 운영 Postgres 이미지에 pgvector가 없음
-- Python 코드 165개 파일이 sqlite3/FTS/embedding에 직접 의존
-- SQLite FTS5 trigram + bm25 + BLOB float32 embedding을 PG로 그대로 대체할 수 없음
-- Korean lexical search는 PostgreSQL 기본 tsvector만으로 FTS5 trigram과 동일하지 않음
+- product DB(`consulting-web-pg-1`)와 brain DB(`pg18-rehearsal`)가 분리되어 있음
+- legacy Python 코드에는 아직 sqlite3/FTS/embedding 직접 의존이 많음
+- 핵심 dialogue/file GraphRAG는 PG18로 전환됐지만, 넓은 consulting OS 파생 writer 전체가 사라진 것은 아님
+- Korean lexical search 품질은 PG ranking 회귀평가를 계속 유지해야 함
 ```
 
-Postgres 16.14 자체는 2026-07 기준 최신 minor이고 공식 지원도 2028-11까지 남아 있다. 다만 GraphRAG를 PG로 옮길 계획이면 **pgvector 포함 이미지**로 바꾸는 작업이 먼저다.
+Product DB의 Postgres 16.14 자체는 2026-07 기준 최신 minor이고 공식 지원도 2028-11까지 남아 있다. GraphRAG brain은 별도 PG18/pgvector sidecar로 운영한다.
 
 ---
 

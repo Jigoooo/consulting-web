@@ -1,12 +1,12 @@
 # consulting / consulting-web 전체 레이어 맵
 
-> Last measured: 2026-07-08
+> Last measured: 2026-07-09
 > Scope: `/home/jigoo/.hermes/workspace/consulting` shared brain + `/home/jigoo/.hermes/workspace/consulting-web` web/API/product layer.
 > 원칙: 이 문서는 기억이 아니라 코드/DB/컨테이너 실측값으로 갱신한다.
 
 ## 0. 결론
 
-`consulting`은 공유 컨설팅 두뇌/근거 생산 코어이고, `consulting-web`은 그 두뇌를 웹 제품화한 UI/API/운영 레이어다. 둘은 별도 시스템이 아니라, `consulting-web-api` 컨테이너가 `/brain/consulting`으로 `consulting` repo를 bind mount해서 같은 SQLite GraphRAG 두뇌를 직접 호출하는 구조다.
+`consulting`은 공유 컨설팅 두뇌/근거 생산 코어이고, `consulting-web`은 그 두뇌를 웹 제품화한 UI/API/운영 레이어다. 2026-07-09 기준 활성 GraphRAG hot path는 PostgreSQL 18/pgvector sidecar(`brain_raw.*`)이고, `consulting.db` SQLite는 rollback/fallback 및 quarantine 후보로 격하됐다. `consulting-web-api` 컨테이너는 `/brain/consulting`으로 `consulting` repo를 bind mount하되, recall/write backend는 `CONSULTING_BRAIN_BACKEND=pg`, `CONSULTING_BRAIN_WRITE_BACKEND=pg`로 고정한다.
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -36,14 +36,14 @@
         │ Drizzle SQL             │ Hermes API                │ Python subprocess
         ▼                         ▼                           ▼
 ┌──────────────────────┐   ┌──────────────────────────┐   ┌────────────────────────────┐
-│ Postgres 16           │   │ Hermes Gateway            │   │ consulting shared brain     │
-│ consulting-web-pg-1   │   │ 127.0.0.1:8642             │   │ /brain/consulting           │
-│                       │   │ via socat proxy :38642     │   │ SQLite + Gemini + FTS5      │
+│ Product Postgres 16   │   │ Hermes Gateway            │   │ consulting shared brain     │
+│ consulting-web-pg-1   │   │ 127.0.0.1:8642             │   │ PG18/pgvector brain_raw     │
+│ scopes/chat/outbox    │   │ via socat proxy :38642     │   │ SQLite = fallback archive   │
 └──────────────────────┘   └──────────────────────────┘   └────────────────────────────┘
         │                                                    ▲
         │ outbox event: ConsultingWebTurnCompleted           │
         └────────────────────────────────────────────────────┘
-             completed web Q/A is embedded back into same consulting.db
+             completed web Q/A is embedded into PG brain_raw.dialogue_chunks
 ```
 
 핵심 해석:
@@ -89,10 +89,11 @@ text lines:    346,880
 
 ```text
 - 컨설팅 프로젝트별 원자료 / 산출물 / QA / 보고서 / 시스템 OS
-- SQLite consulting.db
-- dialogue_memory GraphRAG
+- PostgreSQL 18/pgvector `brain_raw.*` active dialogue/file GraphRAG
+- SQLite `consulting.db` fallback/quarantine candidate
+- dialogue_memory backend adapter (`sqlite|dual|pg`)
 - Gemini embedding wrapper
-- FTS5 lexical index
+- pgvector + pg_trgm/lexical ranking, with SQLite FTS5 retained for rollback
 - claim/evidence graph edges
 - 평가/하드닝 스크립트
 ```
@@ -185,46 +186,56 @@ docker-compose.prod.yml
 중요 포인트:
 
 ```text
-- `consulting` repo는 컨테이너에 복사된 게 아니라 bind mount다.
-- 따라서 `consulting/scripts/dialogue_memory/search.py` 같은 recall 로직 변경은 API 컨테이너 재빌드 없이 즉시 반영될 수 있다.
-- 그래도 완료선언 전에는 컨테이너 내부 import/CLI 실행으로 확인한다.
+- `consulting` repo는 `/brain/consulting`으로 bind mount된다.
+- 따라서 shared brain library/CLI 변경은 대체로 API 컨테이너 재빌드 없이 반영된다.
+- 단, `apps/api/scripts/ingest_web_dialogue.py`는 API 이미지 내부 `/app/scripts`에 복사되므로 이 파일을 바꾸면 API 이미지 재빌드/재생성이 필요하다.
+- 완료선언 전에는 컨테이너 내부 env/import/CLI 실행과 web-turn ingest smoke로 확인한다.
 ```
 
 ---
 
 ## 3. 데이터 저장소 레이어
 
-### 3.1 `consulting` SQLite brain
+### 3.1 `consulting` shared brain — PG18 active, SQLite fallback
 
 DB:
 
 ```text
-/home/jigoo/.hermes/workspace/consulting/db/consulting.db
-size: 99,954,688 bytes ≈ 95.3 MiB
+active PG DSN: postgres://consulting:***@pg18-rehearsal:5432/consulting
+active schema: brain_raw
+fallback file: /home/jigoo/.hermes/workspace/consulting/db/consulting.db
+fallback size: 99,954,688 bytes ≈ 95.3 MiB
 ```
 
 현재 주요 테이블 카운트:
 
 ```text
-topics:                            2
-dialogue_chunks:                 125
-dialogue_edges:                  368
-file_chunks:                   1,298
-file_edges:                    1,931
-dialogue_topic_sessions:          16
-dialogue_topic_telegram:           1
-dialogue_telegram_thread_bindings: 0
-dialogue_session_scopes:           1
+PG18 brain_raw:
+  topics:             2
+  dialogue_chunks:  170 / embedded 170
+  dialogue_edges:   483
+  file_chunks:    1,526 / embedded 1,526
+  file_edges:     1,949
+
+SQLite fallback consulting.db:
+  topics:                            2
+  dialogue_chunks:                 160 / embedded 160
+  dialogue_edges:                  444
+  file_chunks:                   1,526 / embedded 1,526
+  file_edges:                    1,949
+  dialogue_topic_sessions:          18
+  dialogue_topic_telegram:           1
+  dialogue_telegram_thread_bindings: 6
 ```
 
-topic별:
+topic별(PG18 brain_raw active):
 
 ```text
 ┌──────────────────────────────────┬──────────┬──────────────┬───────┬────────────┬──────────────┬────────────┐
 │ topic                            │ dialogue │ dialogue_emb │ files │ files_emb  │ dlg_edges    │ file_edges │
 ├──────────────────────────────────┼──────────┼──────────────┼───────┼────────────┼──────────────┼────────────┤
 │ road-traffic-conditions-outlook  │ 0        │ 0            │ 696   │ 696        │ 0            │ 1,235      │
-│ changwon-org-mgmt-diagnosis      │ 125      │ 125          │ 602   │ 602        │ 368          │ 696        │
+│ changwon-org-mgmt-diagnosis      │ 170      │ 170          │ 830   │ 830        │ 483          │ 714        │
 └──────────────────────────────────┴──────────┴──────────────┴───────┴────────────┴──────────────┴────────────┘
 ```
 
@@ -239,8 +250,9 @@ qualified_usable      57
 해석:
 
 ```text
-- 현재 두뇌는 raw 원문이 훨씬 많고, 검증완료/조건부 자료는 소수다.
-- 그래서 recall에서 raw를 완전 제거하지 않고 낮은 가중치로 살려두는 설계가 맞다.
+- PG18이 dialogue/file GraphRAG의 활성 정본이다.
+- SQLite는 최신 dialogue write를 더 이상 대표하지 않으며 rollback/fallback snapshot이다.
+- raw 원문이 많고 검증완료/조건부 자료는 소수이므로 recall에서 raw를 완전 제거하지 않고 낮은 가중치로 살려두는 설계는 유지한다.
 ```
 
 ### 3.2 `consulting-web` Postgres
