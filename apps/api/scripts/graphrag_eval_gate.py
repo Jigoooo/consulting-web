@@ -213,7 +213,15 @@ def main() -> None:
     parser.add_argument('--timeout-s', type=float, default=45.0)
     parser.add_argument('--rerank', action='store_true')
     parser.add_argument('--require-cross-encoder', action='store_true', default=True)
-    parser.add_argument('--fake-embeddings', action='store_true', default=True)
+    parser.add_argument('--fake-embeddings', action=argparse.BooleanOptionalAction, default=True,
+                        help='Use deterministic fake embeddings (default: on, for CI determinism). '
+                             'Pass --no-fake-embeddings to measure with real Gemini query embeddings.')
+    parser.add_argument('--rerank-prune', type=int, default=None,
+                        help='Override CONSULTING_RERANK_PRUNE (candidates kept before cross-encoder rerank). '
+                             'Lower = tighter precision, higher = better recall. Default keeps 4 for CI.')
+    parser.add_argument('--raw-weight', type=float, default=None,
+                        help='Override CONSULTING_RECALL_RAW_WEIGHT for noise-filter experiments. '
+                             '0.0 excludes raw/unverified file chunks; unset keeps the recall default.')
     parser.add_argument('--min-hit-rate', type=float, default=0.60)
     parser.add_argument('--max-p95-latency-s', type=float, default=20.0)
     parser.add_argument('--output', type=Path, default=Path('artifacts/graphrag-eval-baseline.json'))
@@ -228,7 +236,15 @@ def main() -> None:
 
     if args.fake_embeddings:
         os.environ['CONSULTING_EMBED_FAKE'] = '1'
-    os.environ.setdefault('CONSULTING_RERANK_PRUNE', '4')
+    else:
+        # Real-embedding measurement: ensure the fake flag is not inherited from the env.
+        os.environ.pop('CONSULTING_EMBED_FAKE', None)
+    if args.rerank_prune is not None:
+        os.environ['CONSULTING_RERANK_PRUNE'] = str(args.rerank_prune)
+    else:
+        os.environ.setdefault('CONSULTING_RERANK_PRUNE', '4')
+    if args.raw_weight is not None:
+        os.environ['CONSULTING_RECALL_RAW_WEIGHT'] = str(args.raw_weight)
 
     rows = []
     for q in questions:
@@ -273,6 +289,12 @@ def main() -> None:
         'cross_encoder_required': cross_encoder_required,
         'cross_encoder_ok': cross_encoder_ok,
         'fake_embeddings': bool(args.fake_embeddings),
+        'evaluation_config': {
+            'top_k': args.top_k,
+            'rerank': bool(args.rerank),
+            'rerank_prune': int(os.environ.get('CONSULTING_RERANK_PRUNE', '16')),
+            'raw_weight': (args.raw_weight if args.raw_weight is not None else os.environ.get('CONSULTING_RECALL_RAW_WEIGHT', 'default')),
+        },
         'gates': {
             'min_hit_rate': args.min_hit_rate,
             'max_p95_latency_s': args.max_p95_latency_s,
