@@ -9,6 +9,7 @@ import 'katex/dist/katex.min.css';
 import { parseChoiceBlock } from './parseChoices';
 import { mdSanitizeSchema } from './sanitizeSchema';
 import { CodeBlock } from './CodeBlock';
+import { TableBlock } from './TableBlock';
 import s from './Markdown.module.css';
 
 function MarkdownBody({ text }: { text: string }) {
@@ -27,11 +28,8 @@ function MarkdownBody({ text }: { text: string }) {
           </a>
         ),
         // 넓은 표는 가로 스크롤 래퍼로 감싸 레이아웃이 터지지 않게(ChatGPT식).
-        table: ({ children }) => (
-          <div className={s.tableWrap}>
-            <table>{children}</table>
-          </div>
-        ),
+        // 우상단 복사 버튼으로 엑셀·구글시트에 셀 단위 붙여넣기(TSV+HTML 클립보드).
+        table: ({ children }) => <TableBlock>{children}</TableBlock>,
         // 코드블록(축1-B): 헤더바 + Shiki 하이라이트 + 복사/다운로드.
         // react-markdown은 fenced code를 <pre><code>로 낸다 → pre를 CodeBlock으로.
         pre: ({ children }) => {

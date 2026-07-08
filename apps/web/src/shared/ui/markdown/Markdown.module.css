@@ -27,6 +27,53 @@
 .tableWrap > table {
   margin: 0;
 }
+/* 표 블록: 우상단 복사 버튼을 얹기 위한 relative 컨테이너. 버튼은 스크롤 래퍼
+   바깥에 두어 넓은 표를 가로 스크롤해도 항상 우상단에 고정된다. */
+.tableBlock {
+  position: relative;
+}
+.tableBlock > .tableWrap {
+  margin: 0.85em 0;
+}
+.tableCopyBtn {
+  position: absolute;
+  top: calc(0.85em + 6px);
+  right: 6px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--text-secondary);
+  background: var(--surface-card);
+  border: 1px solid var(--border-whisper);
+  border-radius: 7px;
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+/* hover/focus 시 노출 — 표를 가리지 않게 평소엔 숨김(ChatGPT식). 터치기기는
+   hover가 없으므로 항상 노출. */
+.tableBlock:hover .tableCopyBtn,
+.tableCopyBtn:focus-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.tableCopyBtn:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+@media (hover: none) {
+  .tableCopyBtn {
+    opacity: 1;
+    transform: none;
+  }
+}
 .md > *:first-child {
   margin-top: 0;
 }
