@@ -147,6 +147,14 @@ kbd,
 :focus:not(:focus-visible) {
   outline: none;
 }
+button:focus,
+button:focus-visible,
+[role='button']:focus,
+[role='button']:focus-visible,
+.cwTap:focus,
+.cwTap:focus-visible {
+  outline: none;
+}
 
 /* Respect reduced-motion: GSAP timelines also check this at runtime. */
 @media (prefers-reduced-motion: reduce) {

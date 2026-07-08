@@ -1,15 +1,17 @@
 .app {
   --context-open-width: var(--w-context);
   --context-closed-width: 42px;
+  --context-current-width: var(--context-open-width);
   --chat-lane-offset: 0px;
   display: grid;
   grid-template-columns: var(--w-rail) var(--w-sidebar) minmax(560px, 1fr) var(--context-open-width);
   height: 100vh;
   overflow: hidden;
-  transition: none;
+  transition: grid-template-columns 200ms var(--ease-out);
 }
 .appContextCollapsed {
-  --chat-lane-offset: calc((var(--context-closed-width) - var(--context-open-width)) / 2);
+  --context-current-width: var(--context-closed-width);
+  --chat-lane-offset: 0px;
   grid-template-columns: var(--w-rail) var(--w-sidebar) minmax(560px, 1fr) var(--context-closed-width);
 }
 
@@ -98,8 +100,7 @@
   background: rgba(255, 255, 255, 0.07);
 }
 .wsAdd:focus-visible {
-  outline: 2px solid var(--accent-hi);
-  outline-offset: 2px;
+  outline: none;
 }
 /* 새 워크스페이스 modal 내부 폼 */
 .wsCreateForm {
@@ -154,8 +155,7 @@
   background: rgba(255, 255, 255, 0.08);
 }
 .railAction:focus-visible {
-  outline: 2px solid var(--accent-hi);
-  outline-offset: 2px;
+  outline: none;
 }
 .railActionLabel {
   font-size: 9px;
@@ -171,6 +171,7 @@
   min-width: 0;
   overflow: hidden;
   background: var(--bg-canvas);
+  transition: min-width 200ms var(--ease-out);
 }
 .inlineCreate {
   margin: 6px 8px;
@@ -1367,6 +1368,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .app,
+  .center,
   .context,
   .contextToggle,
   .contextContent,

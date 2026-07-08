@@ -21,7 +21,7 @@
 .cwButton:active:not(:disabled):not([data-disabled='true']) { transform: translateY(0) scale(0.985); }
 .cwButton:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--surface-card), 0 0 0 4px var(--accent);
+  box-shadow: none;
 }
 .cwButton:disabled,
 .cwButton[data-disabled='true'] {

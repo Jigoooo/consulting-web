@@ -406,6 +406,22 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
     });
   }
 
+  async function ensureThreadForTopic(topicId: string): Promise<string> {
+    const threads = await qc.ensureQueryData({
+      queryKey: spaceKeys.threads(topicId),
+      queryFn: () => api.listThreads(topicId),
+    });
+    const firstThreadId = threads.threads[0]?.id;
+    if (firstThreadId) return firstThreadId;
+
+    // Empty channel: create the backing default thread inline and go straight to
+    // /th/:threadId. This avoids the visible /t bridge loader for a blank chat.
+    const created = await api.createThread({ topicId, title: '대화' });
+    void qc.invalidateQueries({ queryKey: spaceKeys.threads(topicId) });
+    if (selected) void qc.invalidateQueries({ queryKey: spaceKeys.tree(selected) });
+    return created.id;
+  }
+
   async function openChannel(channel: { id: string; name: string; topics: Array<{ id: string; name: string }> }) {
     try {
       const topicId = channel.topics[0]?.id ?? (await createTopic.mutateAsync({ channelId: channel.id, name: '대화' })).id;
@@ -428,25 +444,16 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
       startNav(() => {
         void (async () => {
           try {
-            const threads = await qc.ensureQueryData({
-              queryKey: spaceKeys.threads(topicId),
-              queryFn: () => api.listThreads(topicId),
-            });
             // A newer click won the race — abandon this navigation.
             if (lastClickedTopicRef.current !== topicId) return;
-            const firstThreadId = threads.threads[0]?.id;
-            if (firstThreadId) {
-              void qc.prefetchQuery({
-                queryKey: messageWindowKeys.latest(firstThreadId),
-                queryFn: () => api.listMessagesPage(firstThreadId, { limit: 50 }),
-                staleTime: 30_000,
-              });
-              void router.navigate({ to: '/th/$threadId', params: { threadId: firstThreadId } });
-            } else {
-              // No thread yet (empty channel) — fall back to the bridge route,
-              // which creates the default thread then forwards.
-              void router.navigate({ to: '/t/$topicId', params: { topicId } });
-            }
+            const firstThreadId = await ensureThreadForTopic(topicId);
+            if (lastClickedTopicRef.current !== topicId) return;
+            void qc.prefetchQuery({
+              queryKey: messageWindowKeys.latest(firstThreadId),
+              queryFn: () => api.listMessagesPage(firstThreadId, { limit: 50 }),
+              staleTime: 30_000,
+            });
+            void router.navigate({ to: '/th/$threadId', params: { threadId: firstThreadId } });
           } catch {
             // Network/parse failure — fall back to the bridge route.
             if (lastClickedTopicRef.current === topicId) {
@@ -465,7 +472,10 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
     try {
       const channel = await createChannel.mutateAsync({ projectId, name });
       const topic = await createTopic.mutateAsync({ channelId: channel.id, name: '대화' });
-      await router.navigate({ to: '/t/$topicId', params: { topicId: topic.id } });
+      const thread = await api.createThread({ topicId: topic.id, title: '대화' });
+      void qc.invalidateQueries({ queryKey: spaceKeys.threads(topic.id) });
+      if (selected) void qc.invalidateQueries({ queryKey: spaceKeys.tree(selected) });
+      await router.navigate({ to: '/th/$threadId', params: { threadId: thread.id } });
     } catch {
       toast('error', '채널 생성에 실패했어요.');
     }

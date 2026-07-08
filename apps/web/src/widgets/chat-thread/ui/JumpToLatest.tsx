@@ -24,7 +24,7 @@ export function JumpToLatest({
   return (
     <button
       type="button"
-      className={`${s.jumpFab} ${unseen > 0 ? s.jumpFabPulse : ''} cwTap`}
+      className={`${s.jumpFab} ${label ? '' : s.jumpFabIconOnly} ${unseen > 0 ? s.jumpFabPulse : ''} cwTap`}
       onClick={onJump}
       aria-label="최신 메시지로 이동"
     >

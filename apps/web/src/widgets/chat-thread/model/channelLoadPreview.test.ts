@@ -79,6 +79,23 @@ describe('channel load preview planning', () => {
     });
   });
 
+  it('falls back to topic stats when a newly-created empty thread is not in the tree yet', () => {
+    const newlyCreatedThread = '00000000-0000-4000-8000-000000000404';
+    const preview = findThreadLoadPreview(tree, newlyCreatedThread, '00000000-0000-4000-8000-000000000301');
+
+    expect(preview).toEqual({
+      threadId: newlyCreatedThread,
+      messageCount: 0,
+      recentMessageCount: 0,
+      recentAvgChars: 0,
+      lastMessageAt: null,
+    });
+    expect(planInitialChannelLoad({ isLoading: true, cachedMessageCount: 0, preview })).toEqual({
+      kind: 'empty',
+      skeletonRows: 0,
+    });
+  });
+
   it('sizes skeleton rows by known message density and viewport budget', () => {
     const compact = skeletonRowsForPreview({ messageCount: 3, recentMessageCount: 3, recentAvgChars: 42, lastMessageAt: null }, 760);
     const long = skeletonRowsForPreview({ messageCount: 128, recentMessageCount: 50, recentAvgChars: 720, lastMessageAt: null }, 760);

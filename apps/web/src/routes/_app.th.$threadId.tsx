@@ -43,6 +43,7 @@ function ThreadPage() {
       key={threadId}
       threadId={threadId}
       title={detail.data.title}
+      topicId={detail.data.topicId}
       {...(focusMessageId ? { focusMessageId } : {})}
       breadcrumb={{
         projectName: detail.data.projectName,

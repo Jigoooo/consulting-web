@@ -159,7 +159,7 @@ function ApprovalCard({
  * evidence (E-4), and answers can be saved as artifacts (2-B) with file
  * attachments (2-D G-3).
  */
-export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { threadId: string; title: string; breadcrumb?: ThreadBreadcrumb; focusMessageId?: string }) {
+export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageId }: { threadId: string; topicId?: string | undefined; title: string; breadcrumb?: ThreadBreadcrumb; focusMessageId?: string }) {
   const { user } = useAuth();
   const toast = useToast();
   const qc = useQueryClient();
@@ -775,8 +775,10 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
 
   const userName = user?.displayName ?? '나';
   const persisted = history.messages;
-  const threadLoadPreview = findThreadLoadPreview(tree, threadId);
-  const historySkeletonReady = useDelayedFlag(history.isLoading, threadLoadPreview && threadLoadPreview.messageCount > 0 ? 0 : 300, 260);
+  const threadLoadPreview = findThreadLoadPreview(tree, threadId, topicId);
+  const initialHistoryPending = history.isLoading || (history.isFetchingLatest && persisted.length === 0);
+  const knownEmptyThread = threadLoadPreview?.messageCount === 0;
+  const historySkeletonReady = useDelayedFlag(initialHistoryPending, threadLoadPreview && threadLoadPreview.messageCount > 0 ? 0 : 300, 260);
   const initialLoadPlan = planInitialChannelLoad({
     isLoading: historySkeletonReady,
     cachedMessageCount: persisted.length,
@@ -812,6 +814,7 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
   // empty channels stay quiet, cached windows stay visible, and slow populated
   // channels get a correctly sized skeleton immediately instead of blank flicker.
   const showHistorySkeleton = initialLoadPlan.kind === 'skeleton';
+  const showEmptyPrompt = persisted.length === 0 && live.length === 0 && !showHistorySkeleton && (!initialHistoryPending || knownEmptyThread);
   const hasResults = search.results.length > 0 && search.threadId === threadId;
 
 
@@ -912,7 +915,7 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
             </div>
           ) : null}
 
-          {!history.isLoading && !showHistorySkeleton && persisted.length === 0 && live.length === 0 ? (
+          {showEmptyPrompt ? (
             <EmptyState icon="bot" title="지구에게 물어보세요" description="필요한 맥락을 짧게 남기면 바로 이어서 작업합니다." />
           ) : null}
 

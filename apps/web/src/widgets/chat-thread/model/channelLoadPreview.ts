@@ -51,12 +51,15 @@ export function planInitialChannelLoad({
   return skeletonRows > 0 ? { kind: 'skeleton', skeletonRows } : { kind: 'skeleton', skeletonRows: 3 };
 }
 
-export function findThreadLoadPreview(tree: WorkspaceTreeResponse | undefined, threadId: string): ThreadLoadPreview | null {
+export function findThreadLoadPreview(tree: WorkspaceTreeResponse | undefined, threadId: string, topicId?: string | null): ThreadLoadPreview | null {
   if (!tree) return null;
   for (const project of tree.projects) {
     for (const channel of project.channels) {
       for (const topic of channel.topics) {
-        if (topic.defaultThreadId !== threadId) continue;
+        // Prefer the exact default-thread match. Fall back to the route's topic id
+        // so newly-created empty channels (tree still has defaultThreadId:null)
+        // still inherit messageStats=0 and avoid a fake loading state.
+        if (topic.defaultThreadId !== threadId && topic.id !== topicId) continue;
         return {
           threadId,
           messageCount: topic.messageStats?.messageCount ?? 0,
