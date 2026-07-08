@@ -34,11 +34,13 @@ import { EmptyState } from '../../../shared/ui/feedback/EmptyState';
 import { useDelayedFlag } from '../../../shared/lib/useDelayedFlag';
 import { EvidencePanel } from '../../evidence-panel/ui/EvidencePanel';
 import { SearchResultsPanel } from '../../evidence-panel/ui/SearchResultsPanel';
+import { messageWindowKeys } from '../../chat-thread/model/useMessageWindow';
 import { searchStore, useSearchState } from '../../chat-thread/model/searchStore';
 import { OfflineBadge } from '../../../shared/ui/offline/OfflineBadge';
 import { workspaceModalStore, useWorkspaceModal } from '../../../lib/workspaceModalStore';
 import { ArtifactsSurface } from '../../../components/artifacts/ArtifactsSurface';
 import { LibrarySurface } from '../../../components/library/LibrarySurface';
+import { getContextPanelTabs, resolveWorkspaceModalPresentationKind } from '../model/contextPanelView';
 import s from './AppShell.module.css';
 
 /** Persistent 4-pane frame: rail / sidebar(tree) / center(Outlet) / context. */
@@ -83,25 +85,26 @@ export function AppShell({ children }: { children: ReactNode }) {
 function WorkspaceSurfaceModal() {
   const modal = useWorkspaceModal();
   const open = modal.kind !== null;
-  const title = modal.kind === 'library' ? '자료실' : modal.kind === 'members' ? '워크스페이스 멤버' : '산출물 보관함';
+  const presentationKind = resolveWorkspaceModalPresentationKind(modal);
+  const title = presentationKind === 'library' ? '자료실' : presentationKind === 'members' ? '워크스페이스 멤버' : '산출물 보관함';
   const description =
-    modal.kind === 'library'
+    presentationKind === 'library'
       ? '대화 흐름은 그대로 두고 자료만 확인합니다.'
-      : modal.kind === 'members'
+      : presentationKind === 'members'
         ? '이 워크스페이스에 참여한 사람과 초대를 관리합니다.'
         : '대화 흐름은 그대로 두고 확정 문서만 확인합니다.';
   return (
     <DialogRoot open={open} onOpenChange={(next) => { if (!next) workspaceModalStore.close(); }}>
       <DialogContent
-        className={modal.kind === 'members' ? s.membersDialog : s.workspaceSurfaceDialog}
+        className={presentationKind === 'members' ? s.membersDialog : s.workspaceSurfaceDialog}
         title={title}
         description={description}
       >
-        {modal.kind === 'library' ? (
+        {presentationKind === 'library' ? (
           <LibrarySurface variant="modal" />
-        ) : modal.kind === 'artifacts' ? (
+        ) : presentationKind === 'artifacts' ? (
           <ArtifactsSurface initialProjectId={modal.projectId} variant="modal" />
-        ) : modal.kind === 'members' ? (
+        ) : presentationKind === 'members' ? (
           <WorkspaceMembersPanel />
         ) : null}
       </DialogContent>
@@ -433,6 +436,11 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
             if (lastClickedTopicRef.current !== topicId) return;
             const firstThreadId = threads.threads[0]?.id;
             if (firstThreadId) {
+              void qc.prefetchQuery({
+                queryKey: messageWindowKeys.latest(firstThreadId),
+                queryFn: () => api.listMessagesPage(firstThreadId, { limit: 50 }),
+                staleTime: 30_000,
+              });
               void router.navigate({ to: '/th/$threadId', params: { threadId: firstThreadId } });
             } else {
               // No thread yet (empty channel) — fall back to the bridge route,
@@ -838,6 +846,7 @@ function ContextPanel({ collapsed, onToggle }: { collapsed: boolean; onToggle: (
   const [tab, setTab] = useState<'evidence' | 'search'>('evidence');
   const hasSearch = Boolean(searchState.query) && searchState.threadId === activeThread;
   const searchCount = searchState.results.length + searchState.files.length + searchState.evidence.length;
+  const contextTabs = getContextPanelTabs({ hasSearch, searchCount });
 
   // Auto-switch to search when a search is active (F3); otherwise show evidence.
   useEffect(() => {
@@ -859,24 +868,20 @@ function ContextPanel({ collapsed, onToggle }: { collapsed: boolean; onToggle: (
       <div className={`${s.contextContent} ${collapsed ? s.contextContentHidden : ''}`} aria-hidden={collapsed} inert={collapsed ? true : undefined}>
         {activeThread ? (
           <>
-            <div className={s.ctxTabs}>
-              <button
-                type="button"
-                className={`${s.ctxTab} ${tab === 'evidence' ? s.ctxTabOn : ''}`}
-                onClick={() => setTab('evidence')}
-              >
-                근거
-              </button>
-              {hasSearch ? (
-                <button
-                  type="button"
-                  className={`${s.ctxTab} ${tab === 'search' ? s.ctxTabOn : ''}`}
-                  onClick={() => setTab('search')}
-                >
-                  검색 {searchCount}
-                </button>
-              ) : null}
-            </div>
+            {contextTabs.length ? (
+              <div className={s.ctxTabs}>
+                {contextTabs.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`${s.ctxTab} ${tab === item.id ? s.ctxTabOn : ''}`}
+                    onClick={() => setTab(item.id)}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
 
             {tab === 'search' && hasSearch ? (
               <div className={s.ctxSection}>

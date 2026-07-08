@@ -12,6 +12,8 @@
   min-height: 0;
 }
 .modeTabs {
+  position: relative;
+  isolation: isolate;
   display: flex;
   gap: 2px;
   padding: 3px;
@@ -19,13 +21,30 @@
   border: 1px solid var(--border-hair);
   border-radius: 10px;
   background: var(--surface-card);
-  overflow-x: auto;
+  overflow: hidden;
   scrollbar-width: none;
+}
+.modeTabs::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  z-index: 0;
+  width: calc((100% - 6px) / 4);
+  border-radius: 7px;
+  background: var(--bg-warm);
+  box-shadow: var(--shadow-ring);
+  transform: translateX(calc(var(--mode-index, 0) * 100%));
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
 }
 .modeTabs::-webkit-scrollbar {
   display: none;
 }
 .modeTab {
+  position: relative;
+  z-index: 1;
   flex: 1 0 max-content;
   min-width: 72px;
   border: 0;
@@ -39,11 +58,38 @@
   letter-spacing: -0.01em;
   padding: 6px 3px;
   white-space: nowrap;
+  transition: color 180ms var(--ease-out);
 }
 .modeTabOn {
   color: var(--text-primary);
-  background: var(--bg-warm);
-  box-shadow: var(--shadow-ring);
+}
+.modePanel {
+  min-height: 0;
+  animation: cwEvidencePanelSlideForward 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, opacity;
+}
+.modePanel[data-direction='back'] {
+  animation-name: cwEvidencePanelSlideBack;
+}
+@keyframes cwEvidencePanelSlideForward {
+  from {
+    opacity: 0;
+    transform: translateX(12px) scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+@keyframes cwEvidencePanelSlideBack {
+  from {
+    opacity: 0;
+    transform: translateX(-12px) scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
 }
 .decisionStack {
   display: flex;
@@ -233,6 +279,8 @@
 }
 /* #6: channel/project evidence scope switcher — segmented control. */
 .scopeSwitch {
+  position: relative;
+  isolation: isolate;
   display: flex;
   gap: 2px;
   padding: 3px;
@@ -240,8 +288,26 @@
   background: var(--bg-warm);
   border: 1px solid var(--border-hair);
   border-radius: 9px;
+  overflow: hidden;
+}
+.scopeSwitch::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  z-index: 0;
+  width: calc((100% - 6px) / 2);
+  border-radius: 6px;
+  background: var(--surface-card);
+  box-shadow: var(--shadow-ring);
+  transform: translateX(calc(var(--scope-index, 0) * 100%));
+  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
 }
 .scopeBtn {
+  position: relative;
+  z-index: 1;
   flex: 1;
   font: inherit;
   font-size: 11.5px;
@@ -255,9 +321,7 @@
   transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .scopeBtnOn {
-  background: var(--surface-card);
   color: var(--text-primary);
-  box-shadow: var(--shadow-ring);
 }
 .loadingRow {
   display: flex;
@@ -435,60 +499,47 @@
   border-color: var(--accent);
   color: var(--accent);
 }
-/* G3: add-button collapse accordion — mirrors the form shell so the two swap
-   without either unmounting (no height jump on cancel). */
+/* Add button: instant swap. Height/opacity transitions read as a bottom-up slide here. */
 .addBtnShell {
-  display: grid;
-  grid-template-rows: 1fr;
+  display: block;
   opacity: 1;
-  margin-top: 6px;
-  transition: grid-template-rows var(--dur-panel) var(--ease-standard), opacity var(--dur-exit) var(--ease-exit), margin-top var(--dur-panel) var(--ease-standard);
 }
 .addBtnShell > * {
   min-height: 0;
   overflow: hidden;
 }
 .addBtnShellHidden {
-  grid-template-rows: 0fr;
+  display: none;
   opacity: 0;
-  margin-top: 0;
   pointer-events: none;
 }
-/* B5: grid accordion — 0fr→1fr height transition without JS measurement.
-   G3: translateY removed (jittery); opacity + grid-rows only. */
+/* Add form: display-swap only. Height accordions read as curtain motion in this narrow panel. */
 .formShell {
-  display: grid;
-  grid-template-rows: 0fr;
+  display: none;
   opacity: 0;
-  transition: grid-template-rows var(--dur-panel) var(--ease-standard), opacity var(--dur-enter) var(--ease-emphasized-decelerate);
 }
 .formShellOpen {
-  grid-template-rows: 1fr;
+  display: block;
   opacity: 1;
-}
-/* G3: staggered field entry — each control fades + rises 40ms apart. */
-.formShellOpen .formInner > * {
-  animation: cwFieldRise var(--dur-enter) var(--ease-emphasized-decelerate) both;
-}
-.formShellOpen .formInner > *:nth-child(1) { animation-delay: 0ms; }
-.formShellOpen .formInner > *:nth-child(2) { animation-delay: 40ms; }
-.formShellOpen .formInner > *:nth-child(3) { animation-delay: 80ms; }
-.formShellOpen .formInner > *:nth-child(4) { animation-delay: 120ms; }
-@keyframes cwFieldRise {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: none; }
 }
 .formInner {
   min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  gap: 0;
+  margin-top: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-card) 72%, var(--bg-warm));
+  box-shadow: none;
+}
+.formShellOpen .formInner {
   gap: 8px;
   margin-top: 6px;
   padding: 8px;
   border: 1px solid var(--border-hair);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--surface-card) 72%, var(--bg-warm));
   box-shadow: var(--shadow-1);
 }
 .formActions {
@@ -538,12 +589,16 @@
   cursor: pointer;
 }
 @media (prefers-reduced-motion: reduce) {
+  .modeTabs::before,
+  .scopeSwitch::before {
+    transition: none;
+  }
+  .modePanel {
+    animation: none;
+  }
   .formShell,
   .addBtnShell {
     transition: none;
-  }
-  .formShellOpen .formInner > * {
-    animation: none;
   }
 }
 

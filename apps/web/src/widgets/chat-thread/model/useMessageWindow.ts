@@ -32,6 +32,9 @@ export function useMessageWindow(threadId: string) {
     queryFn: () => api.listMessagesPage(threadId, { limit: PAGE_SIZE }),
     // D6: don't refetch-on-focus (would reset the accumulated window).
     staleTime: 30_000,
+    // Cached/persisted windows render first; this verifies quietly in the background
+    // so changed chat contents replace the optimistic cache without a loading flash.
+    refetchOnMount: 'always',
   });
 
   useEffect(() => {

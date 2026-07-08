@@ -73,8 +73,26 @@ export const ListWorkspacesResponseSchema = z
   .strict();
 export type ListWorkspacesResponse = z.infer<typeof ListWorkspacesResponseSchema>;
 
+export const TopicMessageStatsSchema = z
+  .object({
+    messageCount: z.number().int().nonnegative(),
+    recentMessageCount: z.number().int().nonnegative(),
+    recentAvgChars: z.number().int().nonnegative(),
+    lastMessageAt: z.string().datetime({ offset: true }).nullable(),
+  })
+  .strict();
+export type TopicMessageStats = z.infer<typeof TopicMessageStatsSchema>;
+
 export const TopicNodeSchema = z
-  .object({ id: UuidSchema, name: NameSchema, slug: z.string() })
+  .object({
+    id: UuidSchema,
+    name: NameSchema,
+    slug: z.string(),
+    /** First/default chat thread for this topic. Lets the web pre-size channel transitions before /threads resolves. */
+    defaultThreadId: UuidSchema.nullable().optional(),
+    /** Lightweight per-topic message density used only for smooth initial channel placeholders. */
+    messageStats: TopicMessageStatsSchema.optional(),
+  })
   .strict();
 export type TopicNode = z.infer<typeof TopicNodeSchema>;
 

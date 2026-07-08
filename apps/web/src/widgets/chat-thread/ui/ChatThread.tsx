@@ -15,6 +15,7 @@ import {
   fileToBase64,
 } from '../../../lib/collab';
 import { messageWindowKeys, useMessageWindow } from '../model/useMessageWindow';
+import { findThreadLoadPreview, planInitialChannelLoad } from '../model/channelLoadPreview';
 import { searchStore, useSearchState } from '../model/searchStore';
 import { appendDraftAttachment, canSubmitDraft, createDraftAttachment, draftAttachmentsForSend } from '../model/draftAttachments';
 import { RUNTIME_COMMANDS, describeRuntimeCommand, parseRuntimeCommand, resolveModelCommand, type RuntimeCommandItem } from '../model/runtimeCommands';
@@ -774,6 +775,14 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
 
   const userName = user?.displayName ?? '나';
   const persisted = history.messages;
+  const threadLoadPreview = findThreadLoadPreview(tree, threadId);
+  const historySkeletonReady = useDelayedFlag(history.isLoading, threadLoadPreview && threadLoadPreview.messageCount > 0 ? 0 : 300, 260);
+  const initialLoadPlan = planInitialChannelLoad({
+    isLoading: historySkeletonReady,
+    cachedMessageCount: persisted.length,
+    preview: threadLoadPreview,
+    viewportHeight: streamRef.current?.clientHeight ?? 720,
+  });
   const activeModelRoute = selectedModel || defaultModel || '';
   const activeModelLabel = runtimeModels.find((model) => model.route === activeModelRoute)?.label ?? (activeModelRoute || '모델 확인 중');
 
@@ -799,8 +808,10 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
       }
     : null;
 
-  // 300ms 이후에도 최초 로딩이면 스켈레톤 노출 — 즉시 로드는 깜빡임 없이 통과.
-  const showHistorySkeleton = useDelayedFlag(history.isLoading, 300, 260);
+  // Channel transitions use known per-topic density from the workspace tree:
+  // empty channels stay quiet, cached windows stay visible, and slow populated
+  // channels get a correctly sized skeleton immediately instead of blank flicker.
+  const showHistorySkeleton = initialLoadPlan.kind === 'skeleton';
   const hasResults = search.results.length > 0 && search.threadId === threadId;
 
 
@@ -895,7 +906,7 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
         <div className={s.stream} ref={streamRef} style={{ flex: 1 }}>
           {showHistorySkeleton && persisted.length === 0 && live.length === 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
-              {[0, 1, 2].map((i) => (
+              {Array.from({ length: initialLoadPlan.skeletonRows }).map((_, i) => (
                 <SkeletonMessage key={i} />
               ))}
             </div>

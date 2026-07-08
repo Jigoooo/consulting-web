@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { schema } from '@consulting/db-schema';
-import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type {
   ArchivedScopeItem,
   ListArchivedScopesResponse,
@@ -91,13 +91,68 @@ export class SpaceReadService {
           .orderBy(asc(schema.topics.createdAt))
       : [];
 
-    const topicsByChannel = new Map<string, { id: string; name: string; slug: string }[]>();
+    const topicIds = topics.map((t) => t.id);
+    const threadRows = topicIds.length
+      ? await this.db
+          .select({
+            id: schema.threads.id,
+            topicId: schema.threads.topicId,
+          })
+          .from(schema.threads)
+          .where(and(inArray(schema.threads.topicId, topicIds), eq(schema.threads.status, 'active'), isNull(schema.threads.deletedAt)))
+          .orderBy(asc(schema.threads.createdAt))
+      : [];
+
+    const defaultThreadByTopic = new Map<string, string>();
+    for (const thread of threadRows) {
+      if (!defaultThreadByTopic.has(thread.topicId)) defaultThreadByTopic.set(thread.topicId, thread.id);
+    }
+
+    const defaultThreadIds = [...defaultThreadByTopic.values()];
+    const statsRows = defaultThreadIds.length
+      ? await this.db
+          .select({
+            threadId: schema.chatMessages.threadId,
+            messageCount: sql<number>`count(*)::int`,
+            avgChars: sql<number>`coalesce(ceil(avg(length(${schema.chatMessages.content})))::int, 0)`,
+            lastMessageAt: sql<Date | null>`max(${schema.chatMessages.createdAt})`,
+          })
+          .from(schema.chatMessages)
+          .where(and(inArray(schema.chatMessages.threadId, defaultThreadIds), isNull(schema.chatMessages.deletedAt)))
+          .groupBy(schema.chatMessages.threadId)
+      : [];
+    const statsByThread = new Map<string, { messageCount: number; recentMessageCount: number; recentAvgChars: number; lastMessageAt: string | null }>();
+    for (const row of statsRows) {
+      const messageCount = Number(row.messageCount ?? 0);
+      const lastMessageAt = row.lastMessageAt instanceof Date
+        ? row.lastMessageAt.toISOString()
+        : row.lastMessageAt
+          ? new Date(row.lastMessageAt).toISOString()
+          : null;
+      statsByThread.set(row.threadId, {
+        messageCount,
+        recentMessageCount: Math.min(messageCount, 50),
+        recentAvgChars: Number(row.avgChars ?? 0),
+        lastMessageAt,
+      });
+    }
+
+    const topicsByChannel = new Map<string, { id: string; name: string; slug: string; defaultThreadId: string | null; messageStats: { messageCount: number; recentMessageCount: number; recentAvgChars: number; lastMessageAt: string | null } }[]>();
     for (const t of topics) {
+      const defaultThreadId = defaultThreadByTopic.get(t.id) ?? null;
       const list = topicsByChannel.get(t.channelId) ?? [];
-      list.push({ id: t.id, name: t.name, slug: t.slug });
+      list.push({
+        id: t.id,
+        name: t.name,
+        slug: t.slug,
+        defaultThreadId,
+        messageStats: defaultThreadId
+          ? statsByThread.get(defaultThreadId) ?? { messageCount: 0, recentMessageCount: 0, recentAvgChars: 0, lastMessageAt: null }
+          : { messageCount: 0, recentMessageCount: 0, recentAvgChars: 0, lastMessageAt: null },
+      });
       topicsByChannel.set(t.channelId, list);
     }
-    const channelsByProject = new Map<string, { id: string; name: string; slug: string; topics: { id: string; name: string; slug: string }[] }[]>();
+    const channelsByProject = new Map<string, { id: string; name: string; slug: string; topics: { id: string; name: string; slug: string; defaultThreadId: string | null; messageStats: { messageCount: number; recentMessageCount: number; recentAvgChars: number; lastMessageAt: string | null } }[] }[]>();
     for (const c of channels) {
       const list = channelsByProject.get(c.projectId) ?? [];
       list.push({ id: c.id, name: c.name, slug: c.slug, topics: topicsByChannel.get(c.id) ?? [] });

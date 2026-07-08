@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useEvidence, useProjectEvidence, useAddEvidence, useEvidenceDecisionSummary, useReviewQueue } from '../../../lib/collab';
 import { useHoveredMessage } from '../../../lib/threadCtx';
 import { useToast } from '../../../shared/ui/toast/Toast';
@@ -28,18 +28,35 @@ const sourceIcon: Record<string, IconName> = {
   manual: 'pin',
 };
 
+type EvidenceScope = 'channel' | 'project';
+type EvidenceMode = 'sources' | 'verification' | 'scorecard' | 'review';
+
+const modeTabs: readonly { id: EvidenceMode; label: string }[] = [
+  { id: 'sources', label: '근거자료' },
+  { id: 'verification', label: '근거검증' },
+  { id: 'scorecard', label: '결정표' },
+  { id: 'review', label: '검토큐' },
+];
+
+function modeIndex(mode: EvidenceMode) {
+  return modeTabs.findIndex((item) => item.id === mode);
+}
+
 /**
  * Phase 2-A E-4 — evidence tab in the context panel. Auto items come from
  * Hermes tool events; the accent rail highlights evidence rows tied to the
  * assistant message the user is hovering in the thread (E-4 창조 패턴 실현).
  * B4/B5: flat rows (no card chrome), EmptyState/Spinner reuse, and the add
- * form is a grid accordion (0fr→1fr) that expands/collapses smoothly.
+ * form swaps instantly to avoid curtain-like right-panel motion.
  */
 export function EvidencePanel({ threadId, projectId }: { threadId: string; projectId?: string }) {
-  const [scope, setScope] = useState<'channel' | 'project'>('channel');
-  const [mode, setMode] = useState<'sources' | 'verification' | 'scorecard' | 'review'>('sources');
+  const [scope, setScope] = useState<EvidenceScope>('channel');
+  const [mode, setMode] = useState<EvidenceMode>('sources');
+  const [modeDirection, setModeDirection] = useState<'forward' | 'back'>('forward');
   const channelEv = useEvidence(threadId);
-  const projectEv = useProjectEvidence(projectId, scope === 'project');
+  // Preload project-wide evidence so the first scope toggle moves the thumb
+  // without flashing a cold query state.
+  const projectEv = useProjectEvidence(projectId, Boolean(projectId));
   const decision = useEvidenceDecisionSummary(threadId);
   const review = useReviewQueue(threadId);
   const data = scope === 'project' ? projectEv.data : channelEv.data;
@@ -55,11 +72,12 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
   const showLoading = useDelayedFlag(isLoading, 300, 260);
 
-  // Focus the first field once the expand transition settles (avoids scroll jump).
+  // Focus the first field after the visible state lands. The form intentionally
+  // has no height animation; delayed transition-focus felt laggy and noisy.
   useEffect(() => {
     if (!formOpen) return;
-    const t = window.setTimeout(() => firstFieldRef.current?.focus(), 210);
-    return () => window.clearTimeout(t);
+    const frame = window.requestAnimationFrame(() => firstFieldRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
   }, [formOpen]);
 
   async function submit() {
@@ -89,13 +107,20 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
     setFormOpen(false);
   }
 
-  function selectMode(next: typeof mode) {
+  const activeModeIndex = Math.max(0, modeIndex(mode));
+  const modeMotionStyle = { '--mode-index': String(activeModeIndex) } as CSSProperties;
+  const scopeMotionStyle = { '--scope-index': scope === 'project' ? '1' : '0' } as CSSProperties;
+
+  function selectMode(next: EvidenceMode) {
+    if (next === mode) return;
+    setModeDirection(modeIndex(next) > activeModeIndex ? 'forward' : 'back');
     setMode(next);
     setSelectedId(null);
     if (next !== 'sources') closeForm();
   }
 
-  function selectScope(next: typeof scope) {
+  function selectScope(next: EvidenceScope) {
+    if (next === scope) return;
     setScope(next);
     setSelectedId(null);
     closeForm();
@@ -106,13 +131,8 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
 
   return (
     <div className={s.wrap}>
-      <div className={s.modeTabs} role="tablist" aria-label="근거 지능 패널">
-        {([
-          ['sources', '근거자료'],
-          ['verification', '근거검증'],
-          ['scorecard', '결정표'],
-          ['review', `검토큐${review.data?.items.length ? ` ${review.data.items.length}` : ''}`],
-        ] as const).map(([id, label]) => (
+      <div className={s.modeTabs} role="tablist" aria-label="근거 지능 패널" style={modeMotionStyle}>
+        {modeTabs.map(({ id, label }) => (
           <button
             key={id}
             type="button"
@@ -121,12 +141,12 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
             className={`${s.modeTab} ${mode === id ? s.modeTabOn : ''}`}
             onClick={() => selectMode(id)}
           >
-            {label}
+            {id === 'review' && review.data?.items.length ? `${label} ${review.data.items.length}` : label}
           </button>
         ))}
       </div>
       {projectId ? (
-        <div className={s.scopeSwitch} role="radiogroup" aria-label="근거 범위">
+        <div className={s.scopeSwitch} role="radiogroup" aria-label="근거 범위" style={scopeMotionStyle}>
           <button
             type="button"
             role="radio"
@@ -148,7 +168,8 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
         </div>
       ) : null}
 
-      {mode === 'verification' ? (
+      <div key={mode} className={s.modePanel} data-direction={modeDirection} data-mode={mode}>
+        {mode === 'verification' ? (
         <VerificationView isLoading={decision.isLoading} summary={decision.data} />
       ) : null}
 
@@ -242,7 +263,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
         </div>
       ) : null}
 
-      {/* B5: grid-accordion add form — always mounted, animates on open */}
+      {/* Add form: always mounted for stable focus, but no height transition. */}
       <div className={`${s.formShell} ${mode === 'sources' && formOpen ? s.formShellOpen : ''}`} aria-hidden={mode !== 'sources' || !formOpen} inert={mode !== 'sources' || !formOpen ? true : undefined}>
         <div className={s.formInner}>
           <Input
@@ -276,9 +297,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
         </div>
       </div>
 
-      {/* G3: the add button is always mounted and collapses via its own grid
-          accordion when the form opens — mutually-exclusive but never unmounted,
-          so canceling the form causes zero height jump. */}
+      {/* Add button: instant mutual-exclusive swap with the form. No upward slide. */}
       <div
         className={`${s.addBtnShell} ${mode !== 'sources' || formOpen ? s.addBtnShellHidden : ''}`}
         aria-hidden={mode !== 'sources' || formOpen}
@@ -287,6 +306,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
         <button type="button" className={`${s.addBtn} cwTap`} onClick={() => setFormOpen(true)}>
           <Icon name="plus" size="xs" decorative /> 근거 추가
         </button>
+      </div>
       </div>
     </div>
   );
