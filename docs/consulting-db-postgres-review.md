@@ -480,6 +480,32 @@ Postgres 16 상태: 낮아서 위험한 상태 아님. 16.14 최신 minor + 2028
 진짜 선행조건: pgvector/pg_trgm 사용 가능한 이미지와 recall regression harness.
 ```
 
+---
+
+## 10. 2026-07-08 운영 스키마 후속 — judgment guard ledger
+
+컨설팅 답변의 과잉단정/자료수집 실패/적용성 오류를 운영에서 추적하기 위해
+`judgment_guard_runs` ledger를 추가했다. 적용 migration은
+`0021_judgment_guard_runs.sql`이며, 운영 DB `consulting-web-pg-1`의
+`_migrations`에서 `2026-07-08 14:41:14+00` 적용을 확인했다.
+
+실측 반영 상태:
+
+```text
+table: public.judgment_guard_runs exists
+api: consulting-web-api-1 healthy
+web: http://127.0.0.1:8088 root_http=200
+gateway: http://127.0.0.1:8642/v1/health status=ok
+```
+
+역할:
+
+```text
+- Source intake 실패, 최신 권위자료 요구, 적용성 맵, 반대신문, 사용자 재지적 패턴을 구조화 저장
+- Verifier Gate가 일반 채팅은 경고, 보고/최종산출은 blocker 차단으로 해석
+- GraphRAG prompt context에 런타임 현재시각 기반 판단 안전 계약을 주입
+```
+
 실질 ROI:
 
 ```text

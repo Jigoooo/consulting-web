@@ -3,6 +3,7 @@ import { ConsultingGraphRagBridge, type ConsultingGraphRagHit, type ConsultingGr
 import { ConsultingTopicResolver, type ConsultingResolvedScope } from './consulting-topic-resolver.service.js';
 import { EvidenceSufficiencyEvaluator, type EvidenceSufficiencyDecision } from './evidence-sufficiency-evaluator.service.js';
 import { EvidenceToDecisionService, type ClaimInput, type EvidenceInput, type GraphEdgeInput } from './evidence-to-decision.service.js';
+import { ConsultingJudgmentGuardService } from './consulting-judgment-guard.service.js';
 
 export interface ConsultingMemoryContextInput {
   threadId: string;
@@ -16,6 +17,7 @@ export class ConsultingMemoryContextBuilder {
     @Inject(ConsultingGraphRagBridge) private readonly bridge: ConsultingGraphRagBridge,
     @Inject(EvidenceSufficiencyEvaluator) private readonly evaluator: EvidenceSufficiencyEvaluator,
     @Inject(EvidenceToDecisionService) private readonly evidenceToDecision: EvidenceToDecisionService,
+    @Inject(ConsultingJudgmentGuardService) private readonly judgmentGuard: ConsultingJudgmentGuardService = new ConsultingJudgmentGuardService(),
   ) {}
 
   async build(input: ConsultingMemoryContextInput): Promise<string> {
@@ -29,14 +31,15 @@ export class ConsultingMemoryContextBuilder {
       const recall = await this.bridge.recallMany({ scopes: diffusionWeighted.scopes, query: input.query, topK: 8 });
       const decision = this.evaluator.evaluate({ query: input.query, hits: recall.hits });
       const hits = this.diffusionRankHits(recall.hits, diffusionWeighted.scores).slice(0, 5);
-      return this.render(fanout.scope, hits, decision, this.evidenceDecisionLines(input.query, hits, decision));
+      const guard = this.judgmentGuard.evaluate({ query: input.query, hits, now: new Date() });
+      return this.render(fanout.scope, hits, decision, this.evidenceDecisionLines(input.query, hits, decision), this.judgmentGuard.renderPromptContract(guard));
     } catch {
       // GraphRAG context is a best-effort side channel. Never break chat streaming.
       return '';
     }
   }
 
-  private render(scope: ConsultingResolvedScope, hits: ConsultingGraphRagHit[], decision: EvidenceSufficiencyDecision, evidenceDecisionLines: string[]): string {
+  private render(scope: ConsultingResolvedScope, hits: ConsultingGraphRagHit[], decision: EvidenceSufficiencyDecision, evidenceDecisionLines: string[], judgmentGuardPrompt: string): string {
     const profileLines = this.profileInstructionLines(scope);
     const lines = [
       ...profileLines,
@@ -61,6 +64,8 @@ export class ConsultingMemoryContextBuilder {
         ? ['- 검색 근거가 애매함: 다른 프로젝트/범위 라벨을 붙이고, 현재 범위의 사실처럼 단정하지 않는다.']
         : []),
       ...evidenceDecisionLines,
+      '',
+      judgmentGuardPrompt,
       '',
       '### 검색 hit',
     ];

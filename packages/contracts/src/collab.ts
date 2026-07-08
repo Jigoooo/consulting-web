@@ -149,7 +149,23 @@ export type VerificationMetrics = z.infer<typeof VerificationMetricsSchema>;
 
 export const VerifierGateIssueSchema = z
   .object({
-    code: z.enum(['exactness_blocked', 'citation_issue', 'high_impact_refute', 'high_impact_unsupported', 'semantic_refute', 'semantic_unsupported']),
+    code: z.enum([
+      'exactness_blocked',
+      'citation_issue',
+      'high_impact_refute',
+      'high_impact_unsupported',
+      'semantic_refute',
+      'semantic_unsupported',
+      'judgment_guard_blocker',
+      'source_intake_parse_failure',
+      'applicability_map_required',
+      'decision_gate_order_required',
+      'latest_authority_required',
+      'comparator_consistency_required',
+      'counterargument_required',
+      'user_correction_pattern',
+      'overclaim_strength_risk',
+    ]),
     severity: z.enum(['warning', 'blocker']),
     message: z.string().min(1),
     claimId: z.string().optional(),

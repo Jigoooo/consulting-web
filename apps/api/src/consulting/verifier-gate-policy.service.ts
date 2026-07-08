@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { ClaimVerdict } from './evidence-to-decision.service.js';
 import type { ExactnessRunStatus } from './exactness-gate.service.js';
+import type { ConsultingJudgmentGuardIssue } from './consulting-judgment-guard.service.js';
 
 export type VerifierGateMode = 'general_chat' | 'analysis_draft' | 'report_decision' | 'final_export';
 export type VerifierGateDecision = 'PASS' | 'PASS_WITH_WARNINGS' | 'BLOCKED';
@@ -10,7 +11,9 @@ export type VerifierGateIssueCode =
   | 'high_impact_refute'
   | 'high_impact_unsupported'
   | 'semantic_refute'
-  | 'semantic_unsupported';
+  | 'semantic_unsupported'
+  | 'judgment_guard_blocker'
+  | ConsultingJudgmentGuardIssue['code'];
 
 export interface VerifierGateIssue {
   code: VerifierGateIssueCode;
@@ -24,6 +27,7 @@ export interface VerifierGateInput {
   exactnessStatus?: ExactnessRunStatus;
   citationIssueCount?: number;
   verdicts?: ClaimVerdict[];
+  judgmentIssues?: ConsultingJudgmentGuardIssue[];
 }
 
 export interface VerifierGateResult {
@@ -53,6 +57,17 @@ export class VerifierGatePolicyService {
 
     if ((input.citationIssueCount ?? 0) > 0) {
       push({ code: 'citation_issue', message: `인용/출처 문제가 ${input.citationIssueCount}건 있습니다.` }, structuralBlocksEnabled);
+    }
+
+    for (const issue of input.judgmentIssues ?? []) {
+      if (issue.severity === 'blocker') {
+        push(
+          { code: 'judgment_guard_blocker', message: `${issue.code}: ${issue.message}` },
+          structuralBlocksEnabled,
+        );
+        continue;
+      }
+      push({ code: issue.code, message: `${issue.code}: ${issue.message}` }, false);
     }
 
     for (const verdict of input.verdicts ?? []) {

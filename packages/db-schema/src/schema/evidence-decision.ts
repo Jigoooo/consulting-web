@@ -190,6 +190,35 @@ export const exactnessRuns = pgTable(
   ],
 );
 
+export const judgmentGuardRuns = pgTable(
+  'judgment_guard_runs',
+  {
+    id: primaryId,
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    threadId: uuid('thread_id').references(() => threads.id, { onDelete: 'set null' }),
+    assistantMessageId: uuid('assistant_message_id').references(() => chatMessages.id, { onDelete: 'cascade' }),
+    runKind: text('run_kind').notNull().default('judgment_guard_v1'),
+    required: boolean('required').notNull().default(false),
+    status: text('status').notNull().default('skipped'),
+    queryHash: text('query_hash').notNull(),
+    issueSummary: text('issue_summary').notNull().default('none'),
+    issues: jsonb('issues').$type<Record<string, unknown>[]>().notNull().default([]),
+    promptRules: jsonb('prompt_rules').$type<string[]>().notNull().default([]),
+    currentTimeIso: text('current_time_iso').notNull(),
+    userCorrectionDetected: boolean('user_correction_detected').notNull().default(false),
+    ...timestamps,
+    ...softDelete,
+  },
+  (t) => [
+    index('judgment_guard_runs_workspace_idx').on(t.workspaceId, t.createdAt),
+    index('judgment_guard_runs_thread_idx').on(t.threadId, t.createdAt),
+    index('judgment_guard_runs_message_idx').on(t.assistantMessageId, t.createdAt),
+    index('judgment_guard_runs_status_idx').on(t.workspaceId, t.status, t.createdAt),
+  ],
+);
+
 export const activeReviewItems = pgTable(
   'active_review_items',
   {

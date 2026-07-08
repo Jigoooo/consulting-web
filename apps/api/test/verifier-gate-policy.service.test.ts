@@ -68,4 +68,22 @@ describe('VerifierGatePolicyService', () => {
     expect(final.decision).toBe('BLOCKED');
     expect(final.blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'high_impact_unsupported' })]));
   });
+
+  it('promotes judgment guard blockers into report/final gates and keeps general chat warning-only', () => {
+    const judgmentIssues = [
+      { code: 'source_intake_parse_failure' as const, severity: 'blocker' as const, message: 'empty pdf extraction', requiredAction: 'run OCR' },
+      { code: 'user_correction_pattern' as const, severity: 'warning' as const, message: 'user corrected the answer', requiredAction: 'update gate pattern' },
+      { code: 'overclaim_strength_risk' as const, severity: 'warning' as const, message: 'strong conclusion risk', requiredAction: 'downgrade claim strength' },
+    ];
+    const general = service.evaluate({ mode: 'general_chat', judgmentIssues });
+    const report = service.evaluate({ mode: 'report_decision', judgmentIssues });
+    const final = service.evaluate({ mode: 'final_export', judgmentIssues });
+
+    expect(general.decision).toBe('PASS_WITH_WARNINGS');
+    expect(general.blockers).toHaveLength(0);
+    expect(general.warnings.map((item) => item.code)).toEqual(expect.arrayContaining(['judgment_guard_blocker', 'user_correction_pattern', 'overclaim_strength_risk']));
+    expect(report.decision).toBe('BLOCKED');
+    expect(report.blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'judgment_guard_blocker' })]));
+    expect(final.decision).toBe('BLOCKED');
+  });
 });

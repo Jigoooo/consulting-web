@@ -8,6 +8,7 @@ import { EvidenceToDecisionService, type ClaimInput, type ClaimVerdict, type Dec
 import { ClaimVerifierService } from './claim-verifier.service.js';
 import { ExactnessGateService, type ExactnessGateResult, type ExactnessRunStatus } from './exactness-gate.service.js';
 import { VerifierGatePolicyService, type VerifierGateResult } from './verifier-gate-policy.service.js';
+import { ConsultingJudgmentGuardService, type ConsultingJudgmentGuardResult } from './consulting-judgment-guard.service.js';
 
 const FACTUAL_RE = /(이다|입니다|한다|합니다|된다|됩니다|있다|있습니다|없다|없습니다|필요|확정|증가|감소|부담|영향|제시|늘려|줄어|higher|lower|increase|decrease)/iu;
 
@@ -59,6 +60,7 @@ export class EvidenceDecisionStore {
     @Inject(ClaimVerifierService) private readonly verifier: ClaimVerifierService,
     @Inject(ExactnessGateService) private readonly exactness: ExactnessGateService,
     @Inject(VerifierGatePolicyService) private readonly gatePolicy: VerifierGatePolicyService,
+    @Inject(ConsultingJudgmentGuardService) private readonly judgmentGuard: ConsultingJudgmentGuardService,
   ) {}
 
   async recordCompletedAnswer(input: {
@@ -69,6 +71,9 @@ export class EvidenceDecisionStore {
     answer: string;
     runId: string | null;
   }): Promise<void> {
+    const judgmentGuard = this.judgmentGuard.evaluate({ query: input.userPrompt, hits: [], userFeedback: input.answer, now: new Date() });
+    if (judgmentGuard.required) await this.persistJudgmentGuardRun(input, judgmentGuard);
+
     const exactnessRun = this.exactness.evaluateAnswer({ query: input.userPrompt, answer: input.answer });
     if (exactnessRun.required) await this.persistExactnessRun(input, exactnessRun);
 
@@ -126,7 +131,7 @@ export class EvidenceDecisionStore {
     const refuted = lattice.summary.refutes + lattice.summary.mixed;
     const unsupported = lattice.summary.notEnoughInfo;
     const claimCount = Math.max(1, lattice.summary.claimCount);
-    const verifierGate = this.gatePolicy.evaluate({ mode: 'report_decision', exactnessStatus: exactnessRun.status, citationIssueCount: 0, verdicts: lattice.verdicts });
+    const verifierGate = this.gatePolicy.evaluate({ mode: 'report_decision', exactnessStatus: exactnessRun.status, citationIssueCount: 0, verdicts: lattice.verdicts, judgmentIssues: judgmentGuard.issues });
     const ratings: DecisionRating[] = [
       { alternativeId: 'answer_as_written', criterionId: 'support', score: supported / claimCount, uncertainty: unsupported / claimCount, evidenceIds: evidenceRows.map((row) => row.id).slice(0, 3) },
       { alternativeId: 'answer_as_written', criterionId: 'contradiction_risk', score: refuted / claimCount, uncertainty: unsupported / claimCount, evidenceIds: [] },
@@ -220,6 +225,33 @@ export class EvidenceDecisionStore {
         checks: JSON.parse(JSON.stringify(run.checks)) as Record<string, unknown>[],
         summary: run.summary,
         answerInstruction: run.answerInstruction,
+      });
+    } catch (error) {
+      if (isMissingRelationError(error)) return;
+      throw error;
+    }
+  }
+
+  private async persistJudgmentGuardRun(input: {
+    workspaceId: string;
+    threadId: string;
+    assistantMessageId: string;
+    userPrompt: string;
+    answer: string;
+  }, run: ConsultingJudgmentGuardResult): Promise<void> {
+    try {
+      await this.db.insert(schema.judgmentGuardRuns).values({
+        workspaceId: input.workspaceId,
+        threadId: input.threadId,
+        assistantMessageId: input.assistantMessageId,
+        required: run.required,
+        status: run.issues.some((issue) => issue.severity === 'blocker') ? 'blocked' : 'warnings',
+        queryHash: exactnessQueryHash(input.userPrompt, input.answer),
+        issueSummary: run.issueSummary,
+        issues: run.issues.map((issue) => ({ ...issue })),
+        promptRules: run.promptRules,
+        currentTimeIso: run.currentTimeIso,
+        userCorrectionDetected: run.issues.some((issue) => issue.code === 'user_correction_pattern'),
       });
     } catch (error) {
       if (isMissingRelationError(error)) return;
@@ -570,7 +602,7 @@ function isMissingRelationError(error: unknown): boolean {
   const code = error.code;
   if (code === '42P01') return true;
   const message = typeof error.message === 'string' ? error.message : '';
-  return /relation .*exactness_runs.* does not exist|no such table: exactness_runs/iu.test(message);
+  return /relation .*(exactness_runs|judgment_guard_runs).* does not exist|no such table: (exactness_runs|judgment_guard_runs)/iu.test(message);
 }
 
 function reviewActions(title: string): ReviewAction[] {
