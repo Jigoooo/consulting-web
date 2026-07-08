@@ -1,6 +1,7 @@
 export type ScrollDirection = 'up' | 'down' | 'none';
 export type PageEdge = 'older' | 'newer';
 export type MessageWindowChangeKind = 'same' | 'prepend' | 'append' | 'replace';
+export type TailSettleWindowMode = 'latest' | 'around';
 
 export interface MessageWindowChange {
   kind: MessageWindowChangeKind;
@@ -31,6 +32,25 @@ export interface EdgePagingDecisionInput {
   direction: ScrollDirection;
   now: number;
   suppressUntil: number;
+}
+
+export interface TailSettleVisibilityInput {
+  messageCount: number;
+  mode: TailSettleWindowMode;
+  hasNewer: boolean;
+  targetMessageId: string | null;
+}
+
+/**
+ * Cached latest windows are already usable while the tail lock waits for row
+ * measurements. Keep search/around windows hidden until their explicit anchor
+ * is applied, but do not blank a cache-hot channel switch.
+ */
+export function shouldRevealTailDuringSettle(input: TailSettleVisibilityInput): boolean {
+  return input.messageCount > 0
+    && input.mode === 'latest'
+    && !input.hasNewer
+    && !input.targetMessageId;
 }
 
 /**

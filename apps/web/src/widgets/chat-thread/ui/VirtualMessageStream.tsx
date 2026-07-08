@@ -62,6 +62,7 @@ interface Props {
   olderError: boolean;
   newerError: boolean;
   targetMessageId: string | null;
+  revealTailDuringSettle: boolean;
   highlight: HighlightState | null;
   showNewDivider?: boolean;
   onLoadOlder: () => Promise<void> | void;
@@ -365,6 +366,7 @@ export function VirtualMessageStream({
   olderError,
   newerError,
   targetMessageId,
+  revealTailDuringSettle,
   highlight,
   showNewDivider,
   onLoadOlder,
@@ -795,7 +797,7 @@ export function VirtualMessageStream({
         <div className={s.loadEnd}>대화의 시작이에요</div>
       ) : null}
 
-      <div className={`${s.virtualCanvas} ${isTailSettling ? s.tailSettling : ''}`} style={{ height: totalSize }}>
+      <div className={`${s.virtualCanvas} ${isTailSettling && !revealTailDuringSettle ? s.tailSettling : ''}`} style={{ height: totalSize }}>
         {virtualItems.map((virtualRow) => {
           const message = messages[virtualRow.index];
           if (!message) return null;

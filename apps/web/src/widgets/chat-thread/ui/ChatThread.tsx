@@ -16,6 +16,7 @@ import {
 } from '../../../lib/collab';
 import { messageWindowKeys, useMessageWindow } from '../model/useMessageWindow';
 import { findThreadLoadPreview, planInitialChannelLoad } from '../model/channelLoadPreview';
+import { shouldRevealTailDuringSettle } from '../model/scrollPaging';
 import { searchStore, useSearchState } from '../model/searchStore';
 import { appendDraftAttachment, canSubmitDraft, createDraftAttachment, draftAttachmentsForSend } from '../model/draftAttachments';
 import { RUNTIME_COMMANDS, describeRuntimeCommand, parseRuntimeCommand, resolveModelCommand, type RuntimeCommandItem } from '../model/runtimeCommands';
@@ -809,6 +810,15 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
         focusedId: search.results[search.focusedIndex]?.id ?? null,
       }
     : null;
+  const activeSearchTargetId = search.threadId === threadId
+    ? search.targetMessageId ?? search.results[search.focusedIndex]?.id ?? null
+    : null;
+  const revealTailDuringSettle = shouldRevealTailDuringSettle({
+    messageCount: persisted.length,
+    mode: history.mode,
+    hasNewer: history.hasNewer,
+    targetMessageId: targetMessageId ?? focusMessageId ?? activeSearchTargetId,
+  });
 
   // Channel transitions use known per-topic density from the workspace tree:
   // empty channels stay quiet, cached windows stay visible, and slow populated
@@ -936,6 +946,7 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
             olderError={history.olderError}
             newerError={history.newerError}
             targetMessageId={targetMessageId}
+            revealTailDuringSettle={revealTailDuringSettle}
             highlight={highlight}
             showNewDivider={!atBottom && unseen > 0}
             onLoadOlder={history.loadOlder}

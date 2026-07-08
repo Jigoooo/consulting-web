@@ -1,9 +1,14 @@
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { useRouter } from '@tanstack/react-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { gsap } from 'gsap';
 import { hangulMatch } from '@consulting/contracts';
+import { api } from '../../../lib/api';
+import { resolveTopicThreadForNavigation } from '../../../lib/openTopicThread';
 import { useWorkspaceTree } from '../../../lib/spaces';
 import { useSelectedWorkspace } from '../../../lib/wsStore';
+import { useToast } from '../../../shared/ui/toast/Toast';
+import { messageWindowKeys } from '../../../widgets/chat-thread/model/useMessageWindow';
 import s from './CommandPalette.module.css';
 
 interface Item {
@@ -23,9 +28,27 @@ export function CommandPalette() {
   const [q, setQ] = useState('');
   const [cursor, setCursor] = useState(0);
   const router = useRouter();
+  const qc = useQueryClient();
+  const toast = useToast();
   const selected = useSelectedWorkspace();
   const { data: tree } = useWorkspaceTree(open ? (selected ?? undefined) : undefined);
   const cardRef = useRef<HTMLDivElement | null>(null);
+
+  function openTopic(topicId: string) {
+    void (async () => {
+      try {
+        const thread = await resolveTopicThreadForNavigation({ queryClient: qc, topicId, workspaceId: selected ?? undefined });
+        void qc.prefetchQuery({
+          queryKey: messageWindowKeys.latest(thread.id),
+          queryFn: () => api.listMessagesPage(thread.id, { limit: 50 }),
+          staleTime: 30_000,
+        });
+        void router.navigate({ to: '/th/$threadId', params: { threadId: thread.id } });
+      } catch {
+        toast('error', '채널 대화를 여는 데 실패했어요.');
+      }
+    })();
+  }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -57,7 +80,7 @@ export function CommandPalette() {
           kind: 'topic',
           label: t.name,
           hint: `${p.name} › ${c.name}`,
-          run: () => void router.navigate({ to: '/t/$topicId', params: { topicId: t.id } }),
+          run: () => openTopic(t.id),
         });
       }
     }

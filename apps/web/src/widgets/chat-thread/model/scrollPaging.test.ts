@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyMessageWindowChange,
   computePrependAnchorScrollTop,
+  shouldRevealTailDuringSettle,
   shouldAutoPageEdge,
   type EdgePagingDecisionInput,
 } from './scrollPaging';
@@ -82,5 +83,35 @@ describe('scrollPaging', () => {
       nextOffsetTop: 24,
       maxScrollTop: 1_200,
     })).toBe(1_200);
+  });
+
+  it('reveals cached live-tail messages while the tail lock settles', () => {
+    expect(shouldRevealTailDuringSettle({
+      messageCount: 50,
+      mode: 'latest',
+      hasNewer: false,
+      targetMessageId: null,
+    })).toBe(true);
+  });
+
+  it('keeps non-tail or targeted windows hidden until their anchor is applied', () => {
+    expect(shouldRevealTailDuringSettle({
+      messageCount: 50,
+      mode: 'around',
+      hasNewer: true,
+      targetMessageId: null,
+    })).toBe(false);
+    expect(shouldRevealTailDuringSettle({
+      messageCount: 50,
+      mode: 'latest',
+      hasNewer: false,
+      targetMessageId: 'hit-1',
+    })).toBe(false);
+    expect(shouldRevealTailDuringSettle({
+      messageCount: 0,
+      mode: 'latest',
+      hasNewer: false,
+      targetMessageId: null,
+    })).toBe(false);
   });
 });
