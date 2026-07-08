@@ -102,6 +102,19 @@ export class SpacesController {
     return parseResponse(ListContextEdgesResponseSchema, { edges: edges.map((edge) => this.contextEdgeResponse(edge)) });
   }
 
+  @Delete('context-edges/:edgeId')
+  @HttpCode(200)
+  async deleteContextEdge(@Param('edgeId') edgeId: string, @Req() req: AuthenticatedRequest) {
+    const target = await this.contextGraph.getManualEdgeTarget(edgeId);
+    if (!target.ok) return throwDomainError(target.error);
+    const userId = requireAuthUserId(req);
+    await this.requireScopeMember(userId, target.value.fromScopeType, target.value.fromScopeId);
+    await this.requireScopeMember(userId, target.value.toScopeType, target.value.toScopeId);
+    const result = await this.contextGraph.deleteManualEdge(edgeId);
+    if (!result.ok) return throwDomainError(result.error);
+    return parseResponse(OkResponseSchema, result.value);
+  }
+
   @Get('topics/:topicId/threads')
   async threads(@Param('topicId') topicId: string, @Req() req: AuthenticatedRequest) {
     const userId = requireAuthUserId(req);
@@ -116,6 +129,24 @@ export class SpacesController {
     const detail = await this.mutate.threadDetail(threadId);
     if (!detail) throw new NotFoundException({ code: 'NOT_FOUND', message: 'thread not found' });
     return parseResponse(ThreadDetailResponseSchema, detail);
+  }
+
+  @Get('projects/:id/profile')
+  async projectProfile(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    await this.requireNodeMember(requireAuthUserId(req), 'project', id);
+    const result = await this.scopeProfiles.getProfile('project', id);
+    if (!result.ok) return throwDomainError(result.error);
+    return parseResponse(ScopeProfileResponseSchema, result.value);
+  }
+
+  @Patch('projects/:id/profile')
+  async updateProjectProfile(@Param('id') id: string, @Body() body: unknown, @Req() req: AuthenticatedRequest) {
+    const patch = parseBody(UpdateScopeProfileRequestSchema, body);
+    const userId = requireAuthUserId(req);
+    await this.requireNodeMember(userId, 'project', id);
+    const result = await this.scopeProfiles.updateProfile('project', id, { actorUserId: userId, patch });
+    if (!result.ok) return throwDomainError(result.error);
+    return parseResponse(ScopeProfileResponseSchema, result.value);
   }
 
   @Get('channels/:id/profile')
@@ -289,7 +320,13 @@ export class SpacesController {
     this.throwIfDenied(await this.access.workspaceMember(userId, cmd.workspaceId));
     const result = await this.createProject.execute({ ...cmd, actorUserId: userId });
     if (!result.ok) return throwDomainError(result.error);
-    return parseResponse(CreateProjectResponseSchema, { id: result.value.projectId });
+    return parseResponse(CreateProjectResponseSchema, {
+      id: result.value.projectId,
+      templateApplied: result.value.templateApplied,
+      defaultThreadId: result.value.defaultThreadId,
+      intakeThreadId: result.value.intakeThreadId,
+      created: result.value.created,
+    });
   }
 
   @Post('workspaces')

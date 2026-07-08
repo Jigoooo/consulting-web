@@ -237,6 +237,22 @@ export class ConsultingApiClient {
     );
   }
 
+  deleteContextEdge(edgeId: string): Promise<OkResponse> {
+    return this.http.request(`/spaces/context-edges/${edgeId}`, { method: 'DELETE' }, (d) => OkResponseSchema.parse(d));
+  }
+
+  getProjectProfile(projectId: string): Promise<ScopeProfileResponse> {
+    return this.http.request(`/spaces/projects/${projectId}/profile`, { method: 'GET' }, (d) =>
+      ScopeProfileResponseSchema.parse(d),
+    );
+  }
+
+  updateProjectProfile(projectId: string, body: UpdateScopeProfileRequest): Promise<ScopeProfileResponse> {
+    return this.http.request(`/spaces/projects/${projectId}/profile`, { method: 'PATCH', body }, (d) =>
+      ScopeProfileResponseSchema.parse(d),
+    );
+  }
+
   getChannelProfile(channelId: string): Promise<ScopeProfileResponse> {
     return this.http.request(`/spaces/channels/${channelId}/profile`, { method: 'GET' }, (d) =>
       ScopeProfileResponseSchema.parse(d),

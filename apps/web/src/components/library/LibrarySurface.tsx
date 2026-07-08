@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from '@tanstack/react-router';
 import { useSelectedWorkspace } from '../../lib/wsStore';
 import { useLastThread } from '../../lib/threadCtx';
@@ -39,14 +39,16 @@ const TYPE_OPTIONS = [
 
 export function LibrarySurface({
   variant = 'page',
+  initialProjectId,
 }: {
   variant?: 'page' | 'modal';
+  initialProjectId?: string | undefined;
 }) {
   const workspaceId = useSelectedWorkspace();
   const router = useRouter();
   const lastThreadId = useLastThread();
   const { data: tree } = useWorkspaceTree(workspaceId ?? undefined);
-  const [projectFilter, setProjectFilter] = useState('');
+  const [projectFilter, setProjectFilter] = useState(initialProjectId ?? '');
   const [typeFilter, setTypeFilter] = useState('');
   const [query, setQuery] = useState('');
   const { data, isLoading } = useLibrarySources(workspaceId ?? undefined, {
@@ -56,6 +58,10 @@ export function LibrarySurface({
   });
   const [viewer, setViewer] = useState<FileViewerTarget | null>(null);
   const showLoading = useDelayedFlag(isLoading, 300, 260);
+
+  useEffect(() => {
+    if (initialProjectId !== undefined) setProjectFilter(initialProjectId);
+  }, [initialProjectId]);
 
   const projects = tree?.projects ?? [];
   // 자료실 = 근거·업로드 문서 참고자료 전용. 산출물(편집·버전·PDF 내보내기가 있는

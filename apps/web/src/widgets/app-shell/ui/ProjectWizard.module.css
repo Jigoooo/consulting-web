@@ -1,0 +1,370 @@
+.dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 32px));
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border-hair));
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--text-primary);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.step {
+  border: 1px solid var(--border-hair);
+  border-radius: 12px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  background: var(--surface-card);
+}
+
+.step span {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  background: var(--bg-warm);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.stepOn {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.stepOn span {
+  background: var(--accent);
+  color: var(--primary-foreground);
+}
+
+.body {
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 2px 0;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.helperText {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text-secondary);
+}
+
+.field textarea {
+  width: 100%;
+  min-height: 78px;
+  resize: vertical;
+  border: 1px solid var(--border-hair);
+  border-radius: 10px;
+  padding: 10px 11px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--surface-card);
+  outline: none;
+}
+
+.field textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.checkRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 11px;
+  border: 1px solid var(--border-hair);
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.choiceRow {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.choice {
+  min-height: 86px;
+  border: 1px solid var(--border-hair);
+  border-radius: 14px;
+  padding: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--surface-card);
+  cursor: pointer;
+}
+
+.choice span {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.choiceOn {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.projectList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.projectPick {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid var(--border-hair);
+  border-radius: 10px;
+  background: var(--surface-card);
+}
+
+.projectPick label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.projectPick label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectPick select {
+  width: 100%;
+  border: 1px solid var(--border-hair);
+  border-radius: 8px;
+  padding: 7px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-canvas);
+}
+
+.empty {
+  padding: 20px;
+  border: 1px dashed var(--border-hair);
+  border-radius: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  font-size: 13px;
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.summaryGrid div {
+  padding: 12px;
+  border: 1px solid var(--border-hair);
+  border-radius: 12px;
+  background: var(--surface-card);
+}
+
+.summaryGrid span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.summaryGrid strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.connectionSummary {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 14px;
+  margin-top: 14px;
+  border-top: 1px solid var(--border-hair);
+}
+
+.tabs {
+  display: flex;
+  gap: 6px;
+  padding: 10px 0 14px;
+}
+
+.tab {
+  border: 1px solid var(--border-hair);
+  border-radius: 999px;
+  padding: 7px 12px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  background: var(--surface-card);
+  cursor: pointer;
+}
+
+.tabOn {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.connectionItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-hair);
+  border-radius: 10px;
+  background: var(--surface-card);
+}
+
+.connectionItem div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.connectionItem strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.connectionItem span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.connectionItem button {
+  flex: none;
+  border: 1px solid var(--border-hair);
+  border-radius: 8px;
+  padding: 6px 9px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--surface-card);
+  cursor: pointer;
+}
+
+.connectionItem button:hover {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border-hair));
+}
+
+.connectionEditor {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding-top: 4px;
+}
+
+.connectionEditor select {
+  min-width: 0;
+  border: 1px solid var(--border-hair);
+  border-radius: 9px;
+  padding: 8px 9px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--surface-card);
+}
+
+.materialBox {
+  display: flex;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border-hair);
+  border-radius: 14px;
+  background: var(--surface-card);
+}
+
+.materialBox strong {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text-primary);
+}
+
+.materialBox p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+  .choiceRow,
+  .summaryGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .projectPick,
+  .connectionEditor {
+    grid-template-columns: 1fr;
+  }
+}

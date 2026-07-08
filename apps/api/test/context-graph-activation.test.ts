@@ -169,6 +169,13 @@ d('context graph activation', () => {
       }),
     ]);
 
+    if (!created.ok) throw new Error('edge create failed');
+    const target = await service.getManualEdgeTarget(created.value.edgeId);
+    expect(target.ok).toBe(true);
+    const deleted = await service.deleteManualEdge(created.value.edgeId);
+    expect(deleted).toEqual({ ok: true, value: { ok: true } });
+    await expect(service.traverseRelatedScopes({ scopeType: 'topic', scopeId: a.topicId })).resolves.toEqual([]);
+
     await db.update(schema.topics).set({ status: 'archived' }).where(eq(schema.topics.id, b.topicId));
     await expect(service.traverseRelatedScopes({ scopeType: 'topic', scopeId: a.topicId })).resolves.toEqual([]);
   });
@@ -195,6 +202,59 @@ d('context graph activation', () => {
     const fanout = await new ConsultingTopicResolver(db, graph).resolveThreadFanout(current.threadId);
     expect(fanout?.recallScopes.map((scope) => scope.topicSlug)).toEqual(['current-brain-topic', 'related-brain-topic']);
     expect(fanout?.recallScopes[1]).toEqual(expect.objectContaining({ relation: 'cross_project', weight: 0.6, label: '다른 프로젝트: related 프로젝트' }));
+  });
+
+  it('keeps manual project-to-project connections symmetric and strength-updatable', async () => {
+    const a = await createTopicTree('manual-pair-a');
+    const b = await createTopicTree('manual-pair-b', a.workspaceId, a.userId);
+    const service = new ContextGraphService(db);
+
+    const weak = await service.createManualEdge({
+      fromScopeType: 'project',
+      fromScopeId: a.projectId,
+      toScopeType: 'project',
+      toScopeId: b.projectId,
+      edgeType: 'related_to',
+      confidence: 0.65,
+    });
+    expect(weak.ok).toBe(true);
+    await expect(service.traverseRelatedScopes({ scopeType: 'project', scopeId: b.projectId })).resolves.toEqual([
+      expect.objectContaining({ scopeId: a.projectId, edgeType: 'related_to', origin: 'manual' }),
+    ]);
+
+    const strongReverse = await service.createManualEdge({
+      fromScopeType: 'project',
+      fromScopeId: b.projectId,
+      toScopeType: 'project',
+      toScopeId: a.projectId,
+      edgeType: 'shares_memory_with',
+      confidence: 1,
+    });
+    expect(strongReverse.ok).toBe(true);
+
+    const livePair = await pool.query<{ count: string; edge_type: string }>(
+      `select count(*)::text, max(edge_type)::text as edge_type
+       from context_edges
+       where workspace_id = $1
+         and origin = 'manual'
+         and deleted_at is null
+         and edge_type in ('related_to', 'shares_memory_with')
+         and ((from_scope_type = 'project' and from_scope_id = $2 and to_scope_type = 'project' and to_scope_id = $3)
+           or (from_scope_type = 'project' and from_scope_id = $3 and to_scope_type = 'project' and to_scope_id = $2))`,
+      [a.workspaceId, a.projectId, b.projectId],
+    );
+    expect(livePair.rows[0]).toEqual({ count: '1', edge_type: 'shares_memory_with' });
+
+    const fromA = await service.traverseRelatedScopes({ scopeType: 'project', scopeId: a.projectId });
+    expect(fromA).toEqual([
+      expect.objectContaining({ scopeId: b.projectId, edgeType: 'shares_memory_with', origin: 'manual' }),
+    ]);
+    const edgeId = fromA[0]?.edgeId;
+    expect(edgeId).toBeTruthy();
+    if (!edgeId) throw new Error('edge id missing');
+
+    await expect(service.deleteManualEdge(edgeId)).resolves.toEqual({ ok: true, value: { ok: true } });
+    await expect(service.traverseRelatedScopes({ scopeType: 'project', scopeId: b.projectId })).resolves.toEqual([]);
   });
 
   it('creates idempotent classifier related_to edges from tag overlap', async () => {

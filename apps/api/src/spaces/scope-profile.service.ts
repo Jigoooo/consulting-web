@@ -4,7 +4,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { domainError, err, ok, type Result } from '@consulting/shared';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 
-export type ScopeProfileScopeType = 'channel' | 'topic';
+export type ScopeProfileScopeType = 'project' | 'channel' | 'topic';
 export type ScopeProfileSource = 'template' | 'manual' | 'inferred';
 
 export interface ScopeProfileFields {
@@ -88,6 +88,19 @@ export class ScopeProfileService {
   }
 
   private async resolveLiveScope(scopeType: ScopeProfileScopeType, scopeId: string): Promise<{ workspaceId: string } | null> {
+    if (scopeType === 'project') {
+      const [row] = await this.db
+        .select({ workspaceId: schema.projects.workspaceId })
+        .from(schema.projects)
+        .where(and(
+          eq(schema.projects.id, scopeId),
+          eq(schema.projects.status, 'active'),
+          isNull(schema.projects.deletedAt),
+        ))
+        .limit(1);
+      return row ?? null;
+    }
+
     if (scopeType === 'channel') {
       const [row] = await this.db
         .select({ workspaceId: schema.channels.workspaceId })
@@ -150,7 +163,7 @@ export class ScopeProfileService {
   }
 
   private toView(row: ScopeProfileRow): ScopeProfileView {
-    const scopeType: ScopeProfileScopeType = row.scopeType === 'topic' ? 'topic' : 'channel';
+    const scopeType: ScopeProfileScopeType = row.scopeType === 'project' ? 'project' : row.scopeType === 'topic' ? 'topic' : 'channel';
     return {
       scopeType,
       scopeId: row.scopeId,

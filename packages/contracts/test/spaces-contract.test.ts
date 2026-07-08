@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CreateProjectRequestSchema,
   CreateProjectResponseSchema,
+  ScopeProfileScopeTypeSchema,
   CreateChannelRequestSchema,
   CreateChannelResponseSchema,
   CreateTopicRequestSchema,
@@ -47,6 +48,46 @@ describe('space creation contracts', () => {
     expect(CreateThreadResponseSchema.parse(response)).toEqual(response);
     expect(() => CreateThreadResponseSchema.parse({ ...response, jwtSecret: 'secret' })).toThrow();
   });
+
+  it('accepts guided project creation setup and rejects inconsistent connection decisions', () => {
+    const targetProjectId = '00000000-0000-4000-8000-000000000002';
+    const guided = {
+      workspaceId: uuid,
+      name: '신규 컨설팅 프로젝트',
+      slug: 'guided-project',
+      applyDefaultTemplate: true,
+      templateKey: 'consulting_default' as const,
+      connectionDecision: 'selected' as const,
+      connections: [
+        { projectId: targetProjectId, strength: 'strong' as const },
+        { projectId: '00000000-0000-4000-8000-000000000003', strength: 'weak' as const },
+      ],
+      profile: { overview: '초기 개요', goal: '초기 목표', notes: '초기 메모' },
+    };
+
+    expect(CreateProjectRequestSchema.parse(guided)).toEqual(guided);
+    expect(CreateProjectRequestSchema.parse({ workspaceId: uuid, name: '템플릿 없음', slug: 'no-template', applyDefaultTemplate: false })).toEqual({
+      workspaceId: uuid,
+      name: '템플릿 없음',
+      slug: 'no-template',
+      applyDefaultTemplate: false,
+    });
+    expect(() => CreateProjectRequestSchema.parse({ ...guided, applyDefaultTemplate: false })).toThrow();
+    expect(() => CreateProjectRequestSchema.parse({ ...guided, connectionDecision: 'selected', connections: [] })).toThrow();
+    expect(() => CreateProjectRequestSchema.parse({ ...guided, connectionDecision: 'skip', connections: guided.connections })).toThrow();
+  });
+
+  it('returns template/material navigation targets from guided project creation', () => {
+    const response = {
+      id: uuid,
+      templateApplied: true,
+      defaultThreadId: '00000000-0000-4000-8000-000000000010',
+      intakeThreadId: '00000000-0000-4000-8000-000000000011',
+      created: { channels: 5, topics: 8, threads: 8, consultingLinks: 1, contextEdges: 2 },
+    };
+    expect(CreateProjectResponseSchema.parse(response)).toEqual(response);
+    expect(() => CreateProjectResponseSchema.parse({ ...response, accessToken: 'secret' })).toThrow();
+  });
 });
 
 describe('scope profile contracts', () => {
@@ -66,6 +107,21 @@ describe('scope profile contracts', () => {
     expect(UpdateScopeProfileRequestSchema.parse({ purpose: '수정', rules: '' })).toEqual({ purpose: '수정', rules: '' });
     expect(() => UpdateScopeProfileRequestSchema.parse({ purpose: 'x', memoryTopicId: 'secret' })).toThrow();
     expect(() => ScopeProfileResponseSchema.parse({ profile: { ...profile, tokenHash: 'secret' } })).toThrow();
+  });
+
+  it('accepts project profiles for post-create editable overview settings', () => {
+    expect(ScopeProfileScopeTypeSchema.parse('project')).toBe('project');
+    const profile = {
+      scopeType: 'project' as const,
+      scopeId: uuid,
+      purpose: '프로젝트 전체 목표',
+      role: '프로젝트 개요',
+      style: '',
+      rules: '생성 후에도 수정 가능',
+      source: 'manual' as const,
+      updatedAt: '2026-07-08T00:00:00.000Z',
+    };
+    expect(ScopeProfileResponseSchema.parse({ profile })).toEqual({ profile });
   });
 });
 

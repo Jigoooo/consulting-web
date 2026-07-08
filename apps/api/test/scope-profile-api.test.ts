@@ -79,6 +79,46 @@ d('scope profile API', () => {
         .send({ channelId: channel.id, name: 'Profile API Topic', slug: `profile-api-t-${suffix}` }).expect(201)).body,
     );
 
+    const emptyProjectProfile = ScopeProfileResponseSchema.parse(
+      (await request(app.getHttpServer()).get(`/spaces/projects/${project.id}/profile`).set('authorization', owner.bearer).expect(200)).body,
+    );
+    expect(emptyProjectProfile.profile).toBeNull();
+
+    const profiledProject = CreateProjectResponseSchema.parse(
+      (await request(app.getHttpServer()).post('/spaces/projects').set('authorization', owner.bearer)
+        .send({
+          workspaceId: owner.personalWorkspaceId,
+          name: 'Profile Seeded Project',
+          slug: `profile-seeded-p-${suffix}`,
+          connectionDecision: 'skip',
+          profile: { overview: '생성 시 개요', goal: '생성 시 목표', notes: '생성 시 메모' },
+        }).expect(201)).body,
+    );
+    const seededProjectProfile = ScopeProfileResponseSchema.parse(
+      (await request(app.getHttpServer()).get(`/spaces/projects/${profiledProject.id}/profile`).set('authorization', owner.bearer).expect(200)).body,
+    );
+    expect(seededProjectProfile.profile).toEqual(expect.objectContaining({
+      scopeType: 'project',
+      scopeId: profiledProject.id,
+      source: 'manual',
+      purpose: '생성 시 목표',
+      role: '생성 시 개요',
+      rules: '생성 시 메모',
+    }));
+
+    const updatedProjectProfile = ScopeProfileResponseSchema.parse(
+      (await request(app.getHttpServer()).patch(`/spaces/projects/${project.id}/profile`).set('authorization', owner.bearer)
+        .send({ purpose: '프로젝트 목표', role: '프로젝트 개요', rules: '생성 후 수정 가능' }).expect(200)).body,
+    );
+    expect(updatedProjectProfile.profile).toEqual(expect.objectContaining({
+      scopeType: 'project',
+      scopeId: project.id,
+      source: 'manual',
+      purpose: '프로젝트 목표',
+      role: '프로젝트 개요',
+      rules: '생성 후 수정 가능',
+    }));
+
     const empty = ScopeProfileResponseSchema.parse(
       (await request(app.getHttpServer()).get(`/spaces/channels/${channel.id}/profile`).set('authorization', owner.bearer).expect(200)).body,
     );

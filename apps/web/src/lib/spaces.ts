@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { CreateProjectRequest } from '@consulting/contracts';
 import { api } from './api';
 
 export const spaceKeys = {
@@ -55,8 +56,12 @@ export function toSlug(name: string): string {
 export function useCreateProject(workspaceId: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (name: string) =>
-      api.createProject({ workspaceId: workspaceId!, name, slug: toSlug(name) }),
+    mutationFn: (input: string | Omit<CreateProjectRequest, 'workspaceId'>) => {
+      const body = typeof input === 'string'
+        ? { workspaceId: workspaceId!, name: input, slug: toSlug(input) }
+        : { workspaceId: workspaceId!, ...input, slug: input.slug || toSlug(input.name) };
+      return api.createProject(body);
+    },
     onSuccess: () => void qc.invalidateQueries({ queryKey: spaceKeys.tree(workspaceId ?? '') }),
   });
 }

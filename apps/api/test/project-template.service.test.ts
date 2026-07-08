@@ -255,6 +255,36 @@ d('consulting_default project template', () => {
     expect(await countTemplateRows(project.value.projectId)).toEqual({ channels: 5, topics: 8, threads: 8, links: 1 });
   });
 
+  it('honors an explicit project creation opt-out even when the env default is enabled', async () => {
+    const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const owner = await new SignUpUseCase(db, new ScryptPasswordHasher()).execute({
+      email: `template-create-optout-${suffix}@example.com`,
+      password: 'supersecret1',
+      displayName: 'Template Create Optout',
+    });
+    expect(owner.ok).toBe(true);
+    if (!owner.ok) throw new Error('signup failed');
+    users.push(owner.value.userId);
+    workspaces.push(owner.value.personalWorkspaceId);
+
+    const project = await new CreateProjectUseCase(
+      db,
+      new ProjectTemplateService(db),
+      { CONSULTING_DEFAULT_TEMPLATE_ENABLED: true },
+    ).execute({
+      workspaceId: owner.value.personalWorkspaceId,
+      actorUserId: owner.value.userId,
+      name: '템플릿 제외 프로젝트',
+      slug: 'created-without-template',
+      applyDefaultTemplate: false,
+    });
+
+    expect(project.ok).toBe(true);
+    if (!project.ok) throw new Error('project create failed');
+    expect(project.value.templateApplied).toBe(false);
+    expect(await countTemplateRows(project.value.projectId)).toEqual({ channels: 0, topics: 0, threads: 0, links: 0 });
+  });
+
   it('inherits project seed tags onto template-created channels', async () => {
     const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const owner = await new SignUpUseCase(db, new ScryptPasswordHasher()).execute({

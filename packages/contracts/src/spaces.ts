@@ -5,12 +5,55 @@ const UuidSchema = z.string().uuid();
 const NameSchema = z.string().trim().min(1).max(120);
 const TitleSchema = z.string().trim().min(1).max(200);
 const SlugSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/);
+const ProfileTextSchema = z.string().max(2000);
+
+export const ProjectTemplateKeySchema = z.enum(['consulting_default']);
+export type ProjectTemplateKey = z.infer<typeof ProjectTemplateKeySchema>;
+export const ProjectConnectionDecisionSchema = z.enum(['skip', 'selected']);
+export type ProjectConnectionDecision = z.infer<typeof ProjectConnectionDecisionSchema>;
+export const ProjectConnectionStrengthSchema = z.enum(['strong', 'weak']);
+export type ProjectConnectionStrength = z.infer<typeof ProjectConnectionStrengthSchema>;
+export const ProjectConnectionInputSchema = z
+  .object({
+    projectId: UuidSchema,
+    strength: ProjectConnectionStrengthSchema,
+  })
+  .strict();
+export type ProjectConnectionInput = z.infer<typeof ProjectConnectionInputSchema>;
+export const CreateProjectProfileInputSchema = z
+  .object({
+    overview: ProfileTextSchema.optional(),
+    goal: ProfileTextSchema.optional(),
+    notes: ProfileTextSchema.optional(),
+  })
+  .strict();
+export type CreateProjectProfileInput = z.infer<typeof CreateProjectProfileInputSchema>;
 
 export const CreateProjectRequestSchema = z.object({
   workspaceId: UuidSchema,
   name: NameSchema,
   slug: SlugSchema,
-}).strict();
+  applyDefaultTemplate: z.boolean().optional(),
+  templateKey: ProjectTemplateKeySchema.optional(),
+  connectionDecision: ProjectConnectionDecisionSchema.optional(),
+  connections: z.array(ProjectConnectionInputSchema).max(20).optional(),
+  profile: CreateProjectProfileInputSchema.optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.applyDefaultTemplate === false && value.templateKey !== undefined) {
+    ctx.addIssue({ code: 'custom', message: 'disabled default template cannot include a template key', path: ['templateKey'] });
+  }
+  const connections = value.connections ?? [];
+  if (value.connectionDecision === 'selected' && connections.length === 0) {
+    ctx.addIssue({ code: 'custom', message: 'selected project creation requires at least one connection', path: ['connections'] });
+  }
+  if (value.connectionDecision === 'skip' && connections.length > 0) {
+    ctx.addIssue({ code: 'custom', message: 'skipped project creation cannot include connections', path: ['connections'] });
+  }
+  const uniqueProjectIds = new Set(connections.map((connection) => connection.projectId));
+  if (uniqueProjectIds.size !== connections.length) {
+    ctx.addIssue({ code: 'custom', message: 'connections must target unique projects', path: ['connections'] });
+  }
+});
 export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>;
 
 export const CreateWorkspaceRequestSchema = z.object({
@@ -40,7 +83,25 @@ export const CreateThreadRequestSchema = z.object({
 export type CreateThreadRequest = z.infer<typeof CreateThreadRequestSchema>;
 
 const IdResponseSchema = z.object({ id: UuidSchema }).strict();
-export const CreateProjectResponseSchema = IdResponseSchema;
+export const ProjectTemplateCreatedSummarySchema = z
+  .object({
+    channels: z.number().int().nonnegative(),
+    topics: z.number().int().nonnegative(),
+    threads: z.number().int().nonnegative(),
+    consultingLinks: z.number().int().nonnegative(),
+    contextEdges: z.number().int().nonnegative(),
+  })
+  .strict();
+export type ProjectTemplateCreatedSummary = z.infer<typeof ProjectTemplateCreatedSummarySchema>;
+export const CreateProjectResponseSchema = z
+  .object({
+    id: UuidSchema,
+    templateApplied: z.boolean().optional(),
+    defaultThreadId: UuidSchema.nullable().optional(),
+    intakeThreadId: UuidSchema.nullable().optional(),
+    created: ProjectTemplateCreatedSummarySchema.optional(),
+  })
+  .strict();
 export type CreateProjectResponse = z.infer<typeof CreateProjectResponseSchema>;
 export const CreateWorkspaceResponseSchema = IdResponseSchema;
 export type CreateWorkspaceResponse = z.infer<typeof CreateWorkspaceResponseSchema>;
@@ -129,11 +190,10 @@ export type ArchivedScopeKind = z.infer<typeof ArchivedScopeKindSchema>;
 
 export const ContextGraphScopeTypeSchema = z.enum(['project', 'channel', 'topic', 'thread']);
 export type ContextGraphScopeType = z.infer<typeof ContextGraphScopeTypeSchema>;
-export const ScopeProfileScopeTypeSchema = z.enum(['channel', 'topic']);
+export const ScopeProfileScopeTypeSchema = z.enum(['project', 'channel', 'topic']);
 export type ScopeProfileScopeType = z.infer<typeof ScopeProfileScopeTypeSchema>;
 export const ScopeProfileSourceSchema = z.enum(['template', 'manual', 'inferred']);
 export type ScopeProfileSource = z.infer<typeof ScopeProfileSourceSchema>;
-const ProfileTextSchema = z.string().max(2000);
 export const ScopeProfileSchema = z
   .object({
     scopeType: ScopeProfileScopeTypeSchema,

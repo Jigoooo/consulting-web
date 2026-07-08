@@ -22,6 +22,14 @@ export interface CreateContextEdgeResult {
   edgeId: string;
 }
 
+export interface ManualContextEdgeTarget {
+  edgeId: string;
+  fromScopeType: ContextGraphScopeType;
+  fromScopeId: string;
+  toScopeType: ContextGraphScopeType;
+  toScopeId: string;
+}
+
 export interface TraverseContextGraphCommand {
   scopeType: ContextGraphScopeType;
   scopeId: string;
@@ -76,6 +84,7 @@ type EdgeRow = {
 };
 
 const TRAVERSABLE_EDGE_TYPES: ContextGraphEdgeType[] = ['related_to', 'references', 'shares_memory_with', 'derived_from', 'supersedes'];
+const SYMMETRIC_PROJECT_EDGE_TYPES: ContextGraphManualEdgeType[] = ['related_to', 'shares_memory_with'];
 
 @Injectable()
 export class ContextGraphService {
@@ -93,6 +102,10 @@ export class ContextGraphService {
     if (!from || !to) return err(domainError('NOT_FOUND', 'context edge endpoint not found or not active'));
     if (from.workspaceId !== to.workspaceId) {
       return err(domainError('FORBIDDEN', 'context edges cannot cross workspaces'));
+    }
+
+    if (isSymmetricProjectEdge(cmd)) {
+      return this.upsertSymmetricProjectEdge(cmd, from.workspaceId);
     }
 
     try {
@@ -125,6 +138,113 @@ export class ContextGraphService {
       return ok({ edgeId: edge.id });
     } catch {
       return err(domainError('INTERNAL', 'context edge create failed'));
+    }
+  }
+
+  private async upsertSymmetricProjectEdge(cmd: CreateContextEdgeCommand, workspaceId: string): Promise<Result<CreateContextEdgeResult>> {
+    try {
+      return await this.db.transaction(async (tx) => {
+        const now = new Date();
+        const confidence = String(cmd.confidence ?? 1);
+        const [fromProjectId, toProjectId] = orderProjectPair(cmd.fromScopeId, cmd.toScopeId);
+
+        await tx.update(schema.contextEdges).set({ deletedAt: now, updatedAt: now }).where(and(
+          eq(schema.contextEdges.workspaceId, workspaceId),
+          eq(schema.contextEdges.origin, 'manual'),
+          inArray(schema.contextEdges.edgeType, SYMMETRIC_PROJECT_EDGE_TYPES),
+          isNull(schema.contextEdges.deletedAt),
+          or(
+            and(
+              eq(schema.contextEdges.fromScopeType, 'project'),
+              eq(schema.contextEdges.fromScopeId, cmd.fromScopeId),
+              eq(schema.contextEdges.toScopeType, 'project'),
+              eq(schema.contextEdges.toScopeId, cmd.toScopeId),
+            ),
+            and(
+              eq(schema.contextEdges.fromScopeType, 'project'),
+              eq(schema.contextEdges.fromScopeId, cmd.toScopeId),
+              eq(schema.contextEdges.toScopeType, 'project'),
+              eq(schema.contextEdges.toScopeId, cmd.fromScopeId),
+            ),
+          ),
+        ));
+
+        const [edge] = await tx
+          .insert(schema.contextEdges)
+          .values({
+            workspaceId,
+            fromScopeType: 'project',
+            fromScopeId: fromProjectId,
+            toScopeType: 'project',
+            toScopeId: toProjectId,
+            edgeType: cmd.edgeType,
+            origin: 'manual',
+            confidence,
+          })
+          .onConflictDoUpdate({
+            target: [
+              schema.contextEdges.fromScopeType,
+              schema.contextEdges.fromScopeId,
+              schema.contextEdges.toScopeType,
+              schema.contextEdges.toScopeId,
+              schema.contextEdges.edgeType,
+            ],
+            set: { deletedAt: null, origin: 'manual', confidence, updatedAt: now },
+          })
+          .returning({ id: schema.contextEdges.id });
+        if (!edge) return err(domainError('INTERNAL', 'context edge insert returned no row'));
+        return ok({ edgeId: edge.id });
+      });
+    } catch {
+      return err(domainError('INTERNAL', 'context edge create failed'));
+    }
+  }
+
+  async getManualEdgeTarget(edgeId: string): Promise<Result<ManualContextEdgeTarget>> {
+    const [edge] = await this.db
+      .select({
+        edgeId: schema.contextEdges.id,
+        fromScopeType: schema.contextEdges.fromScopeType,
+        fromScopeId: schema.contextEdges.fromScopeId,
+        toScopeType: schema.contextEdges.toScopeType,
+        toScopeId: schema.contextEdges.toScopeId,
+      })
+      .from(schema.contextEdges)
+      .where(and(
+        eq(schema.contextEdges.id, edgeId),
+        eq(schema.contextEdges.origin, 'manual'),
+        isNull(schema.contextEdges.deletedAt),
+      ))
+      .limit(1);
+    if (!edge) return err(domainError('NOT_FOUND', 'manual context edge not found'));
+
+    const fromScopeType = edge.fromScopeType as ContextGraphScopeType;
+    const toScopeType = edge.toScopeType as ContextGraphScopeType;
+    const [from, to] = await Promise.all([
+      this.resolveLiveScope(fromScopeType, edge.fromScopeId),
+      this.resolveLiveScope(toScopeType, edge.toScopeId),
+    ]);
+    if (!from || !to || from.workspaceId !== to.workspaceId) {
+      return err(domainError('NOT_FOUND', 'manual context edge endpoint not found or not active'));
+    }
+    return ok({ edgeId: edge.edgeId, fromScopeType, fromScopeId: edge.fromScopeId, toScopeType, toScopeId: edge.toScopeId });
+  }
+
+  async deleteManualEdge(edgeId: string): Promise<Result<{ ok: true }>> {
+    try {
+      const [deleted] = await this.db
+        .update(schema.contextEdges)
+        .set({ deletedAt: new Date(), updatedAt: new Date() })
+        .where(and(
+          eq(schema.contextEdges.id, edgeId),
+          eq(schema.contextEdges.origin, 'manual'),
+          isNull(schema.contextEdges.deletedAt),
+        ))
+        .returning({ id: schema.contextEdges.id });
+      if (!deleted) return err(domainError('NOT_FOUND', 'manual context edge not found'));
+      return ok({ ok: true });
+    } catch {
+      return err(domainError('INTERNAL', 'context edge delete failed'));
     }
   }
 
@@ -415,6 +535,14 @@ function intersectionSize(left: Set<string>, right: Set<string>): number {
 
 function orderClassifierScopes(left: LiveScope, right: LiveScope): [LiveScope, LiveScope] {
   return scopeStableKey(left).localeCompare(scopeStableKey(right)) <= 0 ? [left, right] : [right, left];
+}
+
+function isSymmetricProjectEdge(cmd: CreateContextEdgeCommand): boolean {
+  return cmd.fromScopeType === 'project' && cmd.toScopeType === 'project' && SYMMETRIC_PROJECT_EDGE_TYPES.includes(cmd.edgeType);
+}
+
+function orderProjectPair(left: string, right: string): [string, string] {
+  return left.localeCompare(right) <= 0 ? [left, right] : [right, left];
 }
 
 function scopeStableKey(scope: LiveScope): string {

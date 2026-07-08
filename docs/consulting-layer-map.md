@@ -425,6 +425,15 @@ classifier edge 생성 기준 = shared tags >= 2
 traverse limit = 12
 ```
 
+2026-07-08 프로젝트 온보딩/설정 레이어 변경:
+
+```text
+- 프로젝트 생성 wizard는 기본 컨설팅 템플릿 자동 적용을 UI에서 opt-out 가능하게 한다.
+- 프로젝트 자체 profile은 `scope_profiles(scope_type='project')`에 저장하고, 생성 후 프로젝트 설정에서 재수정한다.
+- 프로젝트↔프로젝트 수동 연결은 `context_edges`에 저장하되 같은 pair의 `related_to`/`shares_memory_with`가 동시에 live로 남지 않도록 서버에서 무방향 pair 단위로 정규화한다.
+- 프로젝트 설정의 자료실 진입은 전체 자료실이 아니라 해당 project filter를 초기값으로 넘긴다.
+```
+
 ---
 
 ## 5. `consulting_topic_links`: web scope ↔ shared brain 연결

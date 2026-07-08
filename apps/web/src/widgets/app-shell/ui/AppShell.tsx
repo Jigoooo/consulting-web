@@ -6,7 +6,6 @@ import { useAuth } from '../../../lib/useAuth';
 import {
   useWorkspaces,
   useWorkspaceTree,
-  useCreateProject,
   useCreateChannel,
   useCreateTopic,
   useCreateWorkspace,
@@ -41,6 +40,8 @@ import { workspaceModalStore, useWorkspaceModal } from '../../../lib/workspaceMo
 import { ArtifactsSurface } from '../../../components/artifacts/ArtifactsSurface';
 import { LibrarySurface } from '../../../components/library/LibrarySurface';
 import { getContextPanelTabs, resolveWorkspaceModalPresentationKind } from '../model/contextPanelView';
+import { ProjectCreateWizard } from './ProjectCreateWizard';
+import { ProjectSettingsModal } from './ProjectSettingsModal';
 import s from './AppShell.module.css';
 
 /** Persistent 4-pane frame: rail / sidebar(tree) / center(Outlet) / context. */
@@ -101,7 +102,7 @@ function WorkspaceSurfaceModal() {
         description={description}
       >
         {presentationKind === 'library' ? (
-          <LibrarySurface variant="modal" />
+          <LibrarySurface initialProjectId={modal.projectId} variant="modal" />
         ) : presentationKind === 'artifacts' ? (
           <ArtifactsSurface initialProjectId={modal.projectId} variant="modal" />
         ) : presentationKind === 'members' ? (
@@ -346,12 +347,13 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
     // 좌측 선택 채널 하이라이트가 깜빡인다. 이전 값을 유지해 깜빡임을 없앤다.
     placeholderData: keepPreviousData,
   });
-  const createProject = useCreateProject(selected ?? undefined);
   const createChannel = useCreateChannel(selected ?? undefined);
   const createTopic = useCreateTopic(selected ?? undefined);
   const renameNode = useRenameNode(selected ?? undefined);
   const archiveNode = useArchiveNode(selected ?? undefined);
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [projectWizardOpen, setProjectWizardOpen] = useState(false);
+  const [settingsProjectId, setSettingsProjectId] = useState<string | null>(null);
   const archivedScopes = useArchivedScopes(selected ?? undefined, archiveOpen);
   const restoreArchived = useRestoreArchived(selected ?? undefined);
   const { prompt, dialog } = useTextPrompt();
@@ -381,6 +383,7 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
 
   const ws = wsData?.workspaces.find((w) => w.id === selected);
   const wsName = ws?.name ?? user?.displayName ?? '…';
+  const settingsProject = tree?.projects.find((project) => project.id === settingsProjectId) ?? null;
 
   async function onRename(kind: 'projects' | 'channels' | 'topics', id: string, current: string) {
     const name = await prompt('새 이름을 입력하세요', current);
@@ -555,6 +558,25 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
           </div>
         </DialogContent>
       </DialogRoot>
+      <ProjectCreateWizard
+        open={projectWizardOpen}
+        onOpenChange={setProjectWizardOpen}
+        workspaceId={selected ?? undefined}
+        projects={tree?.projects ?? []}
+        onCreated={(result) => {
+          if (result.defaultThreadId) {
+            void router.navigate({ to: '/th/$threadId', params: { threadId: result.defaultThreadId } });
+          }
+          onNavigate?.();
+        }}
+      />
+      <ProjectSettingsModal
+        open={settingsProjectId !== null}
+        onOpenChange={(open) => { if (!open) setSettingsProjectId(null); }}
+        workspaceId={selected ?? undefined}
+        project={settingsProject}
+        projects={tree?.projects ?? []}
+      />
       <div className={s.wsHead}>
         <div className={s.wsIco}>{wsName.slice(0, 1)}</div>
         <div className={s.wsHeadMain}>
@@ -647,6 +669,7 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
                 </span>
                 <RowMenu
                   actions={[
+                    { label: '프로젝트 설정', onSelect: () => setSettingsProjectId(p.id) },
                     { label: '산출물 보기', onSelect: () => workspaceModalStore.open('artifacts', { projectId: p.id }) },
                     { label: '이름 변경', onSelect: () => void onRename('projects', p.id, p.name) },
                     { label: '보관하기', onSelect: () => void onArchive('projects', p.id, p.name) },
@@ -702,13 +725,16 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
             </div>
           );
         })}
-        <InlineCreate
-          level="project"
-          placeholder="프로젝트 추가"
-          busy={createProject.isPending}
-          resetSignal={`${selected ?? ''}:${location.pathname}:${currentTopicId ?? ''}`}
-          onSubmit={(name) => createProject.mutate(name)}
-        />
+        <button
+          type="button"
+          className={s.newProj}
+          onClick={() => setProjectWizardOpen(true)}
+          disabled={!selected}
+        >
+          <span className={`${s.createTrigger} ${s.createProject}`}>
+            <Icon name="plus" size="xs" decorative /> 프로젝트 추가
+          </span>
+        </button>
       </div>
     </div>
   );
