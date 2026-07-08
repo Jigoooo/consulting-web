@@ -106,7 +106,13 @@ export function useRenameNode(workspaceId: string | undefined) {
   return useMutation({
     mutationFn: (input: { kind: 'projects' | 'channels' | 'topics'; id: string; name: string }) =>
       api.renameNode(input.kind, input.id, input.name),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: spaceKeys.tree(workspaceId ?? '') }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: spaceKeys.tree(workspaceId ?? '') });
+      // Project/channel/topic names are also shown in thread breadcrumbs.
+      // Without invalidating thread details, the sidebar updates but the
+      // selected channel header can keep the old name until a hard reload.
+      void qc.invalidateQueries({ queryKey: ['thread'] });
+    },
   });
 }
 

@@ -107,18 +107,21 @@
   --shadow-ring: 0 0 0 1px var(--border-whisper);
   --shadow-card: 0 0 0 1px rgba(31, 33, 36, 0.08), 0 2px 2px rgba(31, 33, 36, 0.035), 0 12px 28px -22px rgba(31, 33, 36, 0.35);
   --shadow-pop: 0 0 0 1px rgba(31, 33, 36, 0.1), 0 18px 55px -24px rgba(31, 33, 36, 0.45);
+  --shadow-1: var(--shadow-card);
 
   /* z-layers — Dialog/Select/Toast portal ordering. */
   --z-overlay: 900;
   --z-dialog: 901;
-  --z-popover: 930;
+  --z-popover: 9999;
   --z-toast: 1000;
 
   /* motion — short, non-bouncy product motion. */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
-  --ease-enter: cubic-bezier(0.05, 0.7, 0.1, 1);
-  --ease-exit: cubic-bezier(0.3, 0, 0.8, 0.15);
-  --ease-emphasized: var(--ease-enter);
+  --ease-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ease-emphasized-accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
+  --ease-enter: var(--ease-emphasized-decelerate);
+  --ease-exit: var(--ease-emphasized-accelerate);
+  --ease-emphasized: var(--ease-emphasized-decelerate);
   --ease-out: var(--ease-standard);
   --ease-spring: var(--ease-enter);
   --dur-fast: 140ms;
@@ -126,6 +129,7 @@
   --dur-enter: 220ms;
   --dur-exit: 140ms;
   --dur-panel: 240ms;
+  --dur-slow: 320ms;
 }
 
 /* Dark layer. Toggled via [data-theme] on <html>; an inline pre-hydration
@@ -181,4 +185,5 @@
   --shadow-ring: 0 0 0 1px var(--border-whisper);
   --shadow-card: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 2px 2px rgba(0, 0, 0, 0.25), 0 12px 28px -20px rgba(0, 0, 0, 0.6);
   --shadow-pop: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 18px 55px -22px rgba(0, 0, 0, 0.7);
+  --shadow-1: var(--shadow-card);
 }

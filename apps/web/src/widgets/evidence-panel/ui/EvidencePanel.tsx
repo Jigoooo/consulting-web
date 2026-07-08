@@ -9,6 +9,7 @@ import { Button } from '../../../shared/ui/button/Button';
 import { Input, Textarea } from '../../../shared/ui/input/Input';
 import { EmptyState, Spinner } from '../../../shared/ui/feedback/EmptyState';
 import { useDelayedFlag } from '../../../shared/lib/useDelayedFlag';
+import { describeVerifierGate } from '../../../shared/lib/verifierGateView';
 import { searchStore } from '../../chat-thread/model/searchStore';
 import s from './EvidencePanel.module.css';
 
@@ -301,8 +302,18 @@ function VerificationView({ isLoading, summary }: { isLoading: boolean; summary:
   }
   const v = summary.verdictSummary;
   const exactness = summary.exactness.latestRun;
+  const gateView = describeVerifierGate(summary.postAnswerVerification.gate);
+  const gateIssues = [...summary.postAnswerVerification.gate.blockers, ...summary.postAnswerVerification.gate.warnings];
   return (
     <div className={s.decisionStack} data-testid="evidence-verification-panel">
+      <div className={s.gateCard} data-gate={gateView.tone} data-testid="verifier-release-gate" title={gateView.title}>
+        <div className={s.gateTop}>
+          <span className={s.gateLabel}>{gateView.label}</span>
+          <span className={s.gateDecision}>{summary.postAnswerVerification.gate.decision}</span>
+        </div>
+        <div className={s.gateDetail}>{gateView.detail}</div>
+        {gateIssues[0] ? <div className={s.gateIssue}>{gateIssues[0].message}</div> : null}
+      </div>
       <div className={s.metricGrid}>
         <Metric label="지지" value={v.supports} tone="good" />
         <Metric label="반박" value={v.refutes + v.mixed} tone="bad" />
@@ -354,7 +365,7 @@ function ScorecardView({ isLoading, summary }: { isLoading: boolean; summary: De
 
 function ReviewQueueView({ isLoading, items }: { isLoading: boolean; items: ReviewItem[] }) {
   if (isLoading) return <PanelLoading label="검토큐 불러오는 중" />;
-  if (items.length === 0) return <EmptyState icon="check" title="열린 검토 항목이 없어요" description="반박/근거부족 claim이 생기면 우선순위순으로 표시됩니다." />;
+  if (items.length === 0) return <EmptyState icon="check" title="열린 검토 항목이 없어요" description="반박되었거나 근거가 부족한 주장이 생기면 우선순위순으로 표시됩니다." />;
   return (
     <div className={s.decisionStack} data-testid="active-review-queue-panel">
       {items.map((item) => (

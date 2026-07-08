@@ -261,6 +261,77 @@ d('Phase 2 — evidence, artifacts, notifications', () => {
     expect(list.artifacts.some((a) => a.id === created.id && a.headVersion === 2)).toBe(true);
   });
 
+  it('A-4/F-VERIFY: blocks final artifact export when the source answer fails verifier gate', async () => {
+    const owner = await makeUser('art-gate-owner');
+    const { project, thread } = await makeSpaces(owner.bearer, owner.personalWorkspaceId);
+    const [assistant] = await db
+      .insert(schema.chatMessages)
+      .values({
+        workspaceId: owner.personalWorkspaceId,
+        threadId: thread.id,
+        role: 'assistant',
+        content: '정원 증가는 인건비 부담을 줄입니다.',
+        runId: 'run_art_gate',
+        finishState: 'complete',
+      })
+      .returning({ id: schema.chatMessages.id });
+    await db.insert(schema.claimVerificationVerdicts).values({
+      workspaceId: owner.personalWorkspaceId,
+      threadId: thread.id,
+      assistantMessageId: assistant!.id,
+      claimId: 'CL-EXPORT-1',
+      claimText: '정원 증가는 인건비 부담을 줄입니다.',
+      evidenceRef: 'EV-EXPORT-1',
+      verdict: 'refutes',
+      confidence: '0.94',
+      contradictedTerms: ['증가↔감소'],
+      rationale: '핵심 claim이 근거와 모순됩니다.',
+      verifier: 'fixture',
+    });
+    await db.insert(schema.exactnessRuns).values({
+      workspaceId: owner.personalWorkspaceId,
+      threadId: thread.id,
+      assistantMessageId: assistant!.id,
+      required: true,
+      status: 'blocked',
+      queryHash: 'export-gate-fixture',
+      checks: [],
+      summary: '수치 검증 실패',
+      answerInstruction: 'export 금지',
+    });
+
+    const created = CreateArtifactResponseSchema.parse(
+      (await request(app.getHttpServer())
+        .post('/artifacts')
+        .set('authorization', owner.bearer)
+        .send({
+          projectId: project.id,
+          title: '검증 실패 산출물',
+          content: '# 검증 실패 산출물\n\n정원 증가는 인건비 부담을 줄입니다.',
+          note: '검증 실패 소스에서 저장',
+          sourceThreadId: thread.id,
+          sourceMessageId: assistant!.id,
+        })
+        .expect(201)).body,
+    );
+
+    const response = await request(app.getHttpServer())
+      .get(`/artifacts/${created.id}/export?format=pdf`)
+      .set('authorization', owner.bearer)
+      .expect(409);
+
+    expect(response.body).toMatchObject({
+      code: 'VERIFIER_GATE_BLOCKED',
+      gate: {
+        decision: 'BLOCKED',
+        blockers: expect.arrayContaining([
+          expect.objectContaining({ code: 'exactness_blocked' }),
+          expect.objectContaining({ code: 'high_impact_refute', claimId: 'CL-EXPORT-1' }),
+        ]),
+      },
+    });
+  });
+
   it('A-2: outsider cannot read or write artifacts (tenant isolation)', async () => {
     const owner = await makeUser('art-iso-owner');
     const outsider = await makeUser('art-iso-out');

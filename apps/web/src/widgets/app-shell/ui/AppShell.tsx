@@ -30,6 +30,7 @@ import type { IconName } from '../../../shared/icons/registry';
 import { Button } from '../../../shared/ui/button/Button';
 import { Input } from '../../../shared/ui/input/Input';
 import { Skeleton } from '../../../shared/ui/skeleton/Skeleton';
+import { EmptyState } from '../../../shared/ui/feedback/EmptyState';
 import { useDelayedFlag } from '../../../shared/lib/useDelayedFlag';
 import { EvidencePanel } from '../../evidence-panel/ui/EvidencePanel';
 import { SearchResultsPanel } from '../../evidence-panel/ui/SearchResultsPanel';
@@ -82,17 +83,26 @@ export function AppShell({ children }: { children: ReactNode }) {
 function WorkspaceSurfaceModal() {
   const modal = useWorkspaceModal();
   const open = modal.kind !== null;
+  const title = modal.kind === 'library' ? '자료실' : modal.kind === 'members' ? '워크스페이스 멤버' : '산출물 보관함';
+  const description =
+    modal.kind === 'library'
+      ? '대화 흐름은 그대로 두고 자료만 확인합니다.'
+      : modal.kind === 'members'
+        ? '이 워크스페이스에 참여한 사람과 초대를 관리합니다.'
+        : '대화 흐름은 그대로 두고 확정 문서만 확인합니다.';
   return (
     <DialogRoot open={open} onOpenChange={(next) => { if (!next) workspaceModalStore.close(); }}>
       <DialogContent
-        className={s.workspaceSurfaceDialog}
-        title={modal.kind === 'library' ? '자료실' : '산출물 보관함'}
-        description={modal.kind === 'library' ? '대화 흐름은 그대로 두고 자료만 확인합니다.' : '대화 흐름은 그대로 두고 확정 문서만 확인합니다.'}
+        className={modal.kind === 'members' ? s.membersDialog : s.workspaceSurfaceDialog}
+        title={title}
+        description={description}
       >
         {modal.kind === 'library' ? (
           <LibrarySurface variant="modal" />
         ) : modal.kind === 'artifacts' ? (
-          <ArtifactsSurface initialProjectId={modal.projectId} variant="modal" onClose={() => workspaceModalStore.close()} />
+          <ArtifactsSurface initialProjectId={modal.projectId} variant="modal" />
+        ) : modal.kind === 'members' ? (
+          <WorkspaceMembersPanel />
         ) : null}
       </DialogContent>
     </DialogRoot>
@@ -458,6 +468,18 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
     setArchiveBusy(true);
     try {
       await archiveNode.mutateAsync({ kind: pendingArchive.kind, id: pendingArchive.id });
+      const activeScope = activeThreadDetail.data;
+      const archivedCurrentView = Boolean(activeScope && (
+        (pendingArchive.kind === 'projects' && activeScope.projectId === pendingArchive.id) ||
+        (pendingArchive.kind === 'channels' && activeScope.channelId === pendingArchive.id) ||
+        (pendingArchive.kind === 'topics' && activeScope.topicId === pendingArchive.id)
+      ));
+      if (archivedCurrentView) {
+        setPendingTopicId(null);
+        lastClickedTopicRef.current = null;
+        await qc.invalidateQueries({ queryKey: ['thread'] });
+        await router.navigate({ to: '/' });
+      }
       toast('success', '보관했어요.');
       setPendingArchive(null);
     } catch {
@@ -535,11 +557,23 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
       </DialogRoot>
       <div className={s.wsHead}>
         <div className={s.wsIco}>{wsName.slice(0, 1)}</div>
-        <div>
+        <div className={s.wsHeadMain}>
           <div className={s.wsName}>{wsName}</div>
           <div className={s.wsSub}>{ws ? `${ws.role}${ws.isPersonal ? ' · 개인' : ''}` : ''}</div>
         </div>
-        <NotificationBell />
+        <div className={s.wsHeadActions}>
+          <button
+            type="button"
+            className={s.wsHeadBtn}
+            title="워크스페이스 멤버"
+            aria-label="워크스페이스 멤버"
+            disabled={!selected}
+            onClick={() => workspaceModalStore.open('members')}
+          >
+            <Icon name="user-plus" size="sm" decorative />
+          </button>
+          <NotificationBell />
+        </div>
       </div>
       <button
         type="button"
@@ -566,7 +600,7 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
         <Icon name="files" size="sm" decorative />
         <span>
           <strong>자료실</strong>
-          <small>근거·업로드 문서·산출물 모아보기</small>
+          <small>근거·업로드 문서 모아보기</small>
         </span>
       </button>
       <button type="button" className={s.workspaceTool} onClick={() => setArchiveOpen(true)} disabled={!selected}>
@@ -695,36 +729,14 @@ const roleLabel: Record<string, string> = {
   viewer: '뷰어',
 };
 
-function ContextPanel({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+function WorkspaceMembersPanel() {
   const selected = useSelectedWorkspace();
   const { data: members } = useMembers(selected ?? undefined);
   const toast = useToast();
-  const activeThread = useActiveThread();
-  const searchState = useSearchState();
-  // #6: resolve the active thread's project so the evidence panel can offer a
-  // project-wide scope toggle.
-  const activeThreadDetail = useQuery({
-    queryKey: ['thread', activeThread],
-    queryFn: () => api.threadDetail(activeThread!),
-    enabled: activeThread !== null,
-    placeholderData: keepPreviousData,
-  });
-  const activeProjectId = activeThreadDetail.data?.projectId;
-  const [tab, setTab] = useState<'evidence' | 'members' | 'search'>('members');
   const [inviteRole, setInviteRole] = useState<'editor' | 'viewer' | 'admin'>('editor');
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const inviteRoleIndex = inviteRole === 'editor' ? 0 : inviteRole === 'viewer' ? 1 : 2;
-  const hasSearch = Boolean(searchState.query) && searchState.threadId === activeThread;
-  const searchCount = searchState.results.length + searchState.files.length + searchState.evidence.length;
-
-  // Auto-switch to evidence when a thread opens (2-A E-4); to search when a
-  // search is active (F3).
-  useEffect(() => {
-    if (hasSearch) setTab('search');
-    else if (activeThread) setTab('evidence');
-    else setTab('members');
-  }, [activeThread, hasSearch]);
 
   async function createInvite() {
     if (!selected || inviteBusy) return;
@@ -753,6 +765,87 @@ function ContextPanel({ collapsed, onToggle }: { collapsed: boolean; onToggle: (
   }
 
   return (
+    <div className={s.membersModalBody}>
+      <div className={s.ctxSection}>
+        <div className={s.ctxTitle}>멤버 {members?.members.length ? `· ${members.members.length}` : ''}</div>
+        {members?.members.length ? (
+          members.members.map((m) => (
+            <div key={m.userId} className={s.member}>
+              <div className={s.memberAv}>{m.displayName.slice(0, 1)}</div>
+              <div className={s.memberName}>{m.displayName}</div>
+              <div className={s.memberRole}>{roleLabel[m.role] ?? m.role}</div>
+            </div>
+          ))
+        ) : (
+          <div className={s.ctxHint}>아직 멤버가 없어요. 아래에서 초대 링크를 만들어 보세요.</div>
+        )}
+      </div>
+
+      <div className={s.ctxSection}>
+        <div className={s.ctxTitle}>초대</div>
+        <div
+          className={s.roleSeg}
+          role="radiogroup"
+          aria-label="초대 권한 선택"
+          style={{ '--role-index': inviteRoleIndex } as CSSProperties}
+        >
+          <span className={s.roleSegThumb} aria-hidden="true" />
+          {(['editor', 'viewer', 'admin'] as const).map((r) => (
+            <button
+              key={r}
+              type="button"
+              role="radio"
+              aria-checked={inviteRole === r}
+              className={`${s.roleSegItem} ${inviteRole === r ? s.roleSegOn : ''}`}
+              onClick={() => setInviteRole(r)}
+            >
+              {roleLabel[r]}
+            </button>
+          ))}
+        </div>
+        <Button type="button" variant="primary" size="sm" className={s.inviteBtn} disabled={inviteBusy || !selected} onClick={() => void createInvite()}>
+          {inviteBusy ? '생성 중…' : '초대 링크 생성'}
+        </Button>
+        {inviteLink ? (
+          <div
+            className={s.inviteLink}
+            title="클릭하여 복사"
+            onClick={() => {
+              void navigator.clipboard.writeText(inviteLink).then(() => toast('success', '복사했어요.'));
+            }}
+          >
+            {inviteLink}
+          </div>
+        ) : null}
+        <div className={s.ctxHint}>링크를 받은 사람은 가입/로그인 후 이 워크스페이스에 참여합니다. 7일 후 만료.</div>
+      </div>
+    </div>
+  );
+}
+
+function ContextPanel({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  const activeThread = useActiveThread();
+  const searchState = useSearchState();
+  // #6: resolve the active thread's project so the evidence panel can offer a
+  // project-wide scope toggle.
+  const activeThreadDetail = useQuery({
+    queryKey: ['thread', activeThread],
+    queryFn: () => api.threadDetail(activeThread!),
+    enabled: activeThread !== null,
+    placeholderData: keepPreviousData,
+  });
+  const activeProjectId = activeThreadDetail.data?.projectId;
+  const [tab, setTab] = useState<'evidence' | 'search'>('evidence');
+  const hasSearch = Boolean(searchState.query) && searchState.threadId === activeThread;
+  const searchCount = searchState.results.length + searchState.files.length + searchState.evidence.length;
+
+  // Auto-switch to search when a search is active (F3); otherwise show evidence.
+  useEffect(() => {
+    if (hasSearch) setTab('search');
+    else setTab('evidence');
+  }, [activeThread, hasSearch]);
+
+  return (
     <div className={`${s.context} ${collapsed ? s.contextCollapsed : ''}`}>
       <button
         type="button"
@@ -765,102 +858,43 @@ function ContextPanel({ collapsed, onToggle }: { collapsed: boolean; onToggle: (
       </button>
       <div className={`${s.contextContent} ${collapsed ? s.contextContentHidden : ''}`} aria-hidden={collapsed} inert={collapsed ? true : undefined}>
         {activeThread ? (
-          <div className={s.ctxTabs}>
-            <button
-              type="button"
-              className={`${s.ctxTab} ${tab === 'evidence' ? s.ctxTabOn : ''}`}
-              onClick={() => setTab('evidence')}
-            >
-              근거
-            </button>
-            {hasSearch ? (
+          <>
+            <div className={s.ctxTabs}>
               <button
                 type="button"
-                className={`${s.ctxTab} ${tab === 'search' ? s.ctxTabOn : ''}`}
-                onClick={() => setTab('search')}
+                className={`${s.ctxTab} ${tab === 'evidence' ? s.ctxTabOn : ''}`}
+                onClick={() => setTab('evidence')}
               >
-                검색 {searchCount}
+                근거
               </button>
-            ) : null}
-            <button
-              type="button"
-              className={`${s.ctxTab} ${tab === 'members' ? s.ctxTabOn : ''}`}
-              onClick={() => setTab('members')}
-            >
-              워크스페이스 멤버
-            </button>
-          </div>
-        ) : null}
-
-        {tab === 'search' && hasSearch ? (
-          <div className={s.ctxSection}>
-            <div className={s.ctxTitle}>검색 결과</div>
-            <SearchResultsPanel onJump={(index) => searchStore.focusIndex(index)} />
-          </div>
-        ) : null}
-
-        {tab === 'evidence' && activeThread ? (
-          <div className={s.ctxSection}>
-            <div className={s.ctxTitle}>근거 자료</div>
-            <EvidencePanel threadId={activeThread} {...(activeProjectId ? { projectId: activeProjectId } : {})} />
-          </div>
-        ) : tab === 'members' || !activeThread ? (
-          <>
-            <div className={s.ctxSection}>
-              <div className={s.ctxTitle}>워크스페이스 멤버 {members?.members.length ? `· ${members.members.length}` : ''}</div>
-              {members?.members.length ? (
-                members.members.map((m) => (
-                  <div key={m.userId} className={s.member}>
-                    <div className={s.memberAv}>{m.displayName.slice(0, 1)}</div>
-                    <div className={s.memberName}>{m.displayName}</div>
-                    <div className={s.memberRole}>{roleLabel[m.role] ?? m.role}</div>
-                  </div>
-                ))
-              ) : (
-                <div className={s.ctxHint}>아직 멤버가 없어요. 아래에서 초대 링크를 만들어 보세요.</div>
-              )}
-            </div>
-
-            <div className={s.ctxSection}>
-              <div className={s.ctxTitle}>워크스페이스 초대</div>
-              <div
-                className={s.roleSeg}
-                role="radiogroup"
-                aria-label="초대 권한 선택"
-                style={{ '--role-index': inviteRoleIndex } as CSSProperties}
-              >
-                <span className={s.roleSegThumb} aria-hidden="true" />
-                {(['editor', 'viewer', 'admin'] as const).map((r) => (
-                  <button
-                    key={r}
-                    type="button"
-                    role="radio"
-                    aria-checked={inviteRole === r}
-                    className={`${s.roleSegItem} ${inviteRole === r ? s.roleSegOn : ''}`}
-                    onClick={() => setInviteRole(r)}
-                  >
-                    {roleLabel[r]}
-                  </button>
-                ))}
-              </div>
-              <Button type="button" variant="primary" size="sm" className={s.inviteBtn} disabled={inviteBusy || !selected} onClick={() => void createInvite()}>
-                {inviteBusy ? '생성 중…' : '초대 링크 생성'}
-              </Button>
-              {inviteLink ? (
-                <div
-                  className={s.inviteLink}
-                  title="클릭하여 복사"
-                  onClick={() => {
-                    void navigator.clipboard.writeText(inviteLink).then(() => toast('success', '복사했어요.'));
-                  }}
+              {hasSearch ? (
+                <button
+                  type="button"
+                  className={`${s.ctxTab} ${tab === 'search' ? s.ctxTabOn : ''}`}
+                  onClick={() => setTab('search')}
                 >
-                  {inviteLink}
-                </div>
+                  검색 {searchCount}
+                </button>
               ) : null}
-              <div className={s.ctxHint}>링크를 받은 사람은 가입/로그인 후 이 워크스페이스에 참여합니다. 7일 후 만료.</div>
             </div>
+
+            {tab === 'search' && hasSearch ? (
+              <div className={s.ctxSection}>
+                <div className={s.ctxTitle}>검색 결과</div>
+                <SearchResultsPanel onJump={(index) => searchStore.focusIndex(index)} />
+              </div>
+            ) : (
+              <div className={s.ctxSection}>
+                <div className={s.ctxTitle}>근거 자료</div>
+                <EvidencePanel threadId={activeThread} {...(activeProjectId ? { projectId: activeProjectId } : {})} />
+              </div>
+            )}
           </>
-        ) : null}
+        ) : (
+          <div className={s.ctxSection}>
+            <EmptyState icon="pin" title="채널을 열어보세요" description="채널 대화를 열면 이 답변의 근거와 검증이 여기에 정리됩니다." />
+          </div>
+        )}
       </div>
     </div>
   );

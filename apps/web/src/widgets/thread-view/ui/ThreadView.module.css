@@ -718,14 +718,36 @@
   gap: 8px;
 }
 .verificationBadge,
-.verificationMiniBadge {
+.verificationMiniBadge,
+.verificationGateBadge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
   border: 1px solid var(--border-hair);
+  border-radius: 999px;
   font-weight: 750;
   white-space: nowrap;
+}
+.verificationGateBadge {
+  min-height: 22px;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+}
+.verificationGateBadge_good {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 30%, var(--border-hair));
+  background: color-mix(in srgb, var(--green) 8%, transparent);
+}
+.verificationGateBadge_warn {
+  color: var(--amber, #b7791f);
+  border-color: color-mix(in srgb, var(--amber, #b7791f) 34%, var(--border-hair));
+  background: color-mix(in srgb, var(--amber, #b7791f) 10%, transparent);
+}
+.verificationGateBadge_bad {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 32%, var(--border-hair));
+  background: color-mix(in srgb, var(--red) 8%, transparent);
 }
 .verificationBadge {
   min-height: 23px;
@@ -1307,11 +1329,13 @@
   text-align: left;
   transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
 }
-.modelRow:hover,
+.modelRow:hover {
+  border-color: var(--border-strong, var(--border-whisper));
+  background: var(--surface-hover);
+}
 .modelRowOn {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-whisper));
-  background: var(--accent-soft);
-  box-shadow: inset 3px 0 0 var(--accent);
+  border-color: var(--border-strong, var(--border-whisper));
+  background: var(--surface-panel);
 }
 .modelRow strong,
 .modelRow em {

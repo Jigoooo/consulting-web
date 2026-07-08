@@ -65,6 +65,20 @@ function fmtSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
 }
 
+function friendlyChatStreamError(message: string | undefined): string {
+  const raw = message?.trim() ?? '';
+  if (/Hermes run start failed \(401\)|invalid api key/iu.test(raw)) {
+    return 'AI 실행 인증이 맞지 않아 답변을 시작하지 못했어요. 서버의 Hermes API 키를 갱신한 뒤 다시 시도해주세요.';
+  }
+  if (/Hermes run start failed \((?:5\d\d|502|503|504)\)/iu.test(raw)) {
+    return 'AI 실행 서버가 일시적으로 응답하지 않아요. 잠시 후 다시 시도해주세요.';
+  }
+  if (/Hermes run start failed|Hermes proxy failed|Hermes run events failed/iu.test(raw)) {
+    return 'AI 실행을 시작하지 못했어요. 잠시 후 다시 시도해주세요.';
+  }
+  return raw || '응답을 가져오지 못했어요. 다시 시도해주세요.';
+}
+
 function runtimeFlowCopy(mode: RuntimeFlowMode, activeTool: string | null): { label: string; detail: string } | null {
   if (mode === 'idle') return null;
   if (mode === 'queueing') return { label: 'Queueing', detail: 'Hermes run을 시작하는 중' };
@@ -539,7 +553,7 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
         } else if (event.type === 'error') {
           cancelFlush();
           setRuntimeFlow('idle');
-          patchTurn(aiTurn.id, { streaming: false, error: event.message });
+          patchTurn(aiTurn.id, { streaming: false, error: friendlyChatStreamError(event.message) });
           setRunStatus((prev) => ({
             ...(prev ?? { startedAt: Date.now(), state: 'error' as const }),
             finishedAt: Date.now(),
@@ -879,7 +893,7 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
 
       <div style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div className={s.stream} ref={streamRef} style={{ flex: 1 }}>
-          {showHistorySkeleton ? (
+          {showHistorySkeleton && persisted.length === 0 && live.length === 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
               {[0, 1, 2].map((i) => (
                 <SkeletonMessage key={i} />
@@ -887,7 +901,7 @@ export function ChatThread({ threadId, title, breadcrumb, focusMessageId }: { th
             </div>
           ) : null}
 
-          {!history.isLoading && persisted.length === 0 && live.length === 0 ? (
+          {!history.isLoading && !showHistorySkeleton && persisted.length === 0 && live.length === 0 ? (
             <EmptyState icon="bot" title="지구에게 물어보세요" description="필요한 맥락을 짧게 남기면 바로 이어서 작업합니다." />
           ) : null}
 

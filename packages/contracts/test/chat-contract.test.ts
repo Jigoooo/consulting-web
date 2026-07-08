@@ -82,6 +82,33 @@ describe('chat stream contracts', () => {
     expect(ListMessagesPageResponseSchema.parse(page)).toEqual(page);
   });
 
+  it('accepts persisted assistant verification gate badges', () => {
+    const message = {
+      id: uuid,
+      role: 'assistant' as const,
+      content: '검증된 답변',
+      authorUserId: null,
+      authorName: null,
+      runId: 'run_1',
+      finishState: 'complete' as const,
+      createdAt: '2026-07-05T00:00:00.000Z',
+      verification: {
+        status: 'refuted' as const,
+        badgeLabel: '반박됨' as const,
+        counts: { supports: 0, refutes: 1, mixed: 0, notEnoughInfo: 0 },
+        topRationale: '근거가 반대 방향입니다.',
+        claims: [{ claimId: 'MSG-1', claimText: '매출은 증가했다.', verdict: 'refutes' as const, confidence: 0.92 }],
+        gate: {
+          decision: 'BLOCKED' as const,
+          blockers: [{ code: 'high_impact_refute' as const, severity: 'blocker' as const, message: '중요 claim이 반박되었습니다.', claimId: 'MSG-1' }],
+          warnings: [],
+        },
+      },
+    };
+    const page = { messages: [message], hasOlder: false, hasNewer: false, olderCursor: uuid, newerCursor: uuid };
+    expect(ListMessagesPageResponseSchema.parse(page)).toEqual(page);
+  });
+
   it('accepts typed thread search results across messages, files, and evidence', () => {
     const payload = {
       results: [{ id: uuid, role: 'assistant', snippet: '창원 인구 근거', createdAt: '2026-07-05T00:00:00.000Z', matchKind: 'text' }],

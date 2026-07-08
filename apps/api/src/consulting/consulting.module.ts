@@ -7,6 +7,7 @@ import { EvidenceSufficiencyEvaluator } from './evidence-sufficiency-evaluator.s
 import { EvidenceDecisionStore } from './evidence-decision.store.js';
 import { EvidenceToDecisionService } from './evidence-to-decision.service.js';
 import { ExactnessGateService } from './exactness-gate.service.js';
+import { VerifierGatePolicyService } from './verifier-gate-policy.service.js';
 import { ClaimVerifierService, DisabledLlmStrictJsonVerifier, HermesStrictJsonVerifier, LocalNliProvider } from './claim-verifier.service.js';
 import { DocumentUnitEmbeddingService } from './document-unit-embedding.service.js';
 import { LocalVisualHashProvider } from './local-visual-hash.provider.js';
@@ -36,6 +37,7 @@ import { SpacesModule } from '../spaces/spaces.module.js';
     { provide: DisabledLlmStrictJsonVerifier, useClass: HermesStrictJsonVerifier },
     ClaimVerifierService,
     ExactnessGateService,
+    VerifierGatePolicyService,
     LocalVisualHashProvider,
     VoyageMultimodalProvider,
     DocumentUnitEmbeddingService,
@@ -45,6 +47,6 @@ import { SpacesModule } from '../spaces/spaces.module.js';
     { provide: CONSULTING_WEB_INGEST_RUNNER, useValue: defaultConsultingWebIngestRunner },
     ConsultingWebIngestWorker,
   ],
-  exports: [ConsultingTopicResolver, TelegramTopicRegistryService, ConsultingGraphRagBridge, CitationPostCheckService, EvidenceSufficiencyEvaluator, EvidenceDecisionStore, EvidenceToDecisionService, LocalNliProvider, DisabledLlmStrictJsonVerifier, ClaimVerifierService, ExactnessGateService, LocalVisualHashProvider, VoyageMultimodalProvider, DocumentUnitEmbeddingService, VisualDocumentSearchService, ConsultingMemoryContextBuilder, ConsultingWebIngestService],
+  exports: [ConsultingTopicResolver, TelegramTopicRegistryService, ConsultingGraphRagBridge, CitationPostCheckService, EvidenceSufficiencyEvaluator, EvidenceDecisionStore, EvidenceToDecisionService, LocalNliProvider, DisabledLlmStrictJsonVerifier, ClaimVerifierService, ExactnessGateService, VerifierGatePolicyService, LocalVisualHashProvider, VoyageMultimodalProvider, DocumentUnitEmbeddingService, VisualDocumentSearchService, ConsultingMemoryContextBuilder, ConsultingWebIngestService],
 })
 export class ConsultingModule {}

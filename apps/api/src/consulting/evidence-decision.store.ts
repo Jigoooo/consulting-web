@@ -4,9 +4,10 @@ import { schema } from '@consulting/db-schema';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import type { EvidenceDecisionSummaryResponse, ReviewQueueResponse } from '@consulting/contracts';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
-import { EvidenceToDecisionService, type ClaimInput, type DecisionRating, type EvidenceInput, type ReviewInput } from './evidence-to-decision.service.js';
+import { EvidenceToDecisionService, type ClaimInput, type ClaimVerdict, type DecisionRating, type EvidenceInput, type ReviewInput } from './evidence-to-decision.service.js';
 import { ClaimVerifierService } from './claim-verifier.service.js';
-import { ExactnessGateService, type ExactnessGateResult } from './exactness-gate.service.js';
+import { ExactnessGateService, type ExactnessGateResult, type ExactnessRunStatus } from './exactness-gate.service.js';
+import { VerifierGatePolicyService, type VerifierGateResult } from './verifier-gate-policy.service.js';
 
 const FACTUAL_RE = /(이다|입니다|한다|합니다|된다|됩니다|있다|있습니다|없다|없습니다|필요|확정|증가|감소|부담|영향|제시|늘려|줄어|higher|lower|increase|decrease)/iu;
 
@@ -57,6 +58,7 @@ export class EvidenceDecisionStore {
     @Inject(EvidenceToDecisionService) private readonly engine: EvidenceToDecisionService,
     @Inject(ClaimVerifierService) private readonly verifier: ClaimVerifierService,
     @Inject(ExactnessGateService) private readonly exactness: ExactnessGateService,
+    @Inject(VerifierGatePolicyService) private readonly gatePolicy: VerifierGatePolicyService,
   ) {}
 
   async recordCompletedAnswer(input: {
@@ -124,6 +126,7 @@ export class EvidenceDecisionStore {
     const refuted = lattice.summary.refutes + lattice.summary.mixed;
     const unsupported = lattice.summary.notEnoughInfo;
     const claimCount = Math.max(1, lattice.summary.claimCount);
+    const verifierGate = this.gatePolicy.evaluate({ mode: 'report_decision', exactnessStatus: exactnessRun.status, citationIssueCount: 0, verdicts: lattice.verdicts });
     const ratings: DecisionRating[] = [
       { alternativeId: 'answer_as_written', criterionId: 'support', score: supported / claimCount, uncertainty: unsupported / claimCount, evidenceIds: evidenceRows.map((row) => row.id).slice(0, 3) },
       { alternativeId: 'answer_as_written', criterionId: 'contradiction_risk', score: refuted / claimCount, uncertainty: unsupported / claimCount, evidenceIds: [] },
@@ -149,7 +152,7 @@ export class EvidenceDecisionStore {
         threadId: input.threadId,
         question: scorecard.question,
         recommendedAlternativeId: scorecard.recommendedAlternativeId,
-        scoreSummary: { runId: input.runId, source: 'post_answer_verification_v1', verificationMetrics: verification.metrics, verifier: verification.verifier },
+        scoreSummary: { runId: input.runId, source: 'post_answer_verification_v1', verificationMetrics: verification.metrics, verifier: verification.verifier, verifierGate },
       })
       .returning({ id: schema.decisionScorecards.id });
     if (scorecardRow) {
@@ -320,6 +323,13 @@ export class EvidenceDecisionStore {
       if (!isMissingRelationError(error)) throw error;
     }
     const latestExactness = exactnessRows[0];
+    const latestExactnessStatus = latestExactness?.status === 'blocked' || latestExactness?.status === 'passed' || latestExactness?.status === 'skipped' ? latestExactness.status : undefined;
+    const reportGate = this.gatePolicy.evaluate({
+      mode: 'report_decision',
+      ...(latestExactnessStatus ? { exactnessStatus: latestExactnessStatus } : {}),
+      citationIssueCount: 0,
+      verdicts: verdictRows.map(verdictRowForGate),
+    });
     const checkedMessageIds = new Set(verdictRows.map((row) => row.claimId.split('-').slice(0, 2).join('-')));
     return {
       verdictSummary,
@@ -359,6 +369,7 @@ export class EvidenceDecisionStore {
         unsupportedCount: verdictSummary.notEnoughInfo,
         refutedCount: verdictSummary.refutes + verdictSummary.mixed,
         verificationMetrics: verificationMetricsForResponse(scorecard?.scoreSummary),
+        gate: reportGate,
       },
       exactness: {
         latestRun: latestExactness
@@ -415,11 +426,79 @@ export class EvidenceDecisionStore {
       })),
     };
   }
+
+  /**
+   * Final-export gate for a single assistant message. Aggregates that message's
+   * persisted claim verdicts + latest exactness run and evaluates the strictest
+   * ('final_export') policy so PDF/DOCX rendering can be blocked before it runs.
+   */
+  async gateForAssistantMessage(assistantMessageId: string): Promise<VerifierGateResult> {
+    const verdictRows = await this.db
+      .select({
+        claimId: schema.claimVerificationVerdicts.claimId,
+        claimText: schema.claimVerificationVerdicts.claimText,
+        evidenceRef: schema.claimVerificationVerdicts.evidenceRef,
+        evidenceItemId: schema.claimVerificationVerdicts.evidenceItemId,
+        verdict: schema.claimVerificationVerdicts.verdict,
+        confidence: schema.claimVerificationVerdicts.confidence,
+        rationale: schema.claimVerificationVerdicts.rationale,
+      })
+      .from(schema.claimVerificationVerdicts)
+      .where(and(eq(schema.claimVerificationVerdicts.assistantMessageId, assistantMessageId), isNull(schema.claimVerificationVerdicts.deletedAt)))
+      .orderBy(desc(schema.claimVerificationVerdicts.createdAt))
+      .limit(100);
+
+    let exactnessStatus: ExactnessRunStatus | undefined;
+    try {
+      const exactnessRows = await this.db
+        .select({ status: schema.exactnessRuns.status })
+        .from(schema.exactnessRuns)
+        .where(and(eq(schema.exactnessRuns.assistantMessageId, assistantMessageId), isNull(schema.exactnessRuns.deletedAt)))
+        .orderBy(desc(schema.exactnessRuns.createdAt))
+        .limit(1);
+      const status = exactnessRows[0]?.status;
+      if (status === 'blocked' || status === 'passed' || status === 'skipped') exactnessStatus = status;
+    } catch (error) {
+      if (!isMissingRelationError(error)) throw error;
+    }
+
+    return this.gatePolicy.evaluate({
+      mode: 'final_export',
+      ...(exactnessStatus ? { exactnessStatus } : {}),
+      citationIssueCount: 0,
+      verdicts: verdictRows.map(verdictRowForGate),
+    });
+  }
 }
 
 type ExactnessCheckForResponse = NonNullable<EvidenceDecisionSummaryResponse['exactness']['latestRun']>['checks'][number];
 type ExactnessPassForResponse = ExactnessCheckForResponse['passes'][number];
 type VerificationMetricsForResponse = EvidenceDecisionSummaryResponse['postAnswerVerification']['verificationMetrics'];
+
+type PersistedVerdictRowForGate = {
+  claimId: string;
+  claimText: string;
+  evidenceItemId: string | null;
+  evidenceRef: string | null;
+  verdict: string;
+  confidence: unknown;
+  rationale: string;
+};
+
+function verdictRowForGate(row: PersistedVerdictRowForGate): ClaimVerdict {
+  const verdict = row.verdict === 'refutes' || row.verdict === 'mixed' || row.verdict === 'not_enough_info' ? row.verdict : 'supports';
+  return {
+    claimId: row.claimId,
+    claimText: row.claimText,
+    evidenceId: row.evidenceItemId ?? row.evidenceRef,
+    verdict,
+    confidence: clamp01(toNumber(row.confidence)),
+    matchedTerms: [],
+    contradictedTerms: [],
+    rationale: row.rationale,
+    decisionImpact: verdict === 'refutes' || verdict === 'mixed' ? 0.82 : verdict === 'not_enough_info' ? 0.62 : 0.5,
+  };
+}
 
 function verificationMetricsForResponse(scoreSummary: unknown): VerificationMetricsForResponse {
   const summary = isRecord(scoreSummary) ? scoreSummary : {};

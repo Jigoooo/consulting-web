@@ -32,6 +32,7 @@ import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 import type { Response } from 'express';
 import { ArtifactStore } from './artifact.store.js';
 import { ArtifactExportService, type ArtifactExportFormat } from './artifact-export.service.js';
+import { EvidenceDecisionStore } from '../consulting/evidence-decision.store.js';
 
 /** Roles allowed to write artifacts. viewer/commenter are read-only. */
 const WRITE_ROLES = new Set(['owner', 'admin', 'editor']);
@@ -45,6 +46,7 @@ export class ArtifactsController {
     @Inject(NotificationStore) private readonly notifications: NotificationStore,
     @Inject(DRIZZLE) private readonly db: Db,
     @Inject(ArtifactExportService) private readonly exporter: ArtifactExportService,
+    @Inject(EvidenceDecisionStore) private readonly gateStore: EvidenceDecisionStore,
   ) {}
 
   @Get('workspaces/:workspaceId')
@@ -94,6 +96,20 @@ export class ArtifactsController {
     }
     const version = detail.versions.find((v) => v.versionNo === versionNo);
     if (!version) throw new NotFoundException({ code: 'NOT_FOUND', message: 'artifact version not found' });
+
+    // Final-export verifier gate: block PDF/DOCX rendering when the source
+    // assistant message's claims are BLOCKED (high-impact refute / exactness
+    // blocked / etc). Runs BEFORE the exporter so no blocked artifact is rendered.
+    if (version.sourceMessageId) {
+      const gate = await this.gateStore.gateForAssistantMessage(version.sourceMessageId);
+      if (gate.decision === 'BLOCKED') {
+        throw new BadRequestException({
+          code: 'VERIFIER_GATE_BLOCKED',
+          message: '검증 게이트가 이 산출물의 내보내기를 차단했습니다. 핵심 주장의 근거를 보강한 뒤 다시 시도하세요.',
+          gate,
+        });
+      }
+    }
 
     const exported = await this.exporter.export({
       title: detail.title,

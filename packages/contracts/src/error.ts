@@ -14,6 +14,7 @@ export const ApiErrorCodeSchema = z.enum([
   'PARENT_ARCHIVED',
   'IDEMPOTENCY',
   'PRECONDITION',
+  'VERIFIER_GATE_BLOCKED',
   'INTERNAL',
 ]);
 export type ApiErrorCode = z.infer<typeof ApiErrorCodeSchema>;

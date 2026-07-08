@@ -20,7 +20,6 @@ import s from './Library.module.css';
 const KIND_ICON: Record<string, IconName> = {
   evidence: 'pin',
   attachment: 'files',
-  artifact: 'file-text',
 };
 const TYPE_LABEL: Record<string, string> = {
   gbrain: '지식그래프',
@@ -29,14 +28,12 @@ const TYPE_LABEL: Record<string, string> = {
   tool: '도구',
   manual: '직접 첨부',
   document: '업로드 문서',
-  artifact: '산출물',
 };
 const TYPE_OPTIONS = [
   { value: '', label: '전체 종류' },
   { value: 'document', label: '업로드 문서' },
   { value: 'gbrain', label: '지식그래프 근거' },
   { value: 'web', label: '웹 근거' },
-  { value: 'artifact', label: '산출물' },
   { value: 'manual', label: '직접 첨부 근거' },
 ];
 
@@ -61,20 +58,14 @@ export function LibrarySurface({
   const showLoading = useDelayedFlag(isLoading, 300, 260);
 
   const projects = tree?.projects ?? [];
-  const sources = data?.sources ?? [];
+  // 자료실 = 근거·업로드 문서 참고자료 전용. 산출물(편집·버전·PDF 내보내기가 있는
+  // 능동 작업물)은 사이드바 "산출물 보관함"으로 분리했으므로 여기서는 제외한다.
+  const sources = (data?.sources ?? []).filter((item) => item.kind !== 'artifact');
   const isModal = variant === 'modal';
 
   function openItem(item: LibrarySourceItem) {
     if (item.kind === 'attachment') {
       setViewer({ id: item.id, fileName: item.title, mimeType: item.mimeType ?? 'application/octet-stream' });
-      return;
-    }
-    if (item.kind === 'artifact') {
-      if (isModal) {
-        workspaceModalStore.open('artifacts', { projectId: item.projectId ?? undefined });
-      } else {
-        void router.navigate({ to: '/artifacts', search: item.projectId ? { projectId: item.projectId } : {} });
-      }
       return;
     }
     // evidence: 출처 대화로 딥링크(있으면 답변 메시지까지 정밀 점프) 또는 외부 URL.
@@ -115,7 +106,7 @@ export function LibrarySurface({
             <Icon name="files" size="sm" decorative />
             자료실
           </div>
-          <div className={s.headSub}>대화·업로드·산출물에 쌓인 자료를 프로젝트 단위로 모아 봅니다.</div>
+          <div className={s.headSub}>대화에서 쌓인 근거와 업로드한 문서를 프로젝트 단위로 모아 봅니다.</div>
         </div>
 
         <div className={s.filters}>

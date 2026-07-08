@@ -11,7 +11,17 @@ describe('collab evidence-decision contracts', () => {
       latestScorecard: null,
       documentUnits: { total: 0, byModality: {} },
       reviewQueue: { openCount: 0, top: null },
-      postAnswerVerification: { checkedMessageCount: 0, unsupportedCount: 0, refutedCount: 0, verificationMetrics: { totalLatencyMs: 0, providerCalls: { nli: 0, llm: 0, heuristic: 0 }, providerLatencies: {} } },
+      postAnswerVerification: {
+        checkedMessageCount: 0,
+        unsupportedCount: 0,
+        refutedCount: 0,
+        verificationMetrics: { totalLatencyMs: 0, providerCalls: { nli: 0, llm: 0, heuristic: 0 }, providerLatencies: {} },
+        gate: {
+          decision: 'BLOCKED',
+          blockers: [{ code: 'exactness_blocked', severity: 'blocker', message: '수치·계산·원문 확인 게이트가 blocked 상태입니다.' }],
+          warnings: [{ code: 'semantic_unsupported', severity: 'warning', message: '근거가 부족한 claim이 있습니다.', claimId: 'MSG-1' }],
+        },
+      },
       exactness: {
         latestRun: {
           id: uuid,

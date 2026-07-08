@@ -8,6 +8,7 @@ import { IconButton } from '../../../shared/ui/button/Button';
 import { SkeletonMessage } from '../../../shared/ui/skeleton/Skeleton';
 import { useDelayedFlag } from '../../../shared/lib/useDelayedFlag';
 import { formatDateLabel, formatFullDateTime, dayKey } from '../../../shared/lib/formatDate';
+import { describeVerifierGate } from '../../../shared/lib/verifierGateView';
 import { hoveredMessageStore } from '../../../lib/threadCtx';
 import { ThinkingRibbon } from './ThinkingRibbon';
 import { HighlightedText } from './HighlightedText';
@@ -138,10 +139,16 @@ function rewritePrompt(action: 'rewrite' | 'remove' | 'more', claim: Verificatio
 
 function VerificationInlinePanel({ verification, busy, onRetry }: { verification: ChatMessage['verification']; busy: boolean; onRetry: Props['onRetry'] }) {
   if (!verification || verification.claims.length === 0) return null;
+  const gateView = verification.gate ? describeVerifierGate(verification.gate) : null;
   return (
     <div className={s.verificationInline} data-testid="assistant-verification-inline">
       <div className={s.verificationInlineHead}>
         <span className={`${s.verificationBadge} ${s[`verificationBadge_${verification.status}`]}`}>{verification.badgeLabel}</span>
+        {gateView ? (
+          <span className={`${s.verificationGateBadge} ${s[`verificationGateBadge_${gateView.tone}`]}`} data-gate={gateView.tone} title={gateView.title}>
+            {gateView.label}
+          </span>
+        ) : null}
         <span className={s.verificationCounts}>
           지지 {verification.counts.supports} · 반박 {verification.counts.refutes + verification.counts.mixed} · 근거부족 {verification.counts.notEnoughInfo}
         </span>

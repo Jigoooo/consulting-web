@@ -5,6 +5,9 @@ import type { ChatMessage, ChatMessageAttachment, ChatMessageVerification, ListM
 import { hangulMatch, highlightRanges, isChosungQuery } from '@consulting/contracts';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 import { VisualDocumentSearchService } from '../consulting/visual-document-search.service.js';
+import { VerifierGatePolicyService } from '../consulting/verifier-gate-policy.service.js';
+import type { ClaimVerdict } from '../consulting/evidence-to-decision.service.js';
+import type { ExactnessRunStatus } from '../consulting/exactness-gate.service.js';
 
 export type FinishState = 'complete' | 'cancelled' | 'error';
 
@@ -31,6 +34,7 @@ export class ChatMessageStore {
   constructor(
     @Inject(DRIZZLE) private readonly db: Db,
     @Inject(VisualDocumentSearchService) private readonly visualSearch: VisualDocumentSearchService,
+    @Inject(VerifierGatePolicyService) private readonly gatePolicy: VerifierGatePolicyService,
   ) {}
 
   async saveUserMessage(input: {
@@ -526,15 +530,42 @@ export class ChatMessageStore {
       .where(and(inArray(schema.claimVerificationVerdicts.assistantMessageId, assistantIds), isNull(schema.claimVerificationVerdicts.deletedAt)))
       .orderBy(desc(schema.claimVerificationVerdicts.createdAt));
 
-    const grouped = new Map<string, { supports: number; refutes: number; mixed: number; notEnoughInfo: number; rationale: string | null; claims: ChatMessageVerification['claims'] }>();
+    const exactnessRows = await this.db
+      .select({
+        assistantMessageId: schema.exactnessRuns.assistantMessageId,
+        status: schema.exactnessRuns.status,
+        createdAt: schema.exactnessRuns.createdAt,
+      })
+      .from(schema.exactnessRuns)
+      .where(and(inArray(schema.exactnessRuns.assistantMessageId, assistantIds), isNull(schema.exactnessRuns.deletedAt)))
+      .orderBy(desc(schema.exactnessRuns.createdAt));
+    const exactnessByMessage = new Map<string, ExactnessRunStatus>();
+    for (const row of exactnessRows) {
+      if (!row.assistantMessageId || exactnessByMessage.has(row.assistantMessageId)) continue;
+      if (row.status === 'blocked' || row.status === 'passed' || row.status === 'skipped') exactnessByMessage.set(row.assistantMessageId, row.status);
+    }
+
+    const grouped = new Map<string, { supports: number; refutes: number; mixed: number; notEnoughInfo: number; rationale: string | null; claims: ChatMessageVerification['claims']; gateVerdicts: ClaimVerdict[] }>();
     for (const row of rows) {
       if (!row.assistantMessageId) continue;
-      const prev = grouped.get(row.assistantMessageId) ?? { supports: 0, refutes: 0, mixed: 0, notEnoughInfo: 0, rationale: null, claims: [] };
+      const prev = grouped.get(row.assistantMessageId) ?? { supports: 0, refutes: 0, mixed: 0, notEnoughInfo: 0, rationale: null, claims: [], gateVerdicts: [] };
       if (row.verdict === 'supports') prev.supports += 1;
       else if (row.verdict === 'refutes') prev.refutes += 1;
       else if (row.verdict === 'mixed') prev.mixed += 1;
       else prev.notEnoughInfo += 1;
       if (!prev.rationale && row.verdict !== 'supports') prev.rationale = row.rationale;
+      const verdict = row.verdict === 'refutes' || row.verdict === 'mixed' || row.verdict === 'not_enough_info' ? row.verdict : 'supports';
+      prev.gateVerdicts.push({
+        claimId: row.claimId,
+        claimText: row.claimText,
+        evidenceId: null,
+        verdict,
+        confidence: clamp01(Number(row.confidence)),
+        matchedTerms: [],
+        contradictedTerms: [],
+        rationale: row.rationale,
+        decisionImpact: verdict === 'refutes' || verdict === 'mixed' ? 0.82 : verdict === 'not_enough_info' ? 0.62 : 0.5,
+      });
       if (prev.claims.length < 12) {
         prev.claims.push({
           claimId: row.claimId,
@@ -556,6 +587,12 @@ export class ChatMessageStore {
             ? 'supported'
             : 'unsupported';
       const badgeLabel: ChatMessageVerification['badgeLabel'] = status === 'supported' ? '지지됨' : status === 'refuted' ? '반박됨' : '근거부족';
+      const exactnessStatus = exactnessByMessage.get(messageId);
+      const gate = this.gatePolicy.evaluate({
+        mode: 'general_chat',
+        ...(exactnessStatus ? { exactnessStatus } : {}),
+        verdicts: counts.gateVerdicts,
+      });
       out.set(messageId, {
         status,
         badgeLabel,
@@ -567,6 +604,7 @@ export class ChatMessageStore {
         },
         topRationale: counts.rationale,
         claims: counts.claims,
+        gate,
       });
     }
     return out;
@@ -585,6 +623,11 @@ export class ChatMessageStore {
     const suffix = end < content.length ? '…' : '';
     return `${prefix}${content.slice(start, end)}${suffix}`;
   }
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(1, Math.max(0, value));
 }
 
 function vectorFromMetadata(metadata: Record<string, unknown> | null): number[] | null {

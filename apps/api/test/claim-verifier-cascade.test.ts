@@ -96,6 +96,18 @@ describe('ClaimVerifierService cascade', () => {
     expect(result.lattice.summary.refutes).toBe(1);
   });
 
+  it('does not treat undecided policy evidence as support for a strong recommendation', async () => {
+    const result = await new ClaimVerifierService(new LocalNliProvider()).verify({
+      claims: [{ id: 'undecided-policy-c1', text: '창원시는 즉시 수영장 운영을 폐지해야 한다', decisionImpact: 0.84 }],
+      evidence: [{ id: 'undecided-policy-e1', text: '창원시는 수영장 운영 현황을 점검했으며 폐지 여부는 결정되지 않았다', qualityScore: 78 }],
+    });
+
+    expect(result.lattice.verdictsByClaim['undecided-policy-c1']).toEqual(expect.objectContaining({
+      verdict: 'not_enough_info',
+      evidenceId: 'undecided-policy-e1',
+    }));
+  });
+
   it('keeps the Hermes strict JSON adapter env-gated and parses run SSE output when enabled', async () => {
     const disabledFetch = vi.fn();
     vi.stubGlobal('fetch', disabledFetch);

@@ -60,7 +60,7 @@
 }
 /* shadcn 표준 open/close 애니메이션 — fade + zoom + slide. */
 .content[data-state='open'] {
-  animation: selectIn var(--dur-enter) var(--ease-enter);
+  animation: selectIn var(--dur-enter) var(--ease-emphasized-decelerate);
 }
 .content[data-state='closed'] {
   animation: selectOut var(--dur-exit) var(--ease-exit);

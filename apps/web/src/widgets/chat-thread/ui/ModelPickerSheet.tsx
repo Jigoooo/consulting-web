@@ -28,13 +28,13 @@ export function ModelPickerSheet({
       <SheetContent
         side="right"
         title="모델 변경"
-        description="다음 메시지부터 사용할 모델을 고릅니다. provider 설정과 비밀키는 브라우저에 노출하지 않습니다."
+        description="다음 메시지부터 사용할 모델을 고릅니다."
       >
         <div className={s.modelSheet}>
           <div className={s.modelHero}>
             <div className={s.modelHeroKicker}>현재 선택</div>
             <div className={s.modelHeroName}>{selected?.label ?? (effectiveModel || '기본값 확인 중')}</div>
-            <div className={s.modelHeroDesc}>전송 파라미터: {effectiveModel || '목록 로딩 중'} · 선택값은 이 브라우저에만 저장됩니다.</div>
+            <div className={s.modelHeroDesc}>선택한 모델은 이 브라우저에만 저장됩니다.</div>
           </div>
 
           {loading ? (

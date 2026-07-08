@@ -46,7 +46,7 @@
   padding: 12px 24px;
   align-items: center;
   flex-wrap: wrap;
-  background: color-mix(in srgb, var(--surface-card) 44%, transparent);
+  background: color-mix(in srgb, var(--surface-panel) 64%, var(--surface-card));
   border-bottom: 1px solid var(--border-hair);
 }
 .search {

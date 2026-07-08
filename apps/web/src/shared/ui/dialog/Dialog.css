@@ -6,7 +6,7 @@
      Linear/Vercel식 단순 dim 오버레이가 더 안정적이고 절제됨. */
   background: rgba(20, 21, 22, 0.44);
 }
-.cwDialogOverlay[data-state='open'] { animation: cwOverlayIn var(--dur-enter) var(--ease-enter); }
+.cwDialogOverlay[data-state='open'] { animation: cwOverlayIn var(--dur-enter) var(--ease-emphasized-decelerate); }
 .cwDialogOverlay[data-state='closed'] { animation: cwOverlayOut var(--dur-exit) var(--ease-exit); }
 .cwDialogContent,
 .cwSheetContent {
@@ -27,7 +27,7 @@
   border-radius: 18px;
   padding: 20px;
 }
-.cwDialogContent[data-state='open'] { animation: cwDialogIn var(--dur-enter) var(--ease-enter); }
+.cwDialogContent[data-state='open'] { animation: cwDialogIn var(--dur-enter) var(--ease-emphasized-decelerate); }
 .cwDialogContent[data-state='closed'] { animation: cwDialogOut var(--dur-exit) var(--ease-exit); }
 .cwSheetContent {
   top: 0;

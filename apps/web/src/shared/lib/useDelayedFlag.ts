@@ -3,10 +3,10 @@ import { useEffect, useRef, useState } from 'react';
 /**
  * Returns `true` only when `active` has stayed truthy for at least `delayMs`.
  * Used to gate skeletons/spinners so instant loads never flash a placeholder,
- * but genuinely slow loads (>300ms) surface one. `minVisibleMs` prevents a
+ * but genuinely slow loads (>250ms) surface one. `minVisibleMs` prevents a
  * placeholder that already appeared from disappearing in the same visual beat.
  */
-export function useDelayedFlag(active: boolean, delayMs = 300, minVisibleMs = 0): boolean {
+export function useDelayedFlag(active: boolean, delayMs = 250, minVisibleMs = 220): boolean {
   const [shown, setShown] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shownAt = useRef(0);

@@ -245,6 +245,36 @@
   gap: 10px;
   border-bottom: 1px solid var(--border-hair);
 }
+.wsHeadMain {
+  flex: 1;
+  min-width: 0;
+}
+.wsHeadActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.wsHeadBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.wsHeadBtn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.wsHeadBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 .wsIco {
   width: 30px;
   height: 30px;
@@ -717,6 +747,26 @@
 }
 .workspaceSurfaceDialog :global(.cwDialogHead) {
   margin-bottom: 12px;
+}
+.membersDialog {
+  width: min(440px, calc(100vw - 32px));
+}
+.membersModalBody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: min(70vh, 600px);
+  overflow-y: auto;
+}
+.membersModalBody .ctxSection {
+  padding: 14px 2px;
+}
+.membersModalBody .ctxSection:first-child {
+  padding-top: 2px;
+}
+.membersModalBody .ctxSection:last-child {
+  border-bottom: none;
+  padding-bottom: 2px;
 }
 .archiveList {
   display: flex;

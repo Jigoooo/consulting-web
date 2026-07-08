@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-export type WorkspaceModalKind = 'artifacts' | 'library';
+export type WorkspaceModalKind = 'artifacts' | 'library' | 'members';
 
 export interface WorkspaceModalState {
   kind: WorkspaceModalKind | null;

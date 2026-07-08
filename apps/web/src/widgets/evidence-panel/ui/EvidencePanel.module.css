@@ -51,6 +51,55 @@
   gap: 8px;
   padding-top: 4px;
 }
+.gateCard {
+  padding: 10px;
+  border: 1px solid var(--border-hair);
+  border-radius: 12px;
+  background: var(--surface-card);
+  box-shadow: var(--shadow-ring);
+}
+.gateCard[data-gate='good'] {
+  border-color: color-mix(in srgb, var(--semantic-success) 26%, var(--border-hair));
+  background: color-mix(in srgb, var(--semantic-success) 7%, var(--surface-card));
+}
+.gateCard[data-gate='warn'] {
+  border-color: color-mix(in srgb, var(--semantic-warning) 34%, var(--border-hair));
+  background: color-mix(in srgb, var(--semantic-warning) 8%, var(--surface-card));
+}
+.gateCard[data-gate='bad'] {
+  border-color: color-mix(in srgb, var(--semantic-danger) 34%, var(--border-hair));
+  background: color-mix(in srgb, var(--semantic-danger) 7%, var(--surface-card));
+}
+.gateTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.gateLabel {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 850;
+}
+.gateDecision {
+  border-radius: 999px;
+  background: var(--bg-warm);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 6px;
+}
+.gateDetail,
+.gateIssue {
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+.gateIssue {
+  color: var(--text-secondary);
+}
 .metricGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -411,7 +460,7 @@
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
-  transition: grid-template-rows var(--dur-panel) var(--ease-standard), opacity var(--dur-enter) var(--ease-enter);
+  transition: grid-template-rows var(--dur-panel) var(--ease-standard), opacity var(--dur-enter) var(--ease-emphasized-decelerate);
 }
 .formShellOpen {
   grid-template-rows: 1fr;
@@ -419,7 +468,7 @@
 }
 /* G3: staggered field entry — each control fades + rises 40ms apart. */
 .formShellOpen .formInner > * {
-  animation: cwFieldRise var(--dur-enter) var(--ease-enter) both;
+  animation: cwFieldRise var(--dur-enter) var(--ease-emphasized-decelerate) both;
 }
 .formShellOpen .formInner > *:nth-child(1) { animation-delay: 0ms; }
 .formShellOpen .formInner > *:nth-child(2) { animation-delay: 40ms; }
@@ -440,7 +489,7 @@
   border: 1px solid var(--border-hair);
   border-radius: 12px;
   background: color-mix(in srgb, var(--surface-card) 72%, var(--bg-warm));
-  box-shadow: var(--shadow-ring);
+  box-shadow: var(--shadow-1);
 }
 .formActions {
   display: flex;

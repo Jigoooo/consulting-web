@@ -113,6 +113,14 @@ function hasNegatingPhrase(text: string): boolean {
   return /(근거는\s*없|아니|불가능|불필요|반대|refute|not\s+supported|no\s+evidence)/iu.test(text);
 }
 
+function hasUndecidedPhrase(text: string): boolean {
+  return /(결정되지\s*않|확정되지\s*않|검토\s*중|여부는\s*결정|여부가\s*결정|구체\s*일정은\s*별도\s*확인)/iu.test(text);
+}
+
+function isStrongRecommendationOrConclusion(text: string): boolean {
+  return /(즉시|해야\s*한다|해야\s*함|확정됐|확정되었|확정되|폐지해야|늘려야|줄여야|가능하다|불가능하다)/iu.test(text);
+}
+
 function contradictionTerms(claimTerms: string[], evidenceTerms: string[]): string[] {
   const out: string[] = [];
   for (const [left, right] of CONTRADICTION_PAIRS) {
@@ -225,10 +233,12 @@ export class LocalNliProvider implements NliProvider {
     const contradictedTerms = contradictionTerms(claimTerms, evidenceTerms);
     const contradiction = (contradictedTerms.length > 0 && overlap >= 0.25) || (hasNegatingPhrase(input.evidence.text) && overlap >= 0.35);
     const qualityBoost = clamp01((input.evidence.qualityScore ?? 50) / 100) * 0.12;
-    const confidence = round4(clamp01(overlap + qualityBoost + (contradiction ? 0.2 : 0)));
-    const label: NliLabel = contradiction ? 'contradiction' : confidence >= 0.55 ? 'entailment' : 'neutral';
+    const undecided = !contradiction && hasUndecidedPhrase(input.evidence.text) && isStrongRecommendationOrConclusion(input.claim.text);
+    const confidence = round4(undecided ? Math.min(0.49, clamp01(overlap + qualityBoost)) : clamp01(overlap + qualityBoost + (contradiction ? 0.2 : 0)));
+    const label: NliLabel = contradiction ? 'contradiction' : undecided ? 'neutral' : confidence >= 0.55 ? 'entailment' : 'neutral';
     const directional = contradictedTerms.length > 0 ? `; contradiction_terms=${contradictedTerms.join(',')}` : '';
-    return Promise.resolve({ label, confidence, latencyMs: 0, rationale: `${label}; overlap=${round4(overlap)}; quality=${input.evidence.qualityScore ?? 'n/a'}${directional}` });
+    const undecidedRationale = undecided ? '; undecided_policy_evidence=true' : '';
+    return Promise.resolve({ label, confidence, latencyMs: 0, rationale: `${label}; overlap=${round4(overlap)}; quality=${input.evidence.qualityScore ?? 'n/a'}${directional}${undecidedRationale}` });
   }
 }
 

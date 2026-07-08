@@ -129,6 +129,8 @@ d('Evidence-to-Decision API', () => {
     expect(summary.latestScorecard).toBeDefined();
     expect(summary.documentUnits.total).toBeGreaterThan(0);
     expect(summary.postAnswerVerification.checkedMessageCount).toBeGreaterThan(0);
+    expect(summary.postAnswerVerification.gate.decision).toMatch(/PASS|PASS_WITH_WARNINGS|BLOCKED/);
+    expect(summary.postAnswerVerification.gate.blockers.length + summary.postAnswerVerification.gate.warnings.length).toBeGreaterThan(0);
 
     const queue = ReviewQueueResponseSchema.parse((await request(app.getHttpServer()).get(`/chat/threads/${thread.id}/review-queue`).set('authorization', owner.bearer).expect(200)).body);
     expect(queue.items.length).toBeGreaterThan(0);
@@ -142,10 +144,15 @@ d('Evidence-to-Decision API', () => {
     const listed = ListMessagesResponseSchema.parse((await request(app.getHttpServer()).get(`/chat/threads/${thread.id}/messages`).set('authorization', owner.bearer).expect(200)).body);
     const assistant = listed.messages.find((message) => message.role === 'assistant');
     expect(assistant).toBeDefined();
-    expect((assistant as unknown as { verification?: { status: string; badgeLabel: string; counts: { supports: number; refutes: number; notEnoughInfo: number } } }).verification).toEqual(expect.objectContaining({
+    expect((assistant as unknown as { verification?: { status: string; badgeLabel: string; counts: { supports: number; refutes: number; notEnoughInfo: number }; gate?: { decision: string; blockers: unknown[]; warnings: unknown[] } } }).verification).toEqual(expect.objectContaining({
       status: expect.stringMatching(/supported|needs_review|refuted|unsupported/),
       badgeLabel: expect.stringMatching(/지지됨|근거부족|반박됨/),
       counts: expect.objectContaining({ supports: expect.any(Number), refutes: expect.any(Number), notEnoughInfo: expect.any(Number) }),
+      gate: expect.objectContaining({
+        decision: expect.stringMatching(/PASS|PASS_WITH_WARNINGS/),
+        blockers: [],
+        warnings: expect.any(Array),
+      }),
     }));
   });
 });

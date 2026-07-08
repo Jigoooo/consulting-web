@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { VerifierGateSummarySchema } from './collab.js';
 
 const UuidSchema = z.string().uuid();
 const NameSchema = z.string().trim().min(1).max(120);
@@ -285,6 +286,7 @@ export const ChatMessageVerificationSchema = z
       verdict: z.enum(['supports', 'refutes', 'mixed', 'not_enough_info']),
       confidence: z.number().min(0).max(1),
     }).strict()).max(12),
+    gate: VerifierGateSummarySchema.optional(),
   })
   .strict();
 export type ChatMessageVerification = z.infer<typeof ChatMessageVerificationSchema>;

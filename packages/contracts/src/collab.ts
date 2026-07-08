@@ -147,6 +147,25 @@ export const VerificationMetricsSchema = z
   .strict();
 export type VerificationMetrics = z.infer<typeof VerificationMetricsSchema>;
 
+export const VerifierGateIssueSchema = z
+  .object({
+    code: z.enum(['exactness_blocked', 'citation_issue', 'high_impact_refute', 'high_impact_unsupported', 'semantic_refute', 'semantic_unsupported']),
+    severity: z.enum(['warning', 'blocker']),
+    message: z.string().min(1),
+    claimId: z.string().optional(),
+  })
+  .strict();
+export type VerifierGateIssue = z.infer<typeof VerifierGateIssueSchema>;
+
+export const VerifierGateSummarySchema = z
+  .object({
+    decision: z.enum(['PASS', 'PASS_WITH_WARNINGS', 'BLOCKED']),
+    blockers: z.array(VerifierGateIssueSchema),
+    warnings: z.array(VerifierGateIssueSchema),
+  })
+  .strict();
+export type VerifierGateSummary = z.infer<typeof VerifierGateSummarySchema>;
+
 export const ExactnessPassSchema = z
   .object({
     method: z.enum(['decimal_formula', 'decimal_invariant']),
@@ -203,6 +222,7 @@ export const EvidenceDecisionSummaryResponseSchema = z
         unsupportedCount: z.number().int().nonnegative(),
         refutedCount: z.number().int().nonnegative(),
         verificationMetrics: VerificationMetricsSchema,
+        gate: VerifierGateSummarySchema,
       })
       .strict(),
     exactness: ExactnessSummarySchema,
