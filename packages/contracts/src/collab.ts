@@ -138,6 +138,14 @@ export const ReviewQueueResponseSchema = z
   .strict();
 export type ReviewQueueResponse = z.infer<typeof ReviewQueueResponseSchema>;
 
+export const ReviewQueueDecisionRequestSchema = z
+  .object({
+    action: z.enum(['resolve', 'ignore']),
+    note: z.string().trim().max(500).optional(),
+  })
+  .strict();
+export type ReviewQueueDecisionRequest = z.infer<typeof ReviewQueueDecisionRequestSchema>;
+
 export const VerificationMetricsSchema = z
   .object({
     totalLatencyMs: z.number().int().nonnegative(),
@@ -320,6 +328,17 @@ export const CreateArtifactResponseSchema = z
   .object({ id: UuidSchema, versionNo: z.number().int().positive() })
   .strict();
 export type CreateArtifactResponse = z.infer<typeof CreateArtifactResponseSchema>;
+
+export const ArtifactExportPreflightResponseSchema = z
+  .object({
+    canExport: z.boolean(),
+    reason: z.enum(['OK', 'NO_SOURCE_MESSAGE', 'VERIFIER_GATE_BLOCKED']),
+    versionNo: z.number().int().positive(),
+    gate: VerifierGateSummarySchema.nullable(),
+    messages: z.array(z.string().min(1)).max(20),
+  })
+  .strict();
+export type ArtifactExportPreflightResponse = z.infer<typeof ArtifactExportPreflightResponseSchema>;
 
 // ---------------------------------------------------------------------------
 // Phase 2-C — Notifications

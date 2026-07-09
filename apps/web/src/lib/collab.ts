@@ -1,6 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api';
-import type { AddEvidenceRequest, CreateArtifactRequest, AddArtifactVersionRequest, UploadAttachmentRequest } from '@consulting/contracts';
+import type {
+  AddEvidenceRequest,
+  CreateArtifactRequest,
+  AddArtifactVersionRequest,
+  ReviewQueueDecisionRequest,
+  UploadAttachmentRequest,
+} from '@consulting/contracts';
 
 export const collabKeys = {
   evidence: (threadId: string) => ['evidence', threadId] as const,
@@ -8,6 +14,8 @@ export const collabKeys = {
   reviewQueue: (threadId: string) => ['review-queue', threadId] as const,
   artifacts: (workspaceId: string) => ['artifacts', workspaceId] as const,
   artifact: (id: string) => ['artifact', id] as const,
+  artifactExportPreflight: (id: string, version: number | 'head') => ['artifact-export-preflight', id, version] as const,
+  observability: (workspaceId: string, traceId: string, threadId: string, limit: number | 'default') => ['observability', workspaceId, traceId, threadId, limit] as const,
   notifications: ['notifications'] as const,
   attachments: (threadId: string) => ['attachments', threadId] as const,
 };
@@ -54,6 +62,17 @@ export function useReviewQueue(threadId: string | undefined) {
   });
 }
 
+export function useReviewQueueDecision(threadId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { itemId: string; body: ReviewQueueDecisionRequest }) => api.decideReviewQueueItem(threadId!, input.itemId, input.body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: collabKeys.reviewQueue(threadId ?? '') });
+      void qc.invalidateQueries({ queryKey: collabKeys.evidenceDecision(threadId ?? '') });
+    },
+  });
+}
+
 // --- artifacts (2-B) ---
 export function useArtifacts(workspaceId: string | undefined, projectId?: string) {
   return useQuery({
@@ -87,7 +106,16 @@ export function useAddArtifactVersion(workspaceId: string | undefined) {
     onSuccess: (_d, v) => {
       void qc.invalidateQueries({ queryKey: collabKeys.artifacts(workspaceId ?? '') });
       void qc.invalidateQueries({ queryKey: collabKeys.artifact(v.id) });
+      void qc.invalidateQueries({ queryKey: ['artifact-export-preflight', v.id] });
     },
+  });
+}
+
+export function useArtifactExportPreflight(id: string | undefined, version: number | undefined) {
+  return useQuery({
+    queryKey: collabKeys.artifactExportPreflight(id ?? '', version ?? 'head'),
+    queryFn: () => api.exportArtifactPreflight(id!, 'pdf', version),
+    enabled: Boolean(id && version),
   });
 }
 
@@ -160,6 +188,23 @@ export function useLibrarySources(
         ...(opts?.projectId ? { projectId: opts.projectId } : {}),
         ...(opts?.type ? { type: opts.type } : {}),
         ...(opts?.q ? { q: opts.q } : {}),
+      }),
+    enabled: Boolean(workspaceId),
+  });
+}
+
+/** P4 Trace Viewer: trace span + eval ledger read model. */
+export function useObservabilityTraces(
+  workspaceId: string | undefined,
+  opts?: { threadId?: string; traceId?: string; limit?: number },
+) {
+  return useQuery({
+    queryKey: collabKeys.observability(workspaceId ?? '', opts?.traceId ?? '', opts?.threadId ?? '', opts?.limit ?? 'default'),
+    queryFn: () =>
+      api.listObservabilityTraces(workspaceId!, {
+        ...(opts?.threadId ? { threadId: opts.threadId } : {}),
+        ...(opts?.traceId ? { traceId: opts.traceId } : {}),
+        ...(opts?.limit !== undefined ? { limit: opts.limit } : {}),
       }),
     enabled: Boolean(workspaceId),
   });

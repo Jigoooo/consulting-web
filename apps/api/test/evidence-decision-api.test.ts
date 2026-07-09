@@ -15,6 +15,7 @@ import {
   CreateTopicResponseSchema,
   EvidenceDecisionSummaryResponseSchema,
   ListMessagesResponseSchema,
+  OkResponseSchema,
   ReviewQueueResponseSchema,
   SearchMessagesResponseSchema,
   SignUpBootstrapResponseSchema,
@@ -40,7 +41,9 @@ function installHermesAnswerMock(answer: string) {
   ].join('\n');
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
     const u = input instanceof Request ? input.url : String(input);
+    if (u.endsWith('/v1/toolsets')) return new Response(JSON.stringify({ data: [{ name: 'web', enabled: true }, { name: 'terminal', enabled: false }] }), { status: 200, headers: { 'content-type': 'application/json' } });
     if (u.endsWith('/v1/runs')) return new Response(JSON.stringify({ run_id: 'run_e2d', status: 'started' }), { status: 202, headers: { 'content-type': 'application/json' } });
+    if (u.endsWith('/v1/runs/run_e2d')) return new Response(JSON.stringify({ status: 'running', model: 'test-model' }), { status: 200, headers: { 'content-type': 'application/json' } });
     if (u.includes('/events')) return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
     return new Response('not found', { status: 404 });
   }));
@@ -133,13 +136,37 @@ d('Evidence-to-Decision API', () => {
     expect(summary.postAnswerVerification.gate.blockers.length + summary.postAnswerVerification.gate.warnings.length).toBeGreaterThan(0);
 
     const queue = ReviewQueueResponseSchema.parse((await request(app.getHttpServer()).get(`/chat/threads/${thread.id}/review-queue`).set('authorization', owner.bearer).expect(200)).body);
-    expect(queue.items.length).toBeGreaterThan(0);
+    expect(queue.items.length, JSON.stringify({
+      verdictSummary: summary.verdictSummary,
+      latestVerdicts: summary.latestVerdicts.map((item) => ({ claimText: item.claimText, verdict: item.verdict, confidence: item.confidence, rationale: item.rationale })),
+      latestScorecard: summary.latestScorecard ? {
+        recommendedAlternativeId: summary.latestScorecard.recommendedAlternativeId,
+        rankedCount: summary.latestScorecard.ranked.length,
+        ranked: summary.latestScorecard.ranked.map((item) => ({ alternativeId: item.alternativeId, requiredAction: item.requiredAction, weightedScore: item.weightedScore })),
+      } : null,
+    }, null, 2)).toBeGreaterThan(0);
     expect(queue.items[0]!.priorityScore).toBeGreaterThanOrEqual(queue.items.at(-1)!.priorityScore);
     expect((queue.items[0] as unknown as { actions?: Array<{ id: string; label: string; prompt: string }> }).actions?.map((a) => a.label)).toEqual([
       '근거 보강 후 재작성',
       '해당 문장 제거',
       '추가 자료 요청',
     ]);
+
+    const resolvedItemId = queue.items[0]!.id;
+    const decision = OkResponseSchema.parse((await request(app.getHttpServer())
+      .post(`/chat/threads/${thread.id}/review-queue/${resolvedItemId}/decision`)
+      .set('authorization', owner.bearer)
+      .send({ action: 'resolve', note: '근거 보강 완료' })
+      .expect(200)).body);
+    expect(decision.ok).toBe(true);
+    const afterDecision = ReviewQueueResponseSchema.parse((await request(app.getHttpServer()).get(`/chat/threads/${thread.id}/review-queue`).set('authorization', owner.bearer).expect(200)).body);
+    expect(afterDecision.items.some((item) => item.id === resolvedItemId)).toBe(false);
+
+    await request(app.getHttpServer())
+      .post(`/chat/threads/${thread.id}/review-queue/${resolvedItemId}/decision`)
+      .set('authorization', owner.bearer)
+      .send({ action: 'ignore' })
+      .expect(404);
 
     const listed = ListMessagesResponseSchema.parse((await request(app.getHttpServer()).get(`/chat/threads/${thread.id}/messages`).set('authorization', owner.bearer).expect(200)).body);
     const assistant = listed.messages.find((message) => message.role === 'assistant');

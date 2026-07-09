@@ -16,6 +16,7 @@ import {
   ListMessagesPageResponseSchema,
   ListMessagesResponseSchema,
   OkResponseSchema,
+  ReviewQueueDecisionRequestSchema,
   ReviewQueueResponseSchema,
   SearchMessagesRequestSchema,
   SearchMessagesResponseSchema,
@@ -31,6 +32,7 @@ import { SpaceAccessService, type SpaceAccess } from '../spaces/space-access.ser
 import { EvidenceDecisionStore } from '../consulting/evidence-decision.store.js';
 import { ConsultingMemoryContextBuilder } from '../consulting/consulting-memory-context.builder.js';
 import { ConsultingWebIngestService } from '../consulting/consulting-web-ingest.service.js';
+import { RuntimeApprovalStore } from './runtime-approval.store.js';
 
 @Controller('chat')
 export class ChatStreamController {
@@ -46,6 +48,7 @@ export class ChatStreamController {
     @Inject(EvidenceDecisionStore) private readonly evidenceDecision: EvidenceDecisionStore,
     @Inject(ConsultingMemoryContextBuilder) private readonly memoryContext: ConsultingMemoryContextBuilder,
     @Inject(ConsultingWebIngestService) private readonly webIngest: ConsultingWebIngestService,
+    @Inject(RuntimeApprovalStore) private readonly approvals: RuntimeApprovalStore,
   ) {}
 
   /** Search persisted transcript rows inside a readable thread (J-1). */
@@ -140,6 +143,28 @@ export class ChatStreamController {
     return parseResponse(ReviewQueueResponseSchema, await this.evidenceDecision.reviewQueue(threadId));
   }
 
+  /** Resolve/ignore one active review item after an operator has handled it. */
+  @Post('threads/:threadId/review-queue/:itemId/decision')
+  @HttpCode(200)
+  @UseGuards(AccessTokenGuard)
+  async decideReviewQueueItem(
+    @Param('threadId') threadId: string,
+    @Param('itemId') itemId: string,
+    @Body() body: unknown,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const cmd = parseBody(ReviewQueueDecisionRequestSchema, body);
+    await this.requireThreadRead(requireAuthUserId(req), threadId);
+    const ok = await this.evidenceDecision.decideReviewItem({
+      threadId,
+      itemId,
+      action: cmd.action,
+      note: cmd.note ?? null,
+    });
+    if (!ok) throw new NotFoundException({ code: 'REVIEW_ITEM_NOT_FOUND', message: 'Review item not found' });
+    return parseResponse(OkResponseSchema, { ok: true });
+  }
+
   /** Manual evidence attach (Phase 2-A E-3). */
   @Post('evidence')
   @UseGuards(AccessTokenGuard)
@@ -202,7 +227,28 @@ export class ChatStreamController {
   @UseGuards(AccessTokenGuard)
   async approveRuntimeRun(@Param('runId') runId: string, @Body() body: unknown, @Req() req: AuthenticatedRequest) {
     const cmd = parseBody(ChatApprovalResponseRequestSchema, body);
-    await this.requireThreadRead(requireAuthUserId(req), cmd.threadId);
+    const userId = requireAuthUserId(req);
+    const access = await this.requireThreadRead(userId, cmd.threadId);
+    if (cmd.choice === 'always') {
+      throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Approval choice "always" requires durable product policy registry support' });
+    }
+    if (cmd.resolveAll) {
+      throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Approval resolveAll requires durable product policy registry support' });
+    }
+    const decision = await this.approvals.decideRuntimeApproval({
+      approvalId: cmd.approvalId,
+      workspaceId: access.workspaceId,
+      threadId: cmd.threadId,
+      requestedByUserId: userId,
+      runId,
+      choice: cmd.choice,
+    });
+    if (!decision.ok) {
+      if (decision.reason === 'not_found') {
+        throw new NotFoundException({ code: 'APPROVAL_NOT_FOUND', message: 'Approval request not found' });
+      }
+      throw new BadRequestException({ code: 'APPROVAL_NOT_DECIDABLE', message: `Approval request is not decidable: ${decision.reason}` });
+    }
     return parseResponse(ChatRunActionResponseSchema, await this.hermesRunsClient.respondApproval(runId, cmd.choice, cmd.resolveAll));
   }
 
@@ -309,6 +355,20 @@ export class ChatStreamController {
       if (graphRagContext) runScope.memoryContext = graphRagContext;
       for await (const event of this.hermesRunsClient.streamChat({ ...cmd, message: runMessage }, runScope)) {
         const parsed = ChatStreamEventSchema.parse(event);
+        let outbound = parsed;
+        if (parsed.type === 'approval') {
+          const approval = await this.approvals.createRuntimeApproval({
+            workspaceId: access.workspaceId,
+            threadId: cmd.threadId,
+            requestedByUserId: userId,
+            runId: parsed.runId,
+            ...(parsed.command ? { command: parsed.command } : {}),
+            ...(parsed.message ? { message: parsed.message } : {}),
+            ...(parsed.risk ? { risk: parsed.risk } : {}),
+            choices: parsed.choices,
+          });
+          outbound = { ...parsed, approvalId: approval.approvalId };
+        }
         if (parsed.type === 'start') runId = parsed.runId;
         if (parsed.type === 'delta') assistantText += parsed.text;
         if (parsed.type === 'tool' && parsed.phase === 'started') {
@@ -316,8 +376,8 @@ export class ChatStreamController {
         }
         if (parsed.type === 'error') finishState = 'error';
         if (res.writableEnded) break;
-        res.write(`event: ${parsed.type}\n`);
-        res.write(`data: ${JSON.stringify(parsed)}\n\n`);
+        res.write(`event: ${outbound.type}\n`);
+        res.write(`data: ${JSON.stringify(outbound)}\n\n`);
       }
     } finally {
       await persist();

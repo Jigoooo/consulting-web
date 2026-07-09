@@ -53,6 +53,12 @@ function installHermesToolEventFetchMock() {
   ].join('\n');
   const fetchMock = vi.fn(async (input: string | URL | Request) => {
     const u = input instanceof Request ? input.url : String(input);
+    if (u.endsWith('/v1/toolsets')) {
+      return new Response(JSON.stringify({ data: [{ name: 'web', enabled: true }, { name: 'file', enabled: true }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
     if (u.endsWith('/v1/runs')) {
       return new Response(JSON.stringify({ run_id: 'run_p2', status: 'started' }), {
         status: 202,
@@ -76,6 +82,12 @@ function installHermesPlainFetchMock() {
   ].join('\n');
   const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const u = input instanceof Request ? input.url : String(input);
+    if (u.endsWith('/v1/toolsets')) {
+      return new Response(JSON.stringify({ data: [{ name: 'web', enabled: true }, { name: 'file', enabled: true }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
     if (u.endsWith('/v1/runs')) {
       const payload = JSON.parse(String(init?.body ?? '{}')) as { input?: string };
       expect(payload.input).toBeTruthy();
@@ -359,6 +371,49 @@ d('Phase 2 — evidence, artifacts, notifications', () => {
       .set('authorization', outsider.bearer)
       .send({ projectId: project.id, title: '침투', content: 'x' })
       .expect(403);
+  });
+
+  it('A-2/F-VERIFY: rejects artifact source ids that do not belong to the artifact project', async () => {
+    const owner = await makeUser('art-source-owner');
+    const foreign = await makeUser('art-source-foreign');
+    const { project } = await makeSpaces(owner.bearer, owner.personalWorkspaceId);
+    const foreignSpaces = await makeSpaces(foreign.bearer, foreign.personalWorkspaceId);
+    const [foreignAssistant] = await db
+      .insert(schema.chatMessages)
+      .values({
+        workspaceId: foreign.personalWorkspaceId,
+        threadId: foreignSpaces.thread.id,
+        role: 'assistant',
+        content: '외부 워크스페이스 검증 실패 답변',
+        runId: 'run_foreign_artifact_source',
+        finishState: 'complete',
+      })
+      .returning({ id: schema.chatMessages.id });
+
+    await request(app.getHttpServer())
+      .post('/artifacts')
+      .set('authorization', owner.bearer)
+      .send({
+        projectId: project.id,
+        title: '외부 소스 침투 산출물',
+        content: '외부 sourceMessageId를 붙이면 안 됩니다.',
+        sourceMessageId: foreignAssistant!.id,
+      })
+      .expect(400);
+
+    const created = CreateArtifactResponseSchema.parse(
+      (await request(app.getHttpServer())
+        .post('/artifacts')
+        .set('authorization', owner.bearer)
+        .send({ projectId: project.id, title: '정상 산출물', content: '정상 초안' })
+        .expect(201)).body,
+    );
+
+    await request(app.getHttpServer())
+      .post(`/artifacts/${created.id}/versions`)
+      .set('authorization', owner.bearer)
+      .send({ content: '외부 sourceMessageId를 붙인 개정', sourceMessageId: foreignAssistant!.id })
+      .expect(400);
   });
 
   it('F-1/F-3: assistant reply notifies OTHER members; mark-read clears unread', async () => {

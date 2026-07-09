@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 
 export type ClaimVerdictKind = 'supports' | 'refutes' | 'not_enough_info' | 'mixed';
 export type DecisionAction = 'recommend' | 'collect_more_evidence' | 'defer';
+export type TemporalValue = string | Date;
+export type ProvenanceEdgeType = 'SUPPORTS' | 'REFUTES' | 'QUALIFIES' | 'DEPENDS_ON' | 'ASSUMES' | 'DERIVED_FROM' | 'SUPERSEDES' | 'STALE_AFTER';
 
 export interface ClaimInput {
   id: string;
@@ -28,6 +30,41 @@ export interface EvidenceInput {
   text: string;
   qualityScore?: number;
   linkedClaimIds?: string[];
+  validFrom?: TemporalValue;
+  validTo?: TemporalValue;
+  observedAt?: TemporalValue;
+  publishedAt?: TemporalValue;
+  collectedAt?: TemporalValue;
+  supersededBy?: string;
+}
+
+export interface ProvenanceGraphEdge {
+  sourceRef: string;
+  targetRef: string;
+  edgeType: ProvenanceEdgeType;
+  confidence: number;
+  evidenceRefs: string[];
+  validFrom: string | null;
+  validTo: string | null;
+  observedAt: string | null;
+  publishedAt: string | null;
+  collectedAt: string | null;
+  supersededBy: string | null;
+  rationale: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface ProvenanceGraphResult {
+  edges: ProvenanceGraphEdge[];
+  reviewItems: ReviewInput[];
+}
+
+export interface TemporalEvidenceSelection {
+  active: EvidenceInput[];
+  stale: EvidenceInput[];
+  superseded: EvidenceInput[];
+  future: EvidenceInput[];
+  timeline: EvidenceInput[];
 }
 
 export interface ClaimVerdict {
@@ -364,6 +401,109 @@ export class EvidenceToDecisionService {
     };
   }
 
+  buildProvenanceGraph(input: {
+    verdicts: ClaimVerdict[];
+    evidence: EvidenceInput[];
+    asOf?: Date;
+  }): ProvenanceGraphResult {
+    const evidenceById = new Map(input.evidence.map((item) => [item.id, item]));
+    const edges: ProvenanceGraphEdge[] = [];
+    for (const verdict of input.verdicts) {
+      if (!verdict.evidenceId) continue;
+      const evidence = evidenceById.get(verdict.evidenceId);
+      const edgeType = this.edgeTypeForVerdict(verdict.verdict);
+      edges.push({
+        sourceRef: `evidence:${verdict.evidenceId}`,
+        targetRef: `claim:${verdict.claimId}`,
+        edgeType,
+        confidence: verdict.confidence,
+        evidenceRefs: [verdict.evidenceId],
+        validFrom: this.temporalIso(evidence?.validFrom),
+        validTo: this.temporalIso(evidence?.validTo),
+        observedAt: this.temporalIso(evidence?.observedAt),
+        publishedAt: this.temporalIso(evidence?.publishedAt),
+        collectedAt: this.temporalIso(evidence?.collectedAt),
+        supersededBy: evidence?.supersededBy ? `evidence:${evidence.supersededBy}` : null,
+        rationale: verdict.rationale,
+        metadata: {
+          claimText: verdict.claimText,
+          verdict: verdict.verdict,
+          matchedTerms: verdict.matchedTerms,
+          contradictedTerms: verdict.contradictedTerms,
+          asOf: input.asOf?.toISOString() ?? null,
+        },
+      });
+      if (evidence?.supersededBy) {
+        edges.push({
+          sourceRef: `evidence:${verdict.evidenceId}`,
+          targetRef: `evidence:${evidence.supersededBy}`,
+          edgeType: 'SUPERSEDES',
+          confidence: 1,
+          evidenceRefs: [verdict.evidenceId, evidence.supersededBy],
+          validFrom: this.temporalIso(evidence.validFrom),
+          validTo: this.temporalIso(evidence.validTo),
+          observedAt: this.temporalIso(evidence.observedAt),
+          publishedAt: this.temporalIso(evidence.publishedAt),
+          collectedAt: this.temporalIso(evidence.collectedAt),
+          supersededBy: `evidence:${evidence.supersededBy}`,
+          rationale: `superseded_by:${evidence.supersededBy}`,
+          metadata: { source: 'temporal_validity' },
+        });
+      }
+    }
+
+    const byClaim = new Map<string, ClaimVerdict[]>();
+    for (const verdict of input.verdicts) byClaim.set(verdict.claimId, [...(byClaim.get(verdict.claimId) ?? []), verdict]);
+    const reviewItems: ReviewInput[] = [];
+    for (const [claimId, verdicts] of byClaim.entries()) {
+      const hasSupport = verdicts.some((verdict) => verdict.verdict === 'supports');
+      const hasCounter = verdicts.some((verdict) => verdict.verdict === 'refutes' || verdict.verdict === 'mixed');
+      if (!hasSupport || !hasCounter) continue;
+      const representative = verdicts[0]!;
+      const maxImpact = verdicts.reduce((max, verdict) => Math.max(max, verdict.decisionImpact), 0);
+      const avgConfidence = verdicts.reduce((sum, verdict) => sum + verdict.confidence, 0) / Math.max(1, verdicts.length);
+      reviewItems.push({
+        id: `contradiction:${claimId}`,
+        kind: 'contradiction',
+        title: `근거가 갈리는 쟁점: ${representative.claimText.slice(0, 90)}`,
+        decisionImpact: clamp01(maxImpact),
+        uncertainty: round4(clamp01(1 - avgConfidence + 0.25)),
+        evidenceGap: 0.75,
+      });
+    }
+
+    return { edges, reviewItems: this.prioritizeReviewQueue({ items: reviewItems }) };
+  }
+
+  selectTemporallyValidEvidence(input: { evidence: EvidenceInput[]; asOf: Date }): TemporalEvidenceSelection {
+    const active: EvidenceInput[] = [];
+    const stale: EvidenceInput[] = [];
+    const superseded: EvidenceInput[] = [];
+    const future: EvidenceInput[] = [];
+    const asOf = input.asOf.getTime();
+    for (const item of input.evidence) {
+      const validFrom = this.temporalMillis(item.validFrom);
+      const validTo = this.temporalMillis(item.validTo);
+      if (item.supersededBy) {
+        superseded.push(item);
+      } else if (validFrom !== null && validFrom > asOf) {
+        future.push(item);
+      } else if (validTo !== null && validTo < asOf) {
+        stale.push(item);
+      } else {
+        active.push(item);
+      }
+    }
+    const byValidFromDesc = (a: EvidenceInput, b: EvidenceInput) => (this.temporalMillis(b.validFrom) ?? 0) - (this.temporalMillis(a.validFrom) ?? 0)
+      || (this.temporalMillis(b.observedAt) ?? this.temporalMillis(b.publishedAt) ?? 0) - (this.temporalMillis(a.observedAt) ?? this.temporalMillis(a.publishedAt) ?? 0)
+      || a.id.localeCompare(b.id);
+    active.sort(byValidFromDesc);
+    stale.sort(byValidFromDesc);
+    superseded.sort(byValidFromDesc);
+    future.sort(byValidFromDesc);
+    return { active, stale, superseded, future, timeline: [...active, ...stale, ...superseded, ...future] };
+  }
+
   diffuseGraph(input: {
     seedIds: string[];
     edges: GraphEdgeInput[];
@@ -547,6 +687,24 @@ export class EvidenceToDecisionService {
     const scores = Object.fromEntries(Object.entries(rawScores).map(([id, score]) => [id, round4(Math.max(0, score) / total)]));
     const ranked = Object.entries(scores).map(([id, score]) => ({ id, score })).sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
     return { method, seedIds, scores, ranked };
+  }
+
+  private edgeTypeForVerdict(verdict: ClaimVerdictKind): ProvenanceEdgeType {
+    if (verdict === 'supports') return 'SUPPORTS';
+    if (verdict === 'refutes') return 'REFUTES';
+    if (verdict === 'mixed') return 'QUALIFIES';
+    return 'QUALIFIES';
+  }
+
+  private temporalIso(value: TemporalValue | undefined): string | null {
+    const millis = this.temporalMillis(value);
+    return millis === null ? null : new Date(millis).toISOString();
+  }
+
+  private temporalMillis(value: TemporalValue | undefined): number | null {
+    if (value === undefined) return null;
+    const millis = value instanceof Date ? value.getTime() : new Date(value).getTime();
+    return Number.isFinite(millis) ? millis : null;
   }
 
   private deadlineWeight(dueAt: Date | undefined, now: Date): number {

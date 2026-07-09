@@ -21,15 +21,17 @@ describe('ConsultingGraphRagBridge advanced recall contract', () => {
       query: 'q',
       rerank: 'cross-encoder',
       rerank_error: 'cross_encoder_unavailable',
-      signals: { semantic: 3, lexical: 2, graph: 1, file_semantic: 4, file_lexical: 5, file_graph: 6, tog2_deep: 7 },
+      signals: { semantic: 3, lexical: 2, graph: 1, file_semantic: 4, file_lexical: 5, file_graph: 6, tog2_deep: 7, component_summary: 8 },
       hits: [{
-        kind: 'dialogue',
+        kind: 'component_summary',
         rerank_score: 0.81,
         fused_score: 0.25,
         doc_title: 'doc',
         utility_tier: 'qualified_usable',
-        context_text: '정원 인건비 근거',
+        context_text: '연결요소 요약: 정원 인건비와 운영비가 같은 구조 리스크로 묶인다.',
         linked: ['claim:CL-1'],
+        source_chunk_ids: [101, 201],
+        graph_path: ['claim:CL-1', 'risk:인건비'],
         signal_breakdown: { semantic: { rank: 1, raw_score: 0.91, rrf: 0.01639 }, graph: { rank: null, raw_score: null, rrf: 0 } },
       }],
     }, { topicSlug: 'fallback-topic', query: 'fallback-q' });
@@ -38,11 +40,13 @@ describe('ConsultingGraphRagBridge advanced recall contract', () => {
     expect(normalized.status).toBe('ok');
     expect(normalized.rerank).toBe('cross-encoder');
     expect(normalized.rerankError).toBe('cross_encoder_unavailable');
-    expect(normalized.signals).toEqual({ semantic: 3, lexical: 2, graph: 1, fileSemantic: 4, fileLexical: 5, fileGraph: 6, tog2Deep: 7 });
+    expect(normalized.signals).toEqual({ semantic: 3, lexical: 2, graph: 1, fileSemantic: 4, fileLexical: 5, fileGraph: 6, tog2Deep: 7, componentSummary: 8 });
     expect(normalized.hits[0]?.score).toBe(0.81);
     expect(normalized.hits[0]?.rerankScore).toBe(0.81);
     expect(normalized.hits[0]?.fusedScore).toBe(0.25);
-    expect(normalized.hits[0]?.graphPath).toEqual(['claim:CL-1']);
+    expect(normalized.hits[0]?.kind).toBe('component_summary');
+    expect(normalized.hits[0]?.graphPath).toEqual(['claim:CL-1', 'risk:인건비']);
+    expect(normalized.hits[0]?.sourceChunkIds).toEqual([101, 201]);
     expect(normalized.hits[0]?.signalBreakdown).toMatchObject({ semantic: { rank: 1 }, graph: { rrf: 0 } });
   });
 
@@ -66,7 +70,7 @@ describe('ConsultingGraphRagBridge advanced recall contract', () => {
           query: input.query,
           rerank: 'cross-encoder',
           rerankError: null,
-          signals: { semantic: 1, lexical: 0, graph: 0, fileSemantic: 0, fileLexical: 0, fileGraph: 0, tog2Deep: 0 },
+          signals: { semantic: 1, lexical: 0, graph: 0, fileSemantic: 0, fileLexical: 0, fileGraph: 0, tog2Deep: 0, componentSummary: 0 },
           hits: [{
             kind: 'dialogue',
             score: input.topicSlug === 'current-topic' ? 0.5 : 1,

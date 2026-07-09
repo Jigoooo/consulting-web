@@ -83,3 +83,30 @@ export const tailScrollRequestStore = {
 export function useTailScrollRequest(): number {
   return useSyncExternalStore(tailScrollRequestStore.subscribe, tailScrollRequestStore.get, tailScrollRequestStore.get);
 }
+
+export interface ComposerDraftRequest {
+  seq: number;
+  threadId: string;
+  prompt: string;
+}
+
+let composerDraftRequest: ComposerDraftRequest | null = null;
+let composerDraftSeq = 0;
+const composerDraftListeners = new Set<() => void>();
+
+export const composerDraftRequestStore = {
+  get: (): ComposerDraftRequest | null => composerDraftRequest,
+  request: (threadId: string, prompt: string): void => {
+    composerDraftSeq += 1;
+    composerDraftRequest = { seq: composerDraftSeq, threadId, prompt };
+    for (const l of composerDraftListeners) l();
+  },
+  subscribe: (fn: () => void): (() => void) => {
+    composerDraftListeners.add(fn);
+    return () => composerDraftListeners.delete(fn);
+  },
+};
+
+export function useComposerDraftRequest(): ComposerDraftRequest | null {
+  return useSyncExternalStore(composerDraftRequestStore.subscribe, composerDraftRequestStore.get, composerDraftRequestStore.get);
+}

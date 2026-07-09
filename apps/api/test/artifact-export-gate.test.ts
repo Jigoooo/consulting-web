@@ -32,7 +32,7 @@ function makeController() {
   };
   const access = { workspaceMember: vi.fn().mockResolvedValue({ allowed: true, workspaceId: WORKSPACE_ID }) };
   const notifications = { notifyWorkspace: vi.fn() };
-  const db = {};
+  const db = makeSourceDb();
   const exporter = {
     export: vi.fn().mockResolvedValue({
       buffer: Buffer.from('%PDF-1.7\nmock pdf body'.padEnd(1200, 'x')),
@@ -57,7 +57,7 @@ function makeController() {
     exporter,
     gateStore,
   ) as ArtifactsController;
-  return { controller, exporter };
+  return { controller, exporter, gateStore };
 }
 
 describe('ArtifactsController final export verifier gate', () => {
@@ -78,4 +78,36 @@ describe('ArtifactsController final export verifier gate', () => {
     });
     expect(exporter.export).not.toHaveBeenCalled();
   });
+
+  it('preflights blocked export without rendering the artifact', async () => {
+    const { controller, exporter } = makeController();
+
+    const response = await controller.exportPreflight(ARTIFACT_ID, 'pdf', undefined, { authUserId: 'user-1' } as any);
+
+    expect(response).toMatchObject({
+      canExport: false,
+      reason: 'VERIFIER_GATE_BLOCKED',
+      gate: {
+        decision: 'BLOCKED',
+        blockers: [expect.objectContaining({ code: 'high_impact_refute', claimId: 'CL-EXPORT-1' })],
+      },
+    });
+    expect(exporter.export).not.toHaveBeenCalled();
+  });
 });
+
+function makeSourceDb() {
+  return {
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        innerJoin: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn(async () => [{
+          workspaceId: WORKSPACE_ID,
+          projectId: PROJECT_ID,
+          threadId: THREAD_ID,
+        }]),
+      })),
+    })),
+  };
+}

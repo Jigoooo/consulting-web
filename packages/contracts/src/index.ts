@@ -6,4 +6,5 @@ export * from './chat.js';
 export * from './spaces.js';
 export * from './collab.js';
 export * from './library.js';
+export * from './observability.js';
 export * from './hangul-search.js';

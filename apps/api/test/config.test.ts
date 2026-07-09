@@ -23,6 +23,13 @@ describe('env validation (ADR-0014, acceptance #3)', () => {
     expect(r.env?.VERIFIER_LLM_TIMEOUT_MS).toBe(30_000);
   });
 
+  it('accepts Hermes tool policy allowlist settings', () => {
+    const r = parseEnv({ ...VALID, HERMES_TOOL_POLICY_ENFORCED: 'false', HERMES_ALLOWED_TOOLSETS: 'web,terminal,mcp-gbrain' } as NodeJS.ProcessEnv);
+    expect(r.ok).toBe(true);
+    expect(r.env?.HERMES_TOOL_POLICY_ENFORCED).toBe(false);
+    expect(r.env?.HERMES_ALLOWED_TOOLSETS).toBe('web,terminal,mcp-gbrain');
+  });
+
   it('accepts Voyage multimodal settings without exposing the key to browser contracts', () => {
     const r = parseEnv({ ...VALID, VOYAGE_MULTIMODAL_ENABLED: 'true', VOYAGE_API_KEY: 'voyage-test-key', VOYAGE_MULTIMODAL_MODEL: 'voyage-multimodal-3' } as NodeJS.ProcessEnv);
     expect(r.ok).toBe(true);

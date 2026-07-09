@@ -23,6 +23,7 @@ export interface ConsultingGraphRagSignals {
   fileLexical: number;
   fileGraph: number;
   tog2Deep: number;
+  componentSummary: number;
 }
 
 export interface ConsultingGraphRagHit {
@@ -36,6 +37,7 @@ export interface ConsultingGraphRagHit {
   text: string;
   linked: string[];
   graphPath?: string[];
+  sourceChunkIds?: number[];
   signalBreakdown: Record<string, unknown> | null;
   sourceTopicSlug?: string;
   sourceLabel?: string;
@@ -74,6 +76,13 @@ function asNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function asNumberArray(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => asNumber(item))
+    .filter((item): item is number => item !== null);
+}
+
 function normalizeSignals(value: unknown): ConsultingGraphRagSignals | null {
   if (!isRecord(value)) return null;
   return {
@@ -84,6 +93,7 @@ function normalizeSignals(value: unknown): ConsultingGraphRagSignals | null {
     fileLexical: asNumber(value.file_lexical) ?? 0,
     fileGraph: asNumber(value.file_graph) ?? 0,
     tog2Deep: asNumber(value.tog2_deep) ?? 0,
+    componentSummary: asNumber(value.component_summary) ?? 0,
   };
 }
 
@@ -92,6 +102,7 @@ function normalizeHit(value: unknown): ConsultingGraphRagHit | null {
   const text = asString(value.context_text) ?? asString(value.raw_text) ?? '';
   if (!text) return null;
   const linkedRaw = Array.isArray(value.linked) ? value.linked : [];
+  const graphPathRaw = Array.isArray(value.graph_path) ? value.graph_path : linkedRaw;
   return {
     kind: asString(value.kind) ?? 'unknown',
     score: asNumber(value.rerank_score) ?? asNumber(value.fused_score) ?? asNumber(value.score),
@@ -101,7 +112,8 @@ function normalizeHit(value: unknown): ConsultingGraphRagHit | null {
     utilityTier: asString(value.utility_tier),
     text,
     linked: linkedRaw.filter((item): item is string => typeof item === 'string'),
-    graphPath: linkedRaw.filter((item): item is string => typeof item === 'string' && item.includes(':')),
+    graphPath: graphPathRaw.filter((item): item is string => typeof item === 'string' && item.includes(':')),
+    sourceChunkIds: asNumberArray(value.source_chunk_ids),
     signalBreakdown: isRecord(value.signal_breakdown) ? value.signal_breakdown : null,
   };
 }
@@ -207,7 +219,8 @@ function mergeSignals(values: Array<ConsultingGraphRagSignals | null>): Consulti
     fileLexical: acc.fileLexical + value.fileLexical,
     fileGraph: acc.fileGraph + value.fileGraph,
     tog2Deep: acc.tog2Deep + value.tog2Deep,
-  }), { semantic: 0, lexical: 0, graph: 0, fileSemantic: 0, fileLexical: 0, fileGraph: 0, tog2Deep: 0 });
+    componentSummary: acc.componentSummary + value.componentSummary,
+  }), { semantic: 0, lexical: 0, graph: 0, fileSemantic: 0, fileLexical: 0, fileGraph: 0, tog2Deep: 0, componentSummary: 0 });
 }
 
 @Injectable()

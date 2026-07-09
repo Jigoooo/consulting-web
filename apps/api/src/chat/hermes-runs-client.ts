@@ -53,6 +53,15 @@ interface HermesCapabilitiesResponse {
   readonly features?: unknown;
 }
 
+interface HermesToolsetsResponse {
+  readonly data?: unknown;
+}
+
+interface HermesToolsetStatus {
+  readonly name: string;
+  readonly enabled: boolean;
+}
+
 interface HermesUsageWire {
   readonly input_tokens?: unknown;
   readonly output_tokens?: unknown;
@@ -64,8 +73,36 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object';
 }
 
-const APPROVAL_CHOICES: ChatApprovalChoice[] = ['once', 'session', 'always', 'deny'];
+const APPROVAL_CHOICES: ChatApprovalChoice[] = ['once', 'session', 'deny'];
 const HERMES_AGENT_BRAND_RE = /^hermes(?:[\s_-]+agent)?$/i;
+const DEFAULT_ALLOWED_HERMES_TOOLSETS = [
+  // Explicit allowlist for the current consulting-web API-server chat path.
+  // Dynamic/high-blast-radius toolsets (MCP, messaging, Discord/admin,
+  // Home Assistant, TTS, X search) stay denied unless an operator adds them
+  // to HERMES_ALLOWED_TOOLSETS.
+  'web',
+  'search',
+  'terminal',
+  'file',
+  'browser',
+  'vision',
+  'image_gen',
+  'skills',
+  'memory',
+  'session_search',
+  'cronjob',
+  'code_execution',
+  'delegation',
+  'todo',
+  'safe',
+] as const;
+
+function parseCommaList(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
 
 function stringField(record: Record<string, unknown>, names: string[]): string | undefined {
   for (const name of names) {
@@ -226,6 +263,13 @@ function mergeModelRoutes(configured: ChatRuntimeModel[], upstream: ChatRuntimeM
   });
 }
 
+function normalizeToolsetStatus(item: unknown): HermesToolsetStatus | null {
+  if (!isRecord(item)) return null;
+  const name = stringField(item, ['name', 'id']);
+  if (!name) return null;
+  return { name, enabled: item.enabled === true };
+}
+
 /**
  * 컨설팅 응답 포맷 규약 — 매 run에 `instructions`(ephemeral_system_prompt)로
  * 주입해 지구가 처음부터 읽기 좋은 마크다운으로 답하게 유도한다. 상수로 고정해
@@ -320,6 +364,7 @@ export class HermesRunsClient {
   }
 
   private async startRun(cmd: ChatStreamRequest, scope?: { workspaceId: string; projectId: string; memoryContext?: string }): Promise<string> {
+    await this.enforceHermesToolPolicy();
     // #3 (B1): share Hermes dialogue memory across ALL channels of a project so
     // 지구 remembers context from sibling channels. Session is scoped by
     // workspace+project so other projects/workspaces stay fully isolated
@@ -349,6 +394,35 @@ export class HermesRunsClient {
       throw new Error('Hermes run start returned invalid run_id');
     }
     return body.run_id;
+  }
+
+  private async enforceHermesToolPolicy(): Promise<void> {
+    if (this.env.HERMES_TOOL_POLICY_ENFORCED === false) return;
+    const allowed = new Set(parseCommaList(this.env.HERMES_ALLOWED_TOOLSETS));
+    if (allowed.size === 0) {
+      for (const name of DEFAULT_ALLOWED_HERMES_TOOLSETS) allowed.add(name);
+    }
+
+    const response = await fetch(this.url('/v1/toolsets'), {
+      method: 'GET',
+      headers: this.headers({ accept: 'application/json' }),
+    });
+    if (!response.ok) {
+      throw new Error(`Hermes tool policy check failed (${response.status})`);
+    }
+
+    const body = await response.json() as HermesToolsetsResponse;
+    const statuses = Array.isArray(body.data)
+      ? body.data.flatMap((item) => {
+        const status = normalizeToolsetStatus(item);
+        return status ? [status] : [];
+      })
+      : [];
+    const enabled = statuses.filter((toolset) => toolset.enabled).map((toolset) => toolset.name);
+    const blocked = enabled.filter((name) => !allowed.has(name));
+    if (blocked.length > 0) {
+      throw new Error(`Hermes tool policy blocked enabled toolsets: ${blocked.sort().join(', ')}`);
+    }
   }
 
   private async getRunStatus(runId: string): Promise<HermesRunStatusResponse> {
@@ -437,6 +511,12 @@ export class HermesRunsClient {
   }
 
   async respondApproval(runId: string, choice: ChatApprovalChoice, resolveAll?: boolean): Promise<ChatRunActionResponse> {
+    if (choice === 'always') {
+      throw new Error('Hermes approval choice "always" requires a durable product approval policy');
+    }
+    if (resolveAll) {
+      throw new Error('Hermes approval resolveAll requires a durable product approval policy');
+    }
     const response = await fetch(this.url(`/v1/runs/${encodeURIComponent(runId)}/approval`), {
       method: 'POST',
       headers: this.headers({ 'content-type': 'application/json', accept: 'application/json' }),

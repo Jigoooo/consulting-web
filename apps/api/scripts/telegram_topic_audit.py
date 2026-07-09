@@ -18,7 +18,7 @@ from typing import Any
 
 DEFAULT_CHAT_ID = "-1004453868195"
 DEFAULT_TOPIC_SLUG = "changwon-org-mgmt-diagnosis"
-DEFAULT_EXPECTED_THREADS = ["12", "524", "533", "356", "1"]
+DEFAULT_EXPECTED_THREADS = ["12", "524", "533", "356", "1", "1060"]
 DEFAULT_STATE_DB = Path("/home/jigoo/.hermes/state.db")
 DEFAULT_CONSULTING_DB = Path("/home/jigoo/.hermes/workspace/consulting/db/consulting.db")
 DEFAULT_CONFIG = Path("/home/jigoo/.hermes/config.yaml")
@@ -40,6 +40,15 @@ class BoundSessionRow:
     topic_slug: str
     session_id: str
     bound_at: str | None
+
+
+@dataclass(frozen=True)
+class ExactThreadBindingRow:
+    topic_slug: str
+    telegram_user_id: str
+    chat_id: str
+    thread_id: str
+    status: str
 
 
 @dataclass(frozen=True)
@@ -87,6 +96,26 @@ def load_bound_sessions(path: Path, topic_slug: str) -> list[BoundSessionRow]:
     return [BoundSessionRow(str(r[0]), str(r[1]), r[2]) for r in rows]
 
 
+def load_exact_thread_bindings(path: Path, topic_slug: str) -> list[ExactThreadBindingRow]:
+    with sqlite_ro(path) as con:
+        exists = con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dialogue_telegram_thread_bindings'"
+        ).fetchone()
+        if not exists:
+            return []
+        rows = con.execute(
+            """
+            SELECT t.slug, b.telegram_user_id, b.chat_id, b.thread_id, b.status
+            FROM dialogue_telegram_thread_bindings b
+            JOIN topics t ON t.id = b.topic_id
+            WHERE t.slug = ?
+            ORDER BY b.chat_id, b.thread_id
+            """,
+            (topic_slug,),
+        ).fetchall()
+    return [ExactThreadBindingRow(str(r[0]), str(r[1]), str(r[2]), str(r[3]), str(r[4])) for r in rows]
+
+
 def parse_config_prompt_threads(path: Path, chat_id: str) -> list[str]:
     if not path.exists():
         return []
@@ -117,6 +146,7 @@ def build_issues(
     configured_prompt_threads: set[str],
     sessions: list[SessionRow],
     bound_sessions: list[BoundSessionRow],
+    exact_thread_bindings: list[ExactThreadBindingRow],
     chat_id: str,
 ) -> list[Issue]:
     by_id = {row.id: row for row in sessions}
@@ -153,13 +183,27 @@ def build_issues(
             evidence={"session_ids": bound_missing_state},
         ))
 
+    exact_threads = {
+        row.thread_id
+        for row in exact_thread_bindings
+        if row.chat_id == chat_id and row.status == "active" and row.thread_id
+    }
+    exact_covers_expected = bool(exact_threads) and expected_threads.issubset(exact_threads)
+
     broad_null = [row.session_id for row in bound_sessions if (state := by_id.get(row.session_id)) and state.chat_id == chat_id and state.thread_id is None]
-    if broad_null:
+    if broad_null and not exact_covers_expected:
         issues.append(Issue(
             code="BROAD_NULL_THREAD_BINDING",
             severity="blocker_for_autobind",
             detail="Changwon dialogue binding includes Telegram sessions whose state.thread_id is NULL; exact topic binding must replace this before new auto-bind behavior.",
             evidence={"session_ids": broad_null},
+        ))
+    elif broad_null:
+        issues.append(Issue(
+            code="LEGACY_NULL_THREAD_BINDING_SHADOWED",
+            severity="info",
+            detail="Legacy NULL-thread sessions remain in dialogue_topic_sessions, but active exact thread bindings cover the expected topic threads and pg-only auto-bind ignores the broad legacy row.",
+            evidence={"session_ids": broad_null, "exact_threads": sorted(exact_threads, key=lambda x: int(x) if str(x).isdigit() else 10**9)},
         ))
 
     unexpected_bound = sorted({state.thread_id for row in bound_sessions if (state := by_id.get(row.session_id)) and state.thread_id and state.thread_id not in expected_threads})
@@ -186,12 +230,14 @@ def audit(args: argparse.Namespace) -> dict[str, Any]:
     expected_threads = {str(item) for item in args.expected_thread}
     sessions = load_state_sessions(Path(args.state_db), args.chat_id)
     bound = load_bound_sessions(Path(args.consulting_db), args.topic_slug)
+    exact = load_exact_thread_bindings(Path(args.consulting_db), args.topic_slug)
     configured = set(parse_config_prompt_threads(Path(args.config), args.chat_id))
     issues = build_issues(
         expected_threads=expected_threads,
         configured_prompt_threads=configured,
         sessions=sessions,
         bound_sessions=bound,
+        exact_thread_bindings=exact,
         chat_id=args.chat_id,
     )
     return {
@@ -202,6 +248,7 @@ def audit(args: argparse.Namespace) -> dict[str, Any]:
         "configured_prompt_threads": sorted(configured, key=lambda x: int(x)),
         "state_sessions_by_thread": summarize_by_thread(sessions),
         "bound_sessions": [asdict(row) for row in bound],
+        "exact_thread_bindings": [asdict(row) for row in exact],
         "issues": [asdict(issue) for issue in issues],
     }
 

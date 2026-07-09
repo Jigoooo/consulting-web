@@ -51,7 +51,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [contextCollapsed, setContextCollapsed] = useState(false);
   const searchState = useSearchState();
   useEffect(() => {
-    if (location.pathname === '/library' || location.pathname === '/artifacts') {
+    if (location.pathname === '/library' || location.pathname === '/artifacts' || location.pathname === '/observability') {
       setContextCollapsed(true);
     }
   }, [location.pathname]);
@@ -623,6 +623,21 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
         <span>
           <strong>자료실</strong>
           <small>근거·업로드 문서 모아보기</small>
+        </span>
+      </button>
+      <button
+        type="button"
+        className={s.workspaceTool}
+        disabled={!selected}
+        onClick={() => {
+          void router.navigate({ to: '/observability' });
+          onNavigate?.();
+        }}
+      >
+        <Icon name="monitor" size="sm" decorative />
+        <span>
+          <strong>Trace Viewer</strong>
+          <small>실행 span·eval ledger 점검</small>
         </span>
       </button>
       <button type="button" className={s.workspaceTool} onClick={() => setArchiveOpen(true)} disabled={!selected}>

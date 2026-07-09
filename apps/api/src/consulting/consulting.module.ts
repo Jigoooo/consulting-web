@@ -15,6 +15,7 @@ import { LocalVisualHashProvider } from './local-visual-hash.provider.js';
 import { VisualDocumentSearchService } from './visual-document-search.service.js';
 import { VoyageMultimodalProvider } from './voyage-multimodal.provider.js';
 import { ConsultingWebIngestService } from './consulting-web-ingest.service.js';
+import { ConsultingRunTraceService } from './consulting-run-trace.service.js';
 import {
   CONSULTING_WEB_INGEST_RUNNER,
   ConsultingWebIngestWorker,
@@ -44,11 +45,12 @@ import { SpacesModule } from '../spaces/spaces.module.js';
     VoyageMultimodalProvider,
     DocumentUnitEmbeddingService,
     VisualDocumentSearchService,
+    ConsultingRunTraceService,
     ConsultingMemoryContextBuilder,
     ConsultingWebIngestService,
     { provide: CONSULTING_WEB_INGEST_RUNNER, useValue: defaultConsultingWebIngestRunner },
     ConsultingWebIngestWorker,
   ],
-  exports: [ConsultingTopicResolver, TelegramTopicRegistryService, ConsultingGraphRagBridge, CitationPostCheckService, EvidenceSufficiencyEvaluator, EvidenceDecisionStore, EvidenceToDecisionService, LocalNliProvider, DisabledLlmStrictJsonVerifier, ClaimVerifierService, ExactnessGateService, VerifierGatePolicyService, ConsultingJudgmentGuardService, LocalVisualHashProvider, VoyageMultimodalProvider, DocumentUnitEmbeddingService, VisualDocumentSearchService, ConsultingMemoryContextBuilder, ConsultingWebIngestService],
+  exports: [ConsultingTopicResolver, TelegramTopicRegistryService, ConsultingGraphRagBridge, CitationPostCheckService, EvidenceSufficiencyEvaluator, EvidenceDecisionStore, EvidenceToDecisionService, LocalNliProvider, DisabledLlmStrictJsonVerifier, ClaimVerifierService, ExactnessGateService, VerifierGatePolicyService, ConsultingJudgmentGuardService, LocalVisualHashProvider, VoyageMultimodalProvider, DocumentUnitEmbeddingService, VisualDocumentSearchService, ConsultingRunTraceService, ConsultingMemoryContextBuilder, ConsultingWebIngestService],
 })
 export class ConsultingModule {}

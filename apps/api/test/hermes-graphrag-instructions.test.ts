@@ -42,6 +42,9 @@ describe('HermesRunsClient GraphRAG instructions', () => {
       const url = input instanceof Request ? input.url : String(input);
       const body = typeof init?.body === 'string' ? init.body : null;
       requests.push({ url, body });
+      if (url.endsWith('/v1/toolsets')) {
+        return new Response(JSON.stringify({ data: [{ name: 'web', enabled: true }, { name: 'mcp-github', enabled: false }] }), { status: 200 });
+      }
       if (url.endsWith('/v1/runs')) {
         return new Response(JSON.stringify({ run_id: 'run_graph', status: 'started' }), { status: 202 });
       }
@@ -77,7 +80,7 @@ describe('HermesRunsClient GraphRAG instructions', () => {
   it('forwards selected model and normalizes approval/runtime controls', async () => {
     const requests: Array<{ url: string; body: string | null; method: string | undefined }> = [];
     const events = [
-      'data: {"event":"approval.request","run_id":"run_runtime","choices":["once","deny"],"command":"echo ok"}',
+      'data: {"event":"approval.request","run_id":"run_runtime","choices":["always","once","session","deny"],"command":"echo ok"}',
       '',
       'data: {"event":"run.completed","run_id":"run_runtime","usage":{"total_tokens":7}}',
       '',
@@ -87,6 +90,9 @@ describe('HermesRunsClient GraphRAG instructions', () => {
       const url = input instanceof Request ? input.url : String(input);
       const body = typeof init?.body === 'string' ? init.body : null;
       requests.push({ url, body, method: init?.method });
+      if (url.endsWith('/v1/toolsets')) {
+        return new Response(JSON.stringify({ data: [{ name: 'web', enabled: true }, { name: 'terminal', enabled: true }] }), { status: 200 });
+      }
       if (url.endsWith('/v1/runs')) {
         return new Response(JSON.stringify({ run_id: 'run_runtime', status: 'started' }), { status: 202 });
       }
@@ -110,13 +116,81 @@ describe('HermesRunsClient GraphRAG instructions', () => {
     for await (const event of client.streamChat({ threadId: 'thread-1', message: '실행', model: 'gpt-5.5' })) {
       out.push(event);
     }
-    expect(out.find((e) => e.type === 'approval')).toMatchObject({ type: 'approval', command: 'echo ok', choices: ['once', 'deny'] });
+    expect(out.find((e) => e.type === 'approval')).toMatchObject({ type: 'approval', command: 'echo ok', choices: ['once', 'session', 'deny'] });
     expect(out.find((e) => e.type === 'done')).toMatchObject({ type: 'done', usage: { totalTokens: 7 } });
     const start = requests.find((r) => r.url.endsWith('/v1/runs'));
     expect(JSON.parse(start!.body!)).toMatchObject({ model: 'gpt-5.5' });
 
     await expect(client.respondApproval('run_runtime', 'once')).resolves.toEqual({ ok: true, runId: 'run_runtime', status: 'approved' });
+    await expect(client.respondApproval('run_runtime', 'always')).rejects.toThrow(/durable product approval policy/);
+    await expect(client.respondApproval('run_runtime', 'once', true)).rejects.toThrow(/resolveAll requires a durable product approval policy/);
     await expect(client.stopRun('run_runtime')).resolves.toEqual({ ok: true, runId: 'run_runtime', status: 'stopping' });
+  });
+
+  it('fails closed before run start when Hermes exposes a non-allowlisted toolset', async () => {
+    const requests: Array<{ url: string; body: string | null }> = [];
+    vi.stubGlobal('fetch', async (input: unknown, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      const body = typeof init?.body === 'string' ? init.body : null;
+      requests.push({ url, body });
+      if (url.endsWith('/v1/toolsets')) {
+        return new Response(JSON.stringify({ data: [{ name: 'web', enabled: true }, { name: 'mcp-github', enabled: true }] }), { status: 200 });
+      }
+      if (url.endsWith('/v1/runs')) {
+        return new Response(JSON.stringify({ run_id: 'should_not_start', status: 'started' }), { status: 202 });
+      }
+      return new Response('not found', { status: 404 });
+    });
+
+    const client = new HermesRunsClient(env);
+    const out = [];
+    for await (const event of client.streamChat({ threadId: 'thread-1', message: '실행' })) {
+      out.push(event);
+    }
+
+    expect(out).toEqual([
+      expect.objectContaining({
+        type: 'error',
+        code: 'HERMES_PROXY_ERROR',
+        message: expect.stringContaining('Hermes tool policy blocked enabled toolsets: mcp-github'),
+      }),
+    ]);
+    expect(requests.some((request) => request.url.endsWith('/v1/runs'))).toBe(false);
+  });
+
+  it('allows explicitly allowlisted MCP/toolsets before run start', async () => {
+    const requests: Array<{ url: string; body: string | null }> = [];
+    const events = [
+      'data: {"event":"run.completed","run_id":"run_tool_policy"}',
+      '',
+    ].join('\n');
+    vi.stubGlobal('fetch', async (input: unknown, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      const body = typeof init?.body === 'string' ? init.body : null;
+      requests.push({ url, body });
+      if (url.endsWith('/v1/toolsets')) {
+        return new Response(JSON.stringify({ data: [{ name: 'web', enabled: true }, { name: 'mcp-github', enabled: true }] }), { status: 200 });
+      }
+      if (url.endsWith('/v1/runs')) {
+        return new Response(JSON.stringify({ run_id: 'run_tool_policy', status: 'started' }), { status: 202 });
+      }
+      if (url.endsWith('/v1/runs/run_tool_policy')) {
+        return new Response(JSON.stringify({ model: 'test-model' }), { status: 200 });
+      }
+      if (url.endsWith('/v1/runs/run_tool_policy/events')) {
+        return new Response(events, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+      }
+      return new Response('not found', { status: 404 });
+    });
+
+    const client = new HermesRunsClient({ ...env, HERMES_ALLOWED_TOOLSETS: 'web,mcp-github' });
+    const out = [];
+    for await (const event of client.streamChat({ threadId: 'thread-1', message: '실행' })) {
+      out.push(event.type);
+    }
+
+    expect(out).toContain('done');
+    expect(requests.some((request) => request.url.endsWith('/v1/runs'))).toBe(true);
   });
 
   it('normalizes runtime models to provider/model labels instead of the Hermes Agent brand', async () => {

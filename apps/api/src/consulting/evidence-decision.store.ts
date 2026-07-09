@@ -4,7 +4,7 @@ import { schema } from '@consulting/db-schema';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import type { EvidenceDecisionSummaryResponse, ReviewQueueResponse } from '@consulting/contracts';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
-import { EvidenceToDecisionService, type ClaimInput, type ClaimVerdict, type DecisionRating, type EvidenceInput, type ReviewInput } from './evidence-to-decision.service.js';
+import { EvidenceToDecisionService, type ClaimInput, type ClaimVerdict, type DecisionRating, type EvidenceInput, type ProvenanceGraphEdge, type ReviewInput } from './evidence-to-decision.service.js';
 import { ClaimVerifierService } from './claim-verifier.service.js';
 import { ExactnessGateService, type ExactnessGateResult, type ExactnessRunStatus } from './exactness-gate.service.js';
 import { VerifierGatePolicyService, type VerifierGateResult } from './verifier-gate-policy.service.js';
@@ -71,6 +71,7 @@ export class EvidenceDecisionStore {
     answer: string;
     runId: string | null;
   }): Promise<void> {
+    await this.assertThreadInWorkspace(input.workspaceId, input.threadId);
     const judgmentGuard = this.judgmentGuard.evaluate({ query: input.userPrompt, hits: [], userFeedback: input.answer, now: new Date() });
     if (judgmentGuard.required) await this.persistJudgmentGuardRun(input, judgmentGuard);
 
@@ -86,6 +87,7 @@ export class EvidenceDecisionStore {
         ref: schema.evidenceItems.ref,
         excerpt: schema.evidenceItems.excerpt,
         qualityScore: schema.evidenceItems.qualityScore,
+        createdAt: schema.evidenceItems.createdAt,
       })
       .from(schema.evidenceItems)
       .where(and(eq(schema.evidenceItems.threadId, input.threadId), isNull(schema.evidenceItems.deletedAt)))
@@ -102,6 +104,8 @@ export class EvidenceDecisionStore {
       id: row.id,
       text: `${row.ref}\n${row.excerpt}`,
       qualityScore: row.qualityScore ?? 70,
+      observedAt: row.createdAt,
+      collectedAt: row.createdAt,
     }));
 
     const highRiskClaimIds = claims.filter((claim) => (claim.decisionImpact ?? 0) >= 0.8).map((claim) => claim.id);
@@ -125,6 +129,33 @@ export class EvidenceDecisionStore {
           verifier: verification.verifier,
         })),
       );
+    }
+
+    const provenanceGraph = this.engine.buildProvenanceGraph({ verdicts: lattice.verdicts, evidence, asOf: new Date() });
+    if (provenanceGraph.edges.length > 0) {
+      try {
+        await this.db.insert(schema.provenanceGraphEdges).values(
+          provenanceGraph.edges.map((edge) => ({
+            workspaceId: input.workspaceId,
+            threadId: input.threadId,
+            sourceRef: edge.sourceRef,
+            targetRef: edge.targetRef,
+            edgeType: edge.edgeType,
+            confidence: String(edge.confidence),
+            evidenceRefs: edge.evidenceRefs,
+            validFrom: edgeDate(edge.validFrom),
+            validTo: edgeDate(edge.validTo),
+            observedAt: edgeDate(edge.observedAt),
+            publishedAt: edgeDate(edge.publishedAt),
+            collectedAt: edgeDate(edge.collectedAt),
+            supersededBy: edge.supersededBy,
+            rationale: edge.rationale,
+            metadata: edge.metadata,
+          })),
+        );
+      } catch (error) {
+        if (!isMissingRelationError(error)) throw error;
+      }
     }
 
     const supported = lattice.summary.supports;
@@ -176,16 +207,19 @@ export class EvidenceDecisionStore {
       );
     }
 
-    const reviewInputs: ReviewInput[] = lattice.verdicts
-      .filter((verdict) => verdict.verdict !== 'supports')
-      .map((verdict) => ({
-        id: verdict.claimId,
-        kind: verdict.verdict === 'refutes' || verdict.verdict === 'mixed' ? 'refuted_claim' : 'unsupported_claim',
-        title: verdict.claimText.slice(0, 120),
-        decisionImpact: verdict.decisionImpact,
-        uncertainty: clamp01(1 - verdict.confidence),
-        evidenceGap: verdict.verdict === 'not_enough_info' ? 1 : 0.75,
-      }));
+    const reviewInputs: ReviewInput[] = [
+      ...lattice.verdicts
+        .filter((verdict) => verdict.verdict !== 'supports')
+        .map((verdict) => ({
+          id: verdict.claimId,
+          kind: verdict.verdict === 'refutes' || verdict.verdict === 'mixed' ? 'refuted_claim' : 'unsupported_claim',
+          title: verdict.claimText.slice(0, 120),
+          decisionImpact: verdict.decisionImpact,
+          uncertainty: clamp01(1 - verdict.confidence),
+          evidenceGap: verdict.verdict === 'not_enough_info' ? 1 : 0.75,
+        })),
+      ...provenanceGraph.reviewItems,
+    ];
     const reviewQueue = this.engine.prioritizeReviewQueue({ items: reviewInputs });
     if (reviewQueue.length > 0) {
       await this.db.insert(schema.activeReviewItems).values(
@@ -257,6 +291,19 @@ export class EvidenceDecisionStore {
       if (isMissingRelationError(error)) return;
       throw error;
     }
+  }
+
+  private async assertThreadInWorkspace(workspaceId: string, threadId: string): Promise<void> {
+    const [thread] = await this.db
+      .select({ id: schema.threads.id })
+      .from(schema.threads)
+      .where(and(
+        eq(schema.threads.id, threadId),
+        eq(schema.threads.workspaceId, workspaceId),
+        isNull(schema.threads.deletedAt),
+      ))
+      .limit(1);
+    if (!thread) throw new Error('evidence decision thread/workspace mismatch');
   }
 
   async summary(threadId: string): Promise<EvidenceDecisionSummaryResponse> {
@@ -459,12 +506,39 @@ export class EvidenceDecisionStore {
     };
   }
 
+  async decideReviewItem(input: {
+    threadId: string;
+    itemId: string;
+    action: 'resolve' | 'ignore';
+    note: string | null;
+  }): Promise<boolean> {
+    const [row] = await this.db
+      .update(schema.activeReviewItems)
+      .set({
+        status: input.action === 'resolve' ? 'resolved' : 'ignored',
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(schema.activeReviewItems.id, input.itemId),
+        eq(schema.activeReviewItems.threadId, input.threadId),
+        eq(schema.activeReviewItems.status, 'open'),
+        isNull(schema.activeReviewItems.deletedAt),
+      ))
+      .returning({ id: schema.activeReviewItems.id });
+    void input.note;
+    return Boolean(row);
+  }
+
   /**
    * Final-export gate for a single assistant message. Aggregates that message's
    * persisted claim verdicts + latest exactness run and evaluates the strictest
    * ('final_export') policy so PDF/DOCX rendering can be blocked before it runs.
    */
-  async gateForAssistantMessage(assistantMessageId: string): Promise<VerifierGateResult> {
+  async gateForAssistantMessage(input: {
+    assistantMessageId: string;
+    workspaceId: string;
+    threadId: string | null;
+  }): Promise<VerifierGateResult> {
     const verdictRows = await this.db
       .select({
         claimId: schema.claimVerificationVerdicts.claimId,
@@ -476,7 +550,12 @@ export class EvidenceDecisionStore {
         rationale: schema.claimVerificationVerdicts.rationale,
       })
       .from(schema.claimVerificationVerdicts)
-      .where(and(eq(schema.claimVerificationVerdicts.assistantMessageId, assistantMessageId), isNull(schema.claimVerificationVerdicts.deletedAt)))
+      .where(and(
+        eq(schema.claimVerificationVerdicts.assistantMessageId, input.assistantMessageId),
+        eq(schema.claimVerificationVerdicts.workspaceId, input.workspaceId),
+        ...(input.threadId ? [eq(schema.claimVerificationVerdicts.threadId, input.threadId)] : []),
+        isNull(schema.claimVerificationVerdicts.deletedAt),
+      ))
       .orderBy(desc(schema.claimVerificationVerdicts.createdAt))
       .limit(100);
 
@@ -485,7 +564,12 @@ export class EvidenceDecisionStore {
       const exactnessRows = await this.db
         .select({ status: schema.exactnessRuns.status })
         .from(schema.exactnessRuns)
-        .where(and(eq(schema.exactnessRuns.assistantMessageId, assistantMessageId), isNull(schema.exactnessRuns.deletedAt)))
+        .where(and(
+          eq(schema.exactnessRuns.assistantMessageId, input.assistantMessageId),
+          eq(schema.exactnessRuns.workspaceId, input.workspaceId),
+          ...(input.threadId ? [eq(schema.exactnessRuns.threadId, input.threadId)] : []),
+          isNull(schema.exactnessRuns.deletedAt),
+        ))
         .orderBy(desc(schema.exactnessRuns.createdAt))
         .limit(1);
       const status = exactnessRows[0]?.status;
@@ -597,12 +681,18 @@ function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
+function edgeDate(value: ProvenanceGraphEdge['validFrom']): Date | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
 function isMissingRelationError(error: unknown): boolean {
   if (!isRecord(error)) return false;
   const code = error.code;
   if (code === '42P01') return true;
   const message = typeof error.message === 'string' ? error.message : '';
-  return /relation .*(exactness_runs|judgment_guard_runs).* does not exist|no such table: (exactness_runs|judgment_guard_runs)/iu.test(message);
+  return /relation .*(exactness_runs|judgment_guard_runs|provenance_graph_edges).* does not exist|no such table: (exactness_runs|judgment_guard_runs|provenance_graph_edges)/iu.test(message);
 }
 
 function reviewActions(title: string): ReviewAction[] {

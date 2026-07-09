@@ -29,6 +29,10 @@ export const EnvSchema = z.object({
   HERMES_API_BASE_URL: z.string().url(),
   HERMES_API_KEY: z.string().min(1),
   HERMES_CONFIG_PATH: z.string().optional(),
+  // P5 runtime governance: consulting-web fails closed before starting a
+  // Hermes run if the API server exposes enabled toolsets outside this list.
+  HERMES_TOOL_POLICY_ENFORCED: BooleanFlagSchema.optional(),
+  HERMES_ALLOWED_TOOLSETS: z.string().optional(),
 
   // Consulting projects default to the safe consulting_default skeleton unless
   // explicitly disabled server-side. No browser-exposed secrets or brain keys.

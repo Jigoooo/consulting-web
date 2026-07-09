@@ -164,6 +164,35 @@
   background: var(--accent-soft);
   color: var(--accent);
 }
+.preflightBanner {
+  max-width: 980px;
+  margin: 0 0 14px;
+  padding: 11px 13px;
+  border: 1px solid var(--border-hair);
+  border-radius: 12px;
+  background: var(--surface-panel);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.preflightBanner[data-tone='warn'] {
+  border-color: color-mix(in srgb, #d97706 42%, var(--border-hair));
+  background: color-mix(in srgb, #f59e0b 10%, var(--surface-panel));
+}
+.preflightBanner[data-tone='blocked'] {
+  border-color: color-mix(in srgb, #dc2626 45%, var(--border-hair));
+  background: color-mix(in srgb, #ef4444 10%, var(--surface-panel));
+}
+.preflightBanner strong {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text-primary);
+  font-size: 12.5px;
+}
+.preflightBanner ul {
+  margin: 0;
+  padding-left: 18px;
+}
 .doc {
   border: 1px solid var(--border-hair);
   border-radius: var(--radius-card);

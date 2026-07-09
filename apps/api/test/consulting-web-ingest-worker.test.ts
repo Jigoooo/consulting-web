@@ -12,7 +12,17 @@ const payload = {
   threadId: 'thread-1',
   scopePath: '창원/분석/조직진단/정원',
   userText: '정원 검토해줘',
-  assistantText: '정원·인건비와 같이 봐야 합니다.',
+  allowedSegments: [{ id: 'user:message-1', kind: 'user', text: '정원 검토해줘', reason: 'user_input_allowed' }],
+  assistantCandidate: {
+    id: 'assistant:message-1',
+    text: '정원·인건비와 같이 봐야 합니다.',
+    sourceMessageId: 'message-1',
+    status: 'quarantined',
+    reason: 'assistant_output_requires_review',
+  },
+  blockedSegments: [{ id: 'assistant:message-1', kind: 'assistant', text: '정원·인건비와 같이 봐야 합니다.', reason: 'assistant_output_requires_review' }],
+  policyDecisionId: 'memory-write-guard:v1:message-1',
+  traceId: 'run_abc',
   runId: 'run_abc',
   assistantMessageId: 'message-1',
   timestamp: 1770000000,
@@ -62,8 +72,37 @@ describe('ConsultingWebIngestWorker', () => {
       aggregateType: 'thread',
       aggregateId: 'thread-1',
       workspaceId: 'ws',
-      payload: { ...payload, assistantText: '' },
+      payload: { ...payload, allowedSegments: [] },
     })).rejects.toThrow(/invalid consulting web ingest payload/i);
     expect(runner).not.toHaveBeenCalled();
+  });
+
+  it('normalizes legacy assistantText into a quarantine candidate instead of allowed memory', async () => {
+    const runner = vi.fn(async () => undefined);
+    const worker = new ConsultingWebIngestWorker(
+      { REDIS_URL: 'redis://127.0.0.1:6379' } as never,
+      runner,
+    );
+
+    await worker.processOutboxJob({
+      eventId: 'evt-4',
+      eventType: 'ConsultingWebTurnCompleted',
+      aggregateType: 'thread',
+      aggregateId: 'thread-1',
+      workspaceId: 'ws',
+      payload: {
+        ...payload,
+        allowedSegments: undefined,
+        assistantCandidate: undefined,
+        blockedSegments: undefined,
+        assistantText: '레거시 답변은 brain에 쓰면 안 됩니다.',
+      },
+    });
+
+    expect(runner).toHaveBeenCalledWith(expect.objectContaining({
+      allowedSegments: [expect.objectContaining({ kind: 'user', text: '정원 검토해줘' })],
+      assistantCandidate: expect.objectContaining({ text: '레거시 답변은 brain에 쓰면 안 됩니다.', status: 'quarantined' }),
+      blockedSegments: [expect.objectContaining({ kind: 'assistant', text: '레거시 답변은 brain에 쓰면 안 됩니다.' })],
+    }));
   });
 });

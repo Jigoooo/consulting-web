@@ -59,6 +59,51 @@ class TelegramTopicAuditTest(unittest.TestCase):
             self.assertIn("BROAD_NULL_THREAD_BINDING", issues)
             self.assertEqual(issues["BROAD_NULL_THREAD_BINDING"]["evidence"]["session_ids"], ["s-null"])
 
+    def test_exact_thread_bindings_shadow_legacy_null_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            state = tmpdir / "state.db"
+            consulting = tmpdir / "consulting.db"
+            config = tmpdir / "config.yaml"
+            self._make_state_db(state)
+            self._make_consulting_db(consulting)
+            self._add_exact_bindings(consulting)
+            config.write_text(
+                "telegram:\n"
+                "  channel_prompts:\n"
+                "    '-1004453868195:1': '창원 일반'\n"
+                "    '-1004453868195:12': '창원 기본 토픽'\n"
+                "    '-1004453868195:356': '창원 기관'\n"
+                "    '-1004453868195:524': '창원 임금'\n"
+                "    '-1004453868195:533': '창원 승진'\n"
+                "    '-1004453868195:1060': '창원 확인'\n",
+                encoding="utf-8",
+            )
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--json",
+                    "--state-db",
+                    str(state),
+                    "--consulting-db",
+                    str(consulting),
+                    "--config",
+                    str(config),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            result = json.loads(proc.stdout)
+            issues = {issue["code"]: issue for issue in result["issues"]}
+
+            self.assertNotIn("PROMPT_MISSING_FOR_OBSERVED_THREAD", issues)
+            self.assertNotIn("BROAD_NULL_THREAD_BINDING", issues)
+            self.assertIn("LEGACY_NULL_THREAD_BINDING_SHADOWED", issues)
+            self.assertEqual(issues["LEGACY_NULL_THREAD_BINDING_SHADOWED"]["evidence"]["session_ids"], ["s-null"])
+
     def _make_state_db(self, path: Path) -> None:
         con = sqlite3.connect(path)
         con.execute(
@@ -96,6 +141,26 @@ class TelegramTopicAuditTest(unittest.TestCase):
         con.executemany(
             "INSERT INTO dialogue_topic_sessions VALUES (5, ?, '2026-07-07T00:00:00+09:00')",
             [(sid,) for sid in ["s-null", "s-12", "s-1", "s-356", "s-524", "s-533"]],
+        )
+        con.commit()
+        con.close()
+
+    def _add_exact_bindings(self, path: Path) -> None:
+        con = sqlite3.connect(path)
+        con.execute(
+            """
+            CREATE TABLE dialogue_telegram_thread_bindings (
+              topic_id INTEGER,
+              telegram_user_id TEXT,
+              chat_id TEXT,
+              thread_id TEXT,
+              status TEXT
+            )
+            """
+        )
+        con.executemany(
+            "INSERT INTO dialogue_telegram_thread_bindings VALUES (5, '5557055657', '-1004453868195', ?, 'active')",
+            [(thread,) for thread in ["1", "12", "356", "524", "533", "1060"]],
         )
         con.commit()
         con.close()

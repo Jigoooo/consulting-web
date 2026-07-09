@@ -39,3 +39,6 @@ graphify-out/
 
 # understand-anything generated graph/dashboard artifacts
 .understand-anything/
+
+# TanStack Router transient generation cache
+apps/web/.tanstack/tmp/

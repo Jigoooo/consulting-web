@@ -62,6 +62,8 @@ export const ChatStreamReasoningEventSchema = z.object({
 export const ChatStreamApprovalEventSchema = z.object({
   type: z.literal('approval'),
   runId: RunIdSchema,
+  /** Product-side durable approval ledger id. Server-generated for UI approval responses. */
+  approvalId: UuidSchema.optional(),
   command: z.string().max(2_000).optional(),
   message: z.string().max(2_000).optional(),
   risk: z.string().max(120).optional(),
@@ -144,6 +146,7 @@ export type ChatRunActionRequest = z.infer<typeof ChatRunActionRequestSchema>;
 
 export const ChatApprovalResponseRequestSchema = z.object({
   threadId: UuidSchema,
+  approvalId: UuidSchema,
   choice: ChatApprovalChoiceSchema,
   resolveAll: z.boolean().optional(),
 }).strict();

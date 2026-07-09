@@ -11,6 +11,28 @@ export interface ConsultingWebTurnIngestInput {
   assistantMessageId: string;
 }
 
+export interface ConsultingMemoryAllowedSegment {
+  id: string;
+  kind: 'user' | 'document' | 'tool';
+  text: string;
+  reason: string;
+}
+
+export interface ConsultingMemoryBlockedSegment {
+  id: string;
+  kind: 'assistant' | 'system' | 'unknown';
+  text: string;
+  reason: string;
+}
+
+export interface ConsultingAssistantMemoryCandidate {
+  id: string;
+  text: string;
+  sourceMessageId: string;
+  status: 'quarantined';
+  reason: string;
+}
+
 export interface ConsultingWebTurnIngestPayload {
   consultingTopicSlug: string;
   consultingTopicId: number | null;
@@ -22,7 +44,11 @@ export interface ConsultingWebTurnIngestPayload {
   threadId: string;
   scopePath: string;
   userText: string;
-  assistantText: string;
+  allowedSegments: ConsultingMemoryAllowedSegment[];
+  assistantCandidate: ConsultingAssistantMemoryCandidate;
+  blockedSegments: ConsultingMemoryBlockedSegment[];
+  policyDecisionId: string;
+  traceId: string;
   runId: string | null;
   assistantMessageId: string;
   timestamp: number;
@@ -41,6 +67,27 @@ export class ConsultingWebIngestService {
     if (!input.userText.trim() || !input.assistantText.trim()) return;
     const scope = await this.resolver.resolveThread(input.threadId);
     if (!scope || scope.archived) return;
+    const policyDecisionId = `memory-write-guard:v1:${input.assistantMessageId}`;
+    const traceId = input.runId ?? `assistant-message:${input.assistantMessageId}`;
+    const allowedSegments: ConsultingMemoryAllowedSegment[] = [{
+      id: `user:${input.assistantMessageId}`,
+      kind: 'user',
+      text: input.userText,
+      reason: 'user_input_allowed',
+    }];
+    const assistantCandidate: ConsultingAssistantMemoryCandidate = {
+      id: `assistant:${input.assistantMessageId}`,
+      text: input.assistantText,
+      sourceMessageId: input.assistantMessageId,
+      status: 'quarantined',
+      reason: 'assistant_output_requires_review',
+    };
+    const blockedSegments: ConsultingMemoryBlockedSegment[] = [{
+      id: assistantCandidate.id,
+      kind: 'assistant',
+      text: input.assistantText,
+      reason: assistantCandidate.reason,
+    }];
 
     const payload: ConsultingWebTurnIngestPayload = {
       consultingTopicSlug: scope.consultingTopicSlug,
@@ -53,11 +100,32 @@ export class ConsultingWebIngestService {
       threadId: scope.threadId,
       scopePath: scope.scopePath,
       userText: input.userText,
-      assistantText: input.assistantText,
+      allowedSegments,
+      assistantCandidate,
+      blockedSegments,
+      policyDecisionId,
+      traceId,
       runId: input.runId,
       assistantMessageId: input.assistantMessageId,
       timestamp: Date.now() / 1000,
     };
+
+    await this.db
+      .insert(schema.memoryWriteCandidates)
+      .values({
+        workspaceId: scope.workspaceId,
+        threadId: scope.threadId,
+        assistantMessageId: input.assistantMessageId,
+        runId: input.runId,
+        policyDecisionId,
+        traceId,
+        candidateText: input.assistantText,
+        allowedSegments: allowedSegments.map((segment) => ({ ...segment })),
+        blockedSegments: blockedSegments.map((segment) => ({ ...segment })),
+        status: 'quarantined',
+        reason: assistantCandidate.reason,
+      })
+      .onConflictDoNothing({ target: schema.memoryWriteCandidates.policyDecisionId });
 
     await this.db
       .insert(schema.outboxEvents)

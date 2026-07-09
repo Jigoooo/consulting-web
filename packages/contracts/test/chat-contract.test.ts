@@ -33,10 +33,11 @@ describe('chat stream contracts', () => {
   });
 
   it('accepts approval and runtime control contracts', () => {
-    const approval = { type: 'approval', runId: 'run_hermes_123', choices: ['once', 'deny'], command: 'echo ok' };
+    const approval = { type: 'approval', runId: 'run_hermes_123', approvalId: uuid, choices: ['once', 'deny'], command: 'echo ok' };
     expect(ChatStreamEventSchema.parse(approval)).toEqual(approval);
     expect(ChatStreamSseFrameSchema.parse({ event: 'approval', data: approval })).toEqual({ event: 'approval', data: approval });
-    expect(ChatApprovalResponseRequestSchema.parse({ threadId: uuid, choice: 'once' })).toEqual({ threadId: uuid, choice: 'once' });
+    expect(ChatApprovalResponseRequestSchema.parse({ threadId: uuid, approvalId: uuid, choice: 'once' })).toEqual({ threadId: uuid, approvalId: uuid, choice: 'once' });
+    expect(() => ChatApprovalResponseRequestSchema.parse({ threadId: uuid, choice: 'once' })).toThrow();
     expect(() => ChatApprovalResponseRequestSchema.parse({ threadId: uuid, choice: 'yes' })).toThrow();
   });
 

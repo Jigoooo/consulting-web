@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../lib/api';
 import { useAuth } from '../../../lib/useAuth';
 import { useToast } from '../../../shared/ui/toast/Toast';
-import { activeThreadStore, useTailScrollRequest } from '../../../lib/threadCtx';
+import { activeThreadStore, useComposerDraftRequest, useTailScrollRequest } from '../../../lib/threadCtx';
 import { useSelectedWorkspace } from '../../../lib/wsStore';
 import { workspaceModalStore } from '../../../lib/workspaceModalStore';
 import { useWorkspaceTree } from '../../../lib/spaces';
@@ -47,6 +47,7 @@ type RuntimeFlowMode = 'idle' | 'queueing' | 'steering' | 'answering' | 'approva
 
 interface PendingApproval {
   runId: string;
+  approvalId: string;
   command?: string;
   message?: string;
   risk?: string;
@@ -121,6 +122,8 @@ function ApprovalCard({
     always: '항상 승인',
     deny: '거절',
   };
+  const safeChoices = approval.choices.filter((choice) => choice !== 'always');
+  const renderedChoices = safeChoices.length > 0 ? safeChoices : (['deny'] as ChatApprovalChoice[]);
   return (
     <div className={s.approvalCard}>
       <div className={s.approvalHead}>
@@ -134,7 +137,7 @@ function ApprovalCard({
       {approval.command ? <pre>{approval.command}</pre> : null}
       {approval.risk ? <div className={s.approvalRisk}>위험도: {approval.risk}</div> : null}
       <div className={s.approvalActions}>
-        {approval.choices.map((choice) => (
+        {renderedChoices.map((choice) => (
           <Button
             key={choice}
             type="button"
@@ -168,6 +171,7 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
   const { data: tree } = useWorkspaceTree(workspaceId ?? undefined);
   const history = useMessageWindow(threadId);
   const tailScrollRequest = useTailScrollRequest();
+  const composerDraftRequest = useComposerDraftRequest();
   const uploadAttachment = useUploadAttachment(threadId);
   const deleteAttachment = useDeleteAttachment(threadId);
   const [fileViewer, setFileViewer] = useState<FileViewerTarget | null>(null);
@@ -212,6 +216,15 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (!composerDraftRequest || composerDraftRequest.threadId !== threadId) return;
+    setInput((current) => {
+      const existing = current.trimEnd();
+      return existing ? `${existing}\n\n${composerDraftRequest.prompt}` : composerDraftRequest.prompt;
+    });
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [composerDraftRequest?.seq, threadId]);
 
   // G9: paste/newline auto-grow. Height changes are batched in rAF so typing
   // does one layout read/write pair, capped at 10 readable rows.
@@ -380,9 +393,13 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
 
   async function resolveApproval(choice: ChatApprovalChoice) {
     if (!pendingApproval) return;
+    if (!pendingApproval.approvalId) {
+      toast('error', '승인 원장 ID가 없어 실행을 계속할 수 없어요. 새 응답으로 다시 시도해주세요.');
+      return;
+    }
     setApprovalBusyChoice(choice);
     try {
-      await api.respondRunApproval(pendingApproval.runId, { threadId, choice });
+      await api.respondRunApproval(pendingApproval.runId, { threadId, approvalId: pendingApproval.approvalId, choice });
       setPendingApproval(null);
       setRuntimeFlow('steering');
       toast(choice === 'deny' ? 'info' : 'success', choice === 'deny' ? '거절했습니다.' : '승인했습니다.');
@@ -533,6 +550,7 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
           setRuntimeFlow('approval');
           setPendingApproval({
             runId: event.runId,
+            approvalId: event.approvalId ?? '',
             choices: event.choices,
             ...(event.command ? { command: event.command } : {}),
             ...(event.message ? { message: event.message } : {}),

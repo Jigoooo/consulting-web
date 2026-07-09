@@ -76,16 +76,19 @@ import {
   ListArtifactsResponseSchema,
   ArtifactDetailResponseSchema,
   CreateArtifactResponseSchema,
+  ArtifactExportPreflightResponseSchema,
   ListNotificationsResponseSchema,
   type AddEvidenceRequest,
   type ListEvidenceResponse,
   type EvidenceDecisionSummaryResponse,
   type ReviewQueueResponse,
+  type ReviewQueueDecisionRequest,
   type CreateArtifactRequest,
   type AddArtifactVersionRequest,
   type CreateArtifactResponse,
   type ListArtifactsResponse,
   type ArtifactDetailResponse,
+  type ArtifactExportPreflightResponse,
   type ListNotificationsResponse,
   UploadAttachmentResponseSchema,
   ListAttachmentsResponseSchema,
@@ -99,6 +102,8 @@ import {
   type PushSubscribeRequest,
   ListLibrarySourcesResponseSchema,
   type ListLibrarySourcesResponse,
+  ObservabilityTraceListResponseSchema,
+  type ObservabilityTraceListResponse,
 } from '@consulting/contracts';
 import { HttpCore, type ApiClientOptions } from './http-core.js';
 import { readChatSseStream } from './sse.js';
@@ -406,6 +411,14 @@ export class ConsultingApiClient {
     );
   }
 
+  decideReviewQueueItem(threadId: string, itemId: string, body: ReviewQueueDecisionRequest): Promise<OkResponse> {
+    return this.http.request(
+      `/chat/threads/${threadId}/review-queue/${encodeURIComponent(itemId)}/decision`,
+      { method: 'POST', body },
+      (d) => OkResponseSchema.parse(d),
+    );
+  }
+
   // --- artifacts (Phase 2-B) ---
   listArtifacts(workspaceId: string, projectId?: string): Promise<ListArtifactsResponse> {
     const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
@@ -508,10 +521,37 @@ export class ConsultingApiClient {
     );
   }
 
+  /** P4 Trace Viewer: trace spans + eval ledger for an authenticated workspace. */
+  listObservabilityTraces(
+    workspaceId: string,
+    opts?: { threadId?: string; traceId?: string; limit?: number; cursor?: string },
+  ): Promise<ObservabilityTraceListResponse> {
+    const params = new URLSearchParams();
+    if (opts?.threadId) params.set('threadId', opts.threadId);
+    if (opts?.traceId) params.set('traceId', opts.traceId);
+    if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
+    if (opts?.cursor) params.set('cursor', opts.cursor);
+    const qs = params.toString();
+    return this.http.request(
+      `/observability/workspaces/${workspaceId}/traces${qs ? `?${qs}` : ''}`,
+      { method: 'GET' },
+      (d) => ObservabilityTraceListResponseSchema.parse(d),
+    );
+  }
+
   /** Authenticated binary download — returns a blob URL the caller must revoke. */
   async downloadAttachment(id: string): Promise<Blob> {
     const response = await this.http.raw(`/attachments/${id}/content`, { method: 'GET' });
     return response.blob();
+  }
+
+  /** Authenticated artifact export preflight — same verifier gate as final export, no rendering. */
+  exportArtifactPreflight(id: string, format: 'pdf' | 'docx', version?: number): Promise<ArtifactExportPreflightResponse> {
+    const params = new URLSearchParams({ format });
+    if (version) params.set('version', String(version));
+    return this.http.request(`/artifacts/${id}/export-preflight?${params.toString()}`, { method: 'GET' }, (d) =>
+      ArtifactExportPreflightResponseSchema.parse(d),
+    );
   }
 
   /** Authenticated artifact export (PDF/DOCX) — returns a downloadable blob. */

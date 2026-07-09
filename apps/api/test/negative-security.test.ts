@@ -11,6 +11,13 @@ import { CreateChannelUseCase } from '../src/spaces/create-channel.usecase.js';
 import { ScopeRepository } from '../src/spaces/scope.repository.js';
 import { MatrixPolicyEngine } from '../src/permissions/matrix-policy-engine.js';
 import { hashToken } from '../src/auth/password.js';
+import { RuntimeApprovalStore } from '../src/chat/runtime-approval.store.js';
+import { EvidenceDecisionStore } from '../src/consulting/evidence-decision.store.js';
+import { EvidenceToDecisionService } from '../src/consulting/evidence-to-decision.service.js';
+import { ClaimVerifierService } from '../src/consulting/claim-verifier.service.js';
+import { ExactnessGateService } from '../src/consulting/exactness-gate.service.js';
+import { VerifierGatePolicyService } from '../src/consulting/verifier-gate-policy.service.js';
+import { ConsultingJudgmentGuardService } from '../src/consulting/consulting-judgment-guard.service.js';
 
 const url = process.env.DATABASE_URL;
 const d = url ? describe : describe.skip;
@@ -36,6 +43,33 @@ d('Foundation negative security', () => {
     }
     await pool.end();
   });
+
+  async function createThreadForWorkspace(workspaceId: string): Promise<string> {
+    const suffix = crypto.randomUUID().slice(0, 8);
+    const [project] = await db.insert(schema.projects).values({
+      workspaceId,
+      name: `Approval Project ${suffix}`,
+      slug: `approval-project-${suffix}`,
+    }).returning({ id: schema.projects.id });
+    const [channel] = await db.insert(schema.channels).values({
+      workspaceId,
+      projectId: project!.id,
+      name: `Approval Channel ${suffix}`,
+      slug: `approval-channel-${suffix}`,
+    }).returning({ id: schema.channels.id });
+    const [topic] = await db.insert(schema.topics).values({
+      workspaceId,
+      channelId: channel!.id,
+      name: `Approval Topic ${suffix}`,
+      slug: `approval-topic-${suffix}`,
+    }).returning({ id: schema.topics.id });
+    const [thread] = await db.insert(schema.threads).values({
+      workspaceId,
+      topicId: topic!.id,
+      title: `Approval Thread ${suffix}`,
+    }).returning({ id: schema.threads.id });
+    return thread!.id;
+  }
 
   it('viewer is denied channel.create by the policy engine', () => {
     const engine = new MatrixPolicyEngine();
@@ -362,6 +396,132 @@ d('Foundation negative security', () => {
       .from(schema.auditEvents)
       .where(eq(schema.auditEvents.workspaceId, owner.value.personalWorkspaceId));
     expect(audits.filter((x) => x.action === 'invitation.accept')).toHaveLength(1);
+  });
+
+  it('runtime approval ledger cannot be claimed from another workspace or user', async () => {
+    const signup = new SignUpUseCase(db, new ScryptPasswordHasher());
+    const ownerA = await signup.execute({
+      email: `approval-a-${Date.now()}@example.com`,
+      password: 'supersecret1',
+      displayName: 'ApprovalA',
+    });
+    const ownerB = await signup.execute({
+      email: `approval-b-${Date.now()}@example.com`,
+      password: 'supersecret1',
+      displayName: 'ApprovalB',
+    });
+    expect(ownerA.ok && ownerB.ok).toBe(true);
+    if (!ownerA.ok || !ownerB.ok) return;
+    users.push(ownerA.value.userId, ownerB.value.userId);
+    workspaces.push(ownerA.value.personalWorkspaceId, ownerB.value.personalWorkspaceId);
+
+    const approvals = new RuntimeApprovalStore(db);
+    const threadId = await createThreadForWorkspace(ownerA.value.personalWorkspaceId);
+    const created = await approvals.createRuntimeApproval({
+      workspaceId: ownerA.value.personalWorkspaceId,
+      threadId,
+      requestedByUserId: ownerA.value.userId,
+      runId: 'run_tenant_a',
+      command: 'terminal rm -rf /tmp/x',
+      message: 'approve dangerous command',
+      risk: 'high',
+      choices: ['once', 'deny'],
+    });
+
+    const otherWorkspace = await approvals.decideRuntimeApproval({
+      approvalId: created.approvalId,
+      workspaceId: ownerB.value.personalWorkspaceId,
+      threadId: crypto.randomUUID(),
+      requestedByUserId: ownerB.value.userId,
+      runId: 'run_tenant_a',
+      choice: 'once',
+    });
+    expect(otherWorkspace).toEqual({ ok: false, reason: 'not_found' });
+
+    const otherUser = await approvals.decideRuntimeApproval({
+      approvalId: created.approvalId,
+      workspaceId: ownerA.value.personalWorkspaceId,
+      threadId: crypto.randomUUID(),
+      requestedByUserId: ownerB.value.userId,
+      runId: 'run_tenant_a',
+      choice: 'once',
+    });
+    expect(otherUser).toEqual({ ok: false, reason: 'mismatch' });
+
+    const [row] = await db
+      .select({ status: schema.approvalRequests.status, decidedByUserId: schema.approvalRequests.decidedByUserId })
+      .from(schema.approvalRequests)
+      .where(eq(schema.approvalRequests.id, created.approvalId))
+      .limit(1);
+    expect(row).toEqual({ status: 'pending', decidedByUserId: null });
+  });
+
+  it('runtime approval ledger refuses to write an approval for a thread outside the declared workspace', async () => {
+    const signup = new SignUpUseCase(db, new ScryptPasswordHasher());
+    const ownerA = await signup.execute({
+      email: `approval-write-a-${Date.now()}@example.com`,
+      password: 'supersecret1',
+      displayName: 'ApprovalWriteA',
+    });
+    const ownerB = await signup.execute({
+      email: `approval-write-b-${Date.now()}@example.com`,
+      password: 'supersecret1',
+      displayName: 'ApprovalWriteB',
+    });
+    expect(ownerA.ok && ownerB.ok).toBe(true);
+    if (!ownerA.ok || !ownerB.ok) return;
+    users.push(ownerA.value.userId, ownerB.value.userId);
+    workspaces.push(ownerA.value.personalWorkspaceId, ownerB.value.personalWorkspaceId);
+
+    const foreignThreadId = await createThreadForWorkspace(ownerB.value.personalWorkspaceId);
+    const approvals = new RuntimeApprovalStore(db);
+
+    await expect(approvals.createRuntimeApproval({
+      workspaceId: ownerA.value.personalWorkspaceId,
+      threadId: foreignThreadId,
+      requestedByUserId: ownerA.value.userId,
+      runId: 'run_cross_thread',
+      command: 'terminal whoami',
+      risk: 'medium',
+      choices: ['once', 'deny'],
+    })).rejects.toThrow(/thread.*workspace/i);
+  });
+
+  it('evidence decision writer refuses to write rows for a thread outside the declared workspace', async () => {
+    const signup = new SignUpUseCase(db, new ScryptPasswordHasher());
+    const ownerA = await signup.execute({
+      email: `evidence-write-a-${Date.now()}@example.com`,
+      password: 'supersecret1',
+      displayName: 'EvidenceWriteA',
+    });
+    const ownerB = await signup.execute({
+      email: `evidence-write-b-${Date.now()}@example.com`,
+      password: 'supersecret1',
+      displayName: 'EvidenceWriteB',
+    });
+    expect(ownerA.ok && ownerB.ok).toBe(true);
+    if (!ownerA.ok || !ownerB.ok) return;
+    users.push(ownerA.value.userId, ownerB.value.userId);
+    workspaces.push(ownerA.value.personalWorkspaceId, ownerB.value.personalWorkspaceId);
+
+    const foreignThreadId = await createThreadForWorkspace(ownerB.value.personalWorkspaceId);
+    const store = new EvidenceDecisionStore(
+      db,
+      new EvidenceToDecisionService(),
+      new ClaimVerifierService(),
+      new ExactnessGateService(),
+      new VerifierGatePolicyService(),
+      new ConsultingJudgmentGuardService(),
+    );
+
+    await expect(store.recordCompletedAnswer({
+      workspaceId: ownerA.value.personalWorkspaceId,
+      threadId: foreignThreadId,
+      assistantMessageId: crypto.randomUUID(),
+      userPrompt: '정원 계산과 근거를 검증해줘',
+      answer: '정원 증가는 인건비 부담을 증가시킨다.',
+      runId: 'run_cross_evidence',
+    })).rejects.toThrow(/thread.*workspace/i);
   });
 
   it('duplicate channel slug within a project is rejected', async () => {

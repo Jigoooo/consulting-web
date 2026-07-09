@@ -277,6 +277,44 @@
   word-break: keep-all;
   overflow-wrap: anywhere;
 }
+.reviewPromptActions,
+.reviewDecisionActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.reviewPromptButton,
+.reviewDecisionButton {
+  min-height: 28px;
+  border: 1px solid var(--border-hair);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--text-secondary);
+  background: var(--surface-card);
+  cursor: pointer;
+}
+.reviewPromptButton:hover,
+.reviewDecisionButton:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.reviewDecisionButton {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.reviewDecisionButtonMuted {
+  color: var(--text-muted);
+  background: var(--bg-warm);
+}
+.reviewDecisionButton:disabled,
+.reviewDecisionButtonMuted:disabled {
+  cursor: progress;
+  opacity: 0.55;
+}
 /* #6: channel/project evidence scope switcher — segmented control. */
 .scopeSwitch {
   position: relative;

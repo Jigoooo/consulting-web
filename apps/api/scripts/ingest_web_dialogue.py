@@ -58,6 +58,33 @@ def _optional_str(data: dict[str, Any], key: str) -> str | None:
     return value if isinstance(value, str) and value.strip() else None
 
 
+def _allowed_segments(data: dict[str, Any]) -> list[tuple[str, str]]:
+    """Return only memory-approved text segments.
+
+    P0 Memory Write Guard: assistant output is a quarantine candidate, not a
+    shared-brain fact. Older pending outbox rows may still carry top-level
+    assistantText, but this bridge must never ingest that field.
+    """
+    out: list[tuple[str, str]] = []
+    raw_segments = data.get('allowedSegments')
+    if isinstance(raw_segments, list):
+        for item in raw_segments:
+            if not isinstance(item, dict):
+                continue
+            kind = item.get('kind')
+            text = item.get('text')
+            if kind in {'user', 'document', 'tool'} and isinstance(text, str) and text.strip():
+                out.append((str(kind), text.strip()))
+    if out:
+        return out
+    user_text = _require_str(data, 'userText')
+    return [('user', user_text)]
+
+
+def _segment_label(kind: str) -> str:
+    return {'user': '사용자', 'document': '문서', 'tool': '도구'}.get(kind, kind)
+
+
 def _write_scope(con: sqlite3.Connection | None, tid: int, data: dict[str, Any], session_id: str) -> None:
     if S.resolve_write_backend() == 'pg':
         return
@@ -94,12 +121,12 @@ def _write_scope(con: sqlite3.Connection | None, tid: int, data: dict[str, Any],
 def ingest_turn(data: dict[str, Any], *, no_embed: bool = False) -> dict[str, Any]:
     topic_slug = _require_str(data, 'consultingTopicSlug')
     session_id = _require_str(data, 'sessionId')
-    user_text = _require_str(data, 'userText')
-    assistant_text = _require_str(data, 'assistantText')
+    segments = _allowed_segments(data)
     scope_path = _optional_str(data, 'scopePath') or topic_slug
     ts = float(data.get('timestamp') or time.time())
-    raw = f"사용자: {user_text}\n지구: {assistant_text}"
+    raw = "\n".join(f"{_segment_label(kind)}: {text}" for kind, text in segments)
     content_hash = hashlib.sha256((topic_slug + '|consulting-web|' + session_id + '|' + raw).encode('utf-8')).hexdigest()[:24]
+    assistant_quarantined = isinstance(data.get('assistantCandidate'), dict)
 
     con = S.connect_optional()
     main = None
@@ -142,7 +169,7 @@ def ingest_turn(data: dict[str, Any], *, no_embed: bool = False) -> dict[str, An
             source='consulting-web',
             session_id=session_id,
             ts=ts,
-            role_mix='assistant+user',
+            role_mix='+'.join(kind for kind, _ in segments),
             raw_text=raw,
             context_text=context_text,
             entities=entities,
@@ -160,7 +187,9 @@ def ingest_turn(data: dict[str, Any], *, no_embed: bool = False) -> dict[str, An
             )
         S.set_checkpoint(con, tid, 'consulting-web', ts)
         S.commit_optional(con)
-        return {"ok": True, "topic": topic_slug, "ingested": 1, "chunk_id": cid, **S.stats(con, tid)}
+        return {"ok": True, "topic": topic_slug, "ingested": 1, "chunk_id": cid,
+                "allowed_segments": len(segments), "assistant_quarantined": assistant_quarantined,
+                **S.stats(con, tid)}
     finally:
         if main is not None:
             main.close()

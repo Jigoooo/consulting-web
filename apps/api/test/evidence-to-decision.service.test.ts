@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { schema } from '@consulting/db-schema';
 import { EvidenceToDecisionService } from '../src/consulting/evidence-to-decision.service.js';
+import { ClaimVerifierService } from '../src/consulting/claim-verifier.service.js';
 import type { ClaimVerdict } from '../src/consulting/evidence-to-decision.service.js';
 
 const service = new EvidenceToDecisionService();
@@ -59,6 +60,35 @@ describe('EvidenceToDecisionService', () => {
     expect(lattice.summary.supports).toBe(1);
     expect(lattice.summary.refutes).toBe(1);
     expect(lattice.summary.notEnoughInfo).toBe(1);
+  });
+
+  it('routes Korean contradiction verdicts into review-queue candidates on the live verifier path', async () => {
+    const verifier = new ClaimVerifierService();
+    const result = await verifier.verify({
+      claims: [
+        { id: 'c1', text: '정원 증가는 인건비 부담을 증가시킵니다.', decisionImpact: 0.82 },
+        { id: 'c2', text: '주차장 수입은 감소했습니다.', decisionImpact: 0.82 },
+      ],
+      evidence: [{ id: 'e1', text: '창원 예산표\n정원 증가와 인건비 부담 증가는 재정소요의 핵심 요인이다. 주차장 수입은 전년 대비 증가했다.', qualityScore: 70 }],
+      highRiskClaimIds: ['c1', 'c2'],
+    });
+    expect(verdict(result.lattice.verdictsByClaim, 'c1').verdict).toBe('supports');
+    expect(verdict(result.lattice.verdictsByClaim, 'c2').verdict).toBe('refutes');
+
+    const queue = service.prioritizeReviewQueue({
+      items: result.lattice.verdicts
+        .filter((item) => item.verdict !== 'supports')
+        .map((item) => ({
+          id: item.claimId,
+          kind: item.verdict === 'refutes' || item.verdict === 'mixed' ? 'refuted_claim' : 'unsupported_claim',
+          title: item.claimText,
+          decisionImpact: item.decisionImpact,
+          uncertainty: 1 - item.confidence,
+          evidenceGap: item.verdict === 'not_enough_info' ? 1 : 0.75,
+        })),
+    });
+    expect(queue).toHaveLength(1);
+    expect(queue[0]).toEqual(expect.objectContaining({ id: 'c2', kind: 'refuted_claim' }));
   });
 
   it('creates a truth-maintenance recheck queue for claims and artifacts affected by changed evidence', () => {
@@ -166,5 +196,46 @@ describe('EvidenceToDecisionService', () => {
     expect(ranked[0]?.id).toBe('urgent');
     expect(ranked[0]?.priorityScore).toBeGreaterThan(ranked[1]?.priorityScore ?? 0);
     expect(ranked[0]?.reasons.join(' ')).toContain('deadline');
+  });
+
+  it('builds typed contradiction/provenance edges and review items for conflicting evidence', () => {
+    expect(schema.provenanceGraphEdges).toBeDefined();
+
+    const graph = service.buildProvenanceGraph({
+      asOf: new Date('2026-07-07T00:00:00Z'),
+      evidence: [
+        { id: 'e-support', text: '정원 증가는 인건비 부담을 증가시킨다', validFrom: '2026-01-01', observedAt: '2026-07-01' },
+        { id: 'e-refute', text: '정원 증가는 필요하지만 인건비 부담은 증가하지 않는다', validFrom: '2026-06-01', observedAt: '2026-07-02' },
+      ],
+      verdicts: [
+        { claimId: 'c1', claimText: '정원 증가는 인건비 부담을 증가시킨다', evidenceId: 'e-support', verdict: 'supports', confidence: 0.86, matchedTerms: ['정원', '인건비'], contradictedTerms: [], rationale: 'supported', decisionImpact: 0.9 },
+        { claimId: 'c1', claimText: '정원 증가는 인건비 부담을 증가시킨다', evidenceId: 'e-refute', verdict: 'refutes', confidence: 0.78, matchedTerms: ['정원'], contradictedTerms: ['증가↔감소'], rationale: 'counter evidence', decisionImpact: 0.9 },
+      ],
+    });
+
+    expect(graph.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceRef: 'evidence:e-support', targetRef: 'claim:c1', edgeType: 'SUPPORTS', validFrom: '2026-01-01T00:00:00.000Z' }),
+      expect.objectContaining({ sourceRef: 'evidence:e-refute', targetRef: 'claim:c1', edgeType: 'REFUTES', validFrom: '2026-06-01T00:00:00.000Z' }),
+    ]));
+    expect(graph.reviewItems[0]).toEqual(expect.objectContaining({
+      id: 'contradiction:c1',
+      kind: 'contradiction',
+      title: expect.stringContaining('근거가 갈리는 쟁점'),
+    }));
+  });
+
+  it('selects evidence by validity window before newest publication time', () => {
+    const selected = service.selectTemporallyValidEvidence({
+      asOf: new Date('2025-06-01T00:00:00Z'),
+      evidence: [
+        { id: 'old-rule', text: '2025년 적용 조례', validFrom: '2025-01-01', validTo: '2025-12-31', publishedAt: '2025-01-10' },
+        { id: 'new-rule', text: '2026년 적용 조례', validFrom: '2026-01-01', publishedAt: '2025-11-01' },
+        { id: 'superseded', text: '폐기된 조직도', validFrom: '2024-01-01', validTo: '2025-12-31', supersededBy: 'old-rule' },
+      ],
+    });
+
+    expect(selected.active.map((item) => item.id)).toEqual(['old-rule']);
+    expect(selected.superseded.map((item) => item.id)).toEqual(['superseded']);
+    expect(selected.timeline[0]?.id).toBe('old-rule');
   });
 });

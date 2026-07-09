@@ -9,6 +9,7 @@ import { PushController } from './push.controller.js';
 import { AttachmentsController } from './attachments.controller.js';
 import { ChatStreamUseCase } from './chat-stream.usecase.js';
 import { HermesRunsClient } from './hermes-runs-client.js';
+import { RuntimeApprovalStore } from './runtime-approval.store.js';
 import { ChatMessageStore } from './chat-message.store.js';
 import { EvidenceStore } from './evidence.store.js';
 import { NotificationStore } from './notification.store.js';
@@ -19,7 +20,7 @@ import { DocumentExtractionWorker } from './document-extraction.worker.js';
 @Module({
   imports: [DrizzleModule, AuthModule, SpacesModule, ConsultingModule],
   controllers: [ChatStreamController, NotificationsController, PushController, AttachmentsController],
-  providers: [ChatStreamUseCase, HermesRunsClient, ChatMessageStore, EvidenceStore, NotificationStore, PushService, DocumentExtractionService, DocumentExtractionWorker],
-  exports: [ChatStreamUseCase, HermesRunsClient, ChatMessageStore, EvidenceStore, NotificationStore, PushService, DocumentExtractionService, DocumentExtractionWorker],
+  providers: [ChatStreamUseCase, HermesRunsClient, RuntimeApprovalStore, ChatMessageStore, EvidenceStore, NotificationStore, PushService, DocumentExtractionService, DocumentExtractionWorker],
+  exports: [ChatStreamUseCase, HermesRunsClient, RuntimeApprovalStore, ChatMessageStore, EvidenceStore, NotificationStore, PushService, DocumentExtractionService, DocumentExtractionWorker],
 })
 export class ChatModule {}

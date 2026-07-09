@@ -7,6 +7,9 @@ import type { Env } from '../config/env.schema.js';
 import { QUEUE_NAMES } from '../queues/queue.tokens.js';
 import {
   CONSULTING_WEB_TURN_COMPLETED_EVENT,
+  type ConsultingAssistantMemoryCandidate,
+  type ConsultingMemoryAllowedSegment,
+  type ConsultingMemoryBlockedSegment,
   type ConsultingWebTurnIngestPayload,
 } from './consulting-web-ingest.service.js';
 
@@ -45,8 +48,64 @@ function asNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function parseAllowedSegment(value: unknown): ConsultingMemoryAllowedSegment | null {
+  if (!isRecord(value)) return null;
+  const id = asNonEmptyString(value.id);
+  const kind = asNonEmptyString(value.kind);
+  const text = asNonEmptyString(value.text);
+  const reason = asNonEmptyString(value.reason) ?? 'allowed_by_memory_write_guard';
+  if (!id || !text || !['user', 'document', 'tool'].includes(kind ?? '')) return null;
+  return { id, kind: kind as ConsultingMemoryAllowedSegment['kind'], text, reason };
+}
+
+function parseAssistantCandidate(value: unknown): ConsultingAssistantMemoryCandidate | null {
+  if (!isRecord(value)) return null;
+  const id = asNonEmptyString(value.id);
+  const text = asNonEmptyString(value.text);
+  const sourceMessageId = asNonEmptyString(value.sourceMessageId);
+  const reason = asNonEmptyString(value.reason) ?? 'assistant_output_requires_review';
+  if (!id || !text || !sourceMessageId) return null;
+  return { id, text, sourceMessageId, status: 'quarantined', reason };
+}
+
+function parseBlockedSegment(value: unknown): ConsultingMemoryBlockedSegment | null {
+  if (!isRecord(value)) return null;
+  const id = asNonEmptyString(value.id);
+  const kind = asNonEmptyString(value.kind);
+  const text = asNonEmptyString(value.text);
+  const reason = asNonEmptyString(value.reason) ?? 'blocked_by_memory_write_guard';
+  if (!id || !text || !['assistant', 'system', 'unknown'].includes(kind ?? '')) return null;
+  return { id, kind: kind as ConsultingMemoryBlockedSegment['kind'], text, reason };
+}
+
 export function parseConsultingWebTurnPayload(value: unknown): ConsultingWebTurnIngestPayload {
   if (!isRecord(value)) throw new Error('invalid consulting web ingest payload: not an object');
+  const assistantMessageId = asNonEmptyString(value.assistantMessageId);
+  const userText = asNonEmptyString(value.userText);
+  const legacyAssistantText = asNonEmptyString(value.assistantText);
+  if (!assistantMessageId) throw new Error('invalid consulting web ingest payload: missing assistantMessageId');
+
+  const allowedSegments = Array.isArray(value.allowedSegments)
+    ? value.allowedSegments.map(parseAllowedSegment).filter((item): item is ConsultingMemoryAllowedSegment => item !== null)
+    : userText
+      ? [{ id: `legacy-user:${assistantMessageId}`, kind: 'user' as const, text: userText, reason: 'legacy_user_text_allowed' }]
+      : [];
+  const assistantCandidate = parseAssistantCandidate(value.assistantCandidate)
+    ?? (legacyAssistantText
+      ? {
+          id: `legacy-assistant:${assistantMessageId}`,
+          text: legacyAssistantText,
+          sourceMessageId: assistantMessageId,
+          status: 'quarantined' as const,
+          reason: 'legacy_assistant_text_quarantined',
+        }
+      : null);
+  const blockedSegments = Array.isArray(value.blockedSegments)
+    ? value.blockedSegments.map(parseBlockedSegment).filter((item): item is ConsultingMemoryBlockedSegment => item !== null)
+    : assistantCandidate
+      ? [{ id: assistantCandidate.id, kind: 'assistant' as const, text: assistantCandidate.text, reason: assistantCandidate.reason }]
+      : [];
+
   const payload = {
     consultingTopicSlug: asNonEmptyString(value.consultingTopicSlug),
     consultingTopicId: value.consultingTopicId === null || value.consultingTopicId === undefined
@@ -59,14 +118,18 @@ export function parseConsultingWebTurnPayload(value: unknown): ConsultingWebTurn
     topicId: asNonEmptyString(value.topicId),
     threadId: asNonEmptyString(value.threadId),
     scopePath: asNonEmptyString(value.scopePath),
-    userText: asNonEmptyString(value.userText),
-    assistantText: asNonEmptyString(value.assistantText),
+    userText,
+    allowedSegments,
+    assistantCandidate,
+    blockedSegments,
+    policyDecisionId: asNonEmptyString(value.policyDecisionId) ?? `memory-write-guard:v1:${assistantMessageId}`,
+    traceId: asNonEmptyString(value.traceId) ?? asNonEmptyString(value.runId) ?? `assistant-message:${assistantMessageId}`,
     runId: value.runId === null ? null : asNonEmptyString(value.runId),
-    assistantMessageId: asNonEmptyString(value.assistantMessageId),
+    assistantMessageId,
     timestamp: asNumber(value.timestamp),
   };
   for (const [key, item] of Object.entries(payload)) {
-    if (item === null && key !== 'runId' && key !== 'consultingTopicId') {
+    if ((item === null || (Array.isArray(item) && item.length === 0)) && key !== 'runId' && key !== 'consultingTopicId') {
       throw new Error(`invalid consulting web ingest payload: missing ${key}`);
     }
   }

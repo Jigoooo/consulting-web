@@ -1881,6 +1881,10 @@ dialogue/file separate       LIKE fallback                 exact code +1000 boos
 
 6. 품질 측정 가능
    GraphRAG precision/recall/p95를 fake/real embedding으로 분리 측정 가능.
+
+7. 제품 게이트 실사용화
+   Trace Viewer redaction, Review Queue action, artifact export preflight/final gate가
+   운영 배포·브라우저 QA·gateway smoke 기준으로 검증됨.
 ```
 
 ### 아직 구조로만 존재하고 실사용 데이터가 덜 찬 부분
@@ -1897,6 +1901,11 @@ dialogue/file separate       LIKE fallback                 exact code +1000 boos
 
 4. Telegram exact topic bridge
    exact binding 0이라 Telegram topic별 정밀 분리는 다음 작업 후보.
+
+5. P6 advanced labs 진입 조건
+   real embedding 기준 context_precision 0.2881은 아직 낮음.
+   ColBERT/SPLADE/RAPTOR/Leiden류는 `.hermes/plans/2026-07-09_092024-p6-precision-trace-measurement-loop.md`
+   측정 루프에서 precision/trace gate를 통과할 때까지 보류한다.
 ```
 
 ---
@@ -1933,4 +1942,5 @@ consulting-web이 scope tree + graph + Hermes SSE + verifier로 제품화
 - exact Telegram/web topic binding을 안전하게 채우는가
 - context graph fanout이 과잉참조 없이 precision을 유지하는가
 - final export gate를 실제 PDF/PPT 산출물 흐름에서 얼마나 강하게 켤 것인가
+- P6 labs보다 먼저 real-embedding precision/trace 측정 루프가 3회 연속 통과하는가
 ```

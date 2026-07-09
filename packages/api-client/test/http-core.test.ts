@@ -98,7 +98,11 @@ describe('HttpCore fetch binding', () => {
 
     await client.listRuntimeModels();
     await client.stopRun('run_123', '00000000-0000-4000-8000-000000000009');
-    await client.respondRunApproval('run_123', { threadId: '00000000-0000-4000-8000-000000000009', choice: 'once' });
+    await client.respondRunApproval('run_123', {
+      threadId: '00000000-0000-4000-8000-000000000009',
+      approvalId: '00000000-0000-4000-8000-000000000010',
+      choice: 'once',
+    });
 
     expect(calls.map((c) => c.url)).toEqual([
       '/api/chat/runtime/models',
@@ -106,7 +110,11 @@ describe('HttpCore fetch binding', () => {
       '/api/chat/runtime/runs/run_123/approval',
     ]);
     expect(calls[1]?.method).toBe('POST');
-    expect(JSON.parse(calls[2]?.body ?? '{}')).toEqual({ threadId: '00000000-0000-4000-8000-000000000009', choice: 'once' });
+    expect(JSON.parse(calls[2]?.body ?? '{}')).toEqual({
+      threadId: '00000000-0000-4000-8000-000000000009',
+      approvalId: '00000000-0000-4000-8000-000000000010',
+      choice: 'once',
+    });
   });
 
   it('calls archive list and restore endpoints', async () => {
@@ -178,6 +186,23 @@ describe('HttpCore fetch binding', () => {
     });
   });
 
+  it('posts review queue item decisions through the thread-scoped adapter', async () => {
+    const calls: Array<{ url: string; body: string | null; method: string | undefined }> = [];
+    const fakeFetch = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), body: typeof init?.body === 'string' ? init.body : null, method: init?.method });
+      return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    });
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+
+    await client.decideReviewQueueItem('thread-1', 'review/item 1', { action: 'ignore' });
+
+    expect(calls[0]).toEqual({
+      url: '/api/chat/threads/thread-1/review-queue/review%2Fitem%201/decision',
+      method: 'POST',
+      body: JSON.stringify({ action: 'ignore' }),
+    });
+  });
+
   it('calls scope profile endpoints with strict typed payloads', async () => {
     const calls: Array<{ url: string; body: string | null; method: string | undefined }> = [];
     const fakeFetch = vi.fn((url: string | URL | Request, init?: RequestInit) => {
@@ -218,6 +243,57 @@ describe('HttpCore fetch binding', () => {
     expect(err).toBeInstanceOf(ApiClientError);
     expect((err as ApiClientError).code).toBe('PARENT_ARCHIVED');
     expect((err as ApiClientError).status).toBe(409);
+  });
+
+  it('preserves verifier gate details for artifact preflight UI', async () => {
+    const fakeFetch = vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      code: 'VERIFIER_GATE_BLOCKED',
+      message: '검증 게이트가 이 산출물의 내보내기를 차단했습니다.',
+      gate: {
+        decision: 'BLOCKED',
+        blockers: [{ code: 'semantic_refute', severity: 'blocker', message: '핵심 주장이 근거와 반대입니다.' }],
+        warnings: [],
+      },
+    }), { status: 409, headers: { 'content-type': 'application/json' } })));
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+
+    const err = await client.exportArtifact('11111111-1111-4111-8111-111111111111', 'pdf').catch((e) => e);
+
+    expect(err).toBeInstanceOf(ApiClientError);
+    expect((err as ApiClientError).code).toBe('VERIFIER_GATE_BLOCKED');
+    expect((err as ApiClientError).details).toMatchObject({
+      gate: {
+        blockers: [{ message: '핵심 주장이 근거와 반대입니다.' }],
+      },
+    });
+  });
+
+  it('calls artifact export preflight before rendering with strict contract parsing', async () => {
+    const calls: Array<{ url: string; method: string | undefined }> = [];
+    const fakeFetch = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), method: init?.method });
+      return Promise.resolve(new Response(JSON.stringify({
+        canExport: false,
+        reason: 'VERIFIER_GATE_BLOCKED',
+        versionNo: 2,
+        gate: {
+          decision: 'BLOCKED',
+          blockers: [{ code: 'semantic_refute', severity: 'blocker', message: '핵심 주장이 근거와 반대입니다.' }],
+          warnings: [],
+        },
+        messages: ['핵심 주장이 근거와 반대입니다.'],
+      }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    });
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+
+    const preflight = await client.exportArtifactPreflight('11111111-1111-4111-8111-111111111111', 'pdf', 2);
+
+    expect(calls[0]).toEqual({
+      url: '/api/artifacts/11111111-1111-4111-8111-111111111111/export-preflight?format=pdf&version=2',
+      method: 'GET',
+    });
+    expect(preflight.canExport).toBe(false);
+    expect(preflight.reason).toBe('VERIFIER_GATE_BLOCKED');
   });
 });
 

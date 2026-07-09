@@ -15,12 +15,14 @@ export type ClientErrorCode = ApiErrorCode | 'UNKNOWN' | 'TIMEOUT' | 'NETWORK';
 export class ApiClientError extends Error {
   readonly code: ClientErrorCode;
   readonly status: number;
+  readonly details?: unknown;
 
-  constructor(status: number, error: ApiError | { code: ClientErrorCode; message: string }) {
+  constructor(status: number, error: ApiError | { code: ClientErrorCode; message: string }, details?: unknown) {
     super(error.message);
     this.name = 'ApiClientError';
     this.status = status;
     this.code = error.code;
+    this.details = details;
   }
 }
 
@@ -214,7 +216,16 @@ export class HttpCore {
     const raw: unknown = await response.json().catch((): undefined => undefined);
     const parsed = ApiErrorSchema.safeParse(raw);
     if (parsed.success) {
-      return new ApiClientError(response.status, parsed.data);
+      return new ApiClientError(response.status, parsed.data, raw);
+    }
+    if (raw && typeof raw === 'object') {
+      const loose = ApiErrorSchema.safeParse({
+        code: (raw as { code?: unknown }).code,
+        message: (raw as { message?: unknown }).message,
+      });
+      if (loose.success) {
+        return new ApiClientError(response.status, loose.data, raw);
+      }
     }
     return new ApiClientError(response.status, {
       code: 'UNKNOWN',

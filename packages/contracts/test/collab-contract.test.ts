@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EvidenceDecisionSummaryResponseSchema } from '../src/index.js';
+import { EvidenceDecisionSummaryResponseSchema, ReviewQueueDecisionRequestSchema } from '../src/index.js';
 
 const uuid = '00000000-0000-4000-8000-000000000001';
 
@@ -37,5 +37,12 @@ describe('collab evidence-decision contracts', () => {
     };
 
     expect(EvidenceDecisionSummaryResponseSchema.parse(response)).toEqual(response);
+  });
+
+  it('accepts only explicit review queue decision actions', () => {
+    expect(ReviewQueueDecisionRequestSchema.parse({ action: 'resolve', note: '검토 완료' })).toEqual({ action: 'resolve', note: '검토 완료' });
+    expect(ReviewQueueDecisionRequestSchema.parse({ action: 'ignore' })).toEqual({ action: 'ignore' });
+    expect(ReviewQueueDecisionRequestSchema.safeParse({ action: 'delete' }).success).toBe(false);
+    expect(ReviewQueueDecisionRequestSchema.safeParse({ action: 'resolve', itemId: uuid }).success).toBe(false);
   });
 });

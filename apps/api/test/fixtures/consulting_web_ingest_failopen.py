@@ -41,7 +41,15 @@ with tempfile.TemporaryDirectory() as tmp:
         'consultingTopicSlug': 'fixture-topic',
         'sessionId': 'consulting-web-thread:test-thread',
         'userText': '정원 검토해줘',
-        'assistantText': 'CL-H8-01 기준으로 정원·인건비·재정 영향을 같이 봐야 합니다.',
+        'allowedSegments': [
+            {'kind': 'user', 'text': '정원 검토해줘'},
+            {'kind': 'document', 'text': 'CL-H8-01 기준으로 정원·인건비·재정 영향을 같이 봐야 합니다.'},
+        ],
+        'assistantCandidate': {
+            'kind': 'assistant',
+            'text': '어시스턴트 답변은 후보로만 격리됩니다.',
+            'status': 'quarantined',
+        },
         'scopePath': 'fixture/project/topic/thread',
         'workspaceId': 'ws',
         'projectId': 'project',

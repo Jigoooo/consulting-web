@@ -63,3 +63,45 @@ def test_markdown_report_contains_delta_and_metric_names(tmp_path: Path) -> None
     assert "context_precision" in text
     assert "citation_correctness" in text
     assert "Δ hit_rate" in text
+
+
+def test_run_recall_reuses_in_process_backend_by_default(monkeypatch, tmp_path: Path) -> None:
+    calls: list[dict] = []
+
+    class FakeBackend:
+        @staticmethod
+        def recall(topic: str, query: str, *, top_k: int, rerank: bool, backend: str | None = None) -> dict:
+            calls.append({"topic": topic, "query": query, "top_k": top_k, "rerank": rerank, "backend": backend})
+            return {"ok": True, "hits": [], "rerank": "cross-encoder", "signals": {}}
+
+    def fail_subprocess(*_args, **_kwargs):
+        raise AssertionError("run_recall should not spawn per-question subprocesses in default mode")
+
+    monkeypatch.delenv("CONSULTING_EVAL_RECALL_MODE", raising=False)
+    monkeypatch.setenv("CONSULTING_BRAIN_BACKEND", "pg")
+    monkeypatch.setattr(mod, "_load_backend", lambda _brain_root: FakeBackend)
+    monkeypatch.setattr(mod.subprocess, "run", fail_subprocess)
+
+    result, latency, error = mod.run_recall(tmp_path, "topic", "query", top_k=2, rerank=True, timeout=1)
+
+    assert error is None
+    assert latency >= 0
+    assert result["ok"] is True
+    assert calls == [{"topic": "topic", "query": "query", "top_k": 2, "rerank": True, "backend": "pg"}]
+
+
+def test_ensure_eval_python_reexecs_to_venv_path_without_resolving_symlink(monkeypatch, tmp_path: Path) -> None:
+    exec_calls: list[tuple[str, list[str]]] = []
+    venv_python = tmp_path / ".venv" / "bin" / "python3"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(mod.sys, "executable", "/usr/bin/python3")
+    monkeypatch.setattr(mod.sys, "argv", ["scripts/graphrag_eval_gate.py", "--rerank"])
+    monkeypatch.setattr(mod, "brain_python", lambda _root: str(venv_python))
+    monkeypatch.delenv("CONSULTING_EVAL_REEXECED", raising=False)
+    monkeypatch.setattr(mod.os, "execvpe", lambda path, argv, env: exec_calls.append((path, argv)))
+
+    mod.ensure_eval_python(tmp_path)
+
+    assert exec_calls == [(str(venv_python.absolute()), [str(venv_python.absolute()), "scripts/graphrag_eval_gate.py", "--rerank"])]

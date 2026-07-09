@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -9,11 +10,28 @@ import sqlite3
 import subprocess
 import sys
 import time
+import traceback
 from pathlib import Path
 from statistics import mean
+from typing import Any
 
 DEFAULT_BRAIN_ROOT = Path(os.environ.get('CONSULTING_BRAIN_ROOT', '/home/jigoo/.hermes/workspace/consulting'))
 DEFAULT_TOPIC = 'changwon-org-mgmt-diagnosis'
+_BACKEND_CACHE: dict[str, Any] = {}
+
+
+def can_cross_encoder(python_bin: str) -> bool:
+    try:
+        proc = subprocess.run(
+            [python_bin, '-c', 'import onnxruntime, tokenizers, numpy'],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+        return proc.returncode == 0
+    except Exception:
+        return False
 
 
 def keywords(text: str, limit: int = 5) -> list[str]:
@@ -61,19 +79,6 @@ def brain_python(brain_root: Path) -> str:
     if explicit:
         return explicit
 
-    def can_cross_encoder(python_bin: str) -> bool:
-        try:
-            proc = subprocess.run(
-                [python_bin, '-c', 'import onnxruntime, tokenizers'],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=10,
-                check=False,
-            )
-            return proc.returncode == 0
-        except Exception:
-            return False
-
     venv_python = brain_root / '.venv' / 'bin' / 'python3'
     candidates = [str(venv_python)] if venv_python.exists() else []
     candidates.append(sys.executable)
@@ -83,7 +88,37 @@ def brain_python(brain_root: Path) -> str:
     return candidates[0]
 
 
-def run_recall(brain_root: Path, topic: str, query: str, *, top_k: int, rerank: bool, timeout: float) -> tuple[dict, float, str | None]:
+def ensure_eval_python(brain_root: Path) -> None:
+    """Re-exec once into the consulting-brain venv, then reuse the reranker in-process."""
+    selected = Path(brain_python(brain_root)).absolute()
+    current = Path(sys.executable).absolute()
+    if selected != current and os.environ.get('CONSULTING_EVAL_REEXECED') != '1':
+        env = dict(os.environ)
+        env['CONSULTING_EVAL_REEXECED'] = '1'
+        os.execvpe(str(selected), [str(selected), *sys.argv], env)
+
+
+def _load_backend(brain_root: Path):
+    key = str(brain_root.resolve())
+    cached = _BACKEND_CACHE.get(key)
+    if cached is not None:
+        return cached
+    scripts_dir = brain_root / 'scripts'
+    memory_dir = scripts_dir / 'dialogue_memory'
+    for path in (str(memory_dir), str(scripts_dir)):
+        if path not in sys.path:
+            sys.path.insert(0, path)
+    backend_path = memory_dir / 'backend.py'
+    spec = importlib.util.spec_from_file_location(f'_consulting_dialogue_backend_{abs(hash(key))}', backend_path)
+    if not spec or not spec.loader:
+        raise RuntimeError(f'cannot load dialogue memory backend: {backend_path}')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _BACKEND_CACHE[key] = module
+    return module
+
+
+def run_recall_subprocess(brain_root: Path, topic: str, query: str, *, top_k: int, rerank: bool, timeout: float) -> tuple[dict, float, str | None]:
     cmd = [
         brain_python(brain_root),
         str(brain_root / 'scripts' / 'dialogue_memory_cli.py'),
@@ -106,6 +141,19 @@ def run_recall(brain_root: Path, topic: str, query: str, *, top_k: int, rerank: 
         return json.loads(proc.stdout), latency, None
     except json.JSONDecodeError as exc:
         return {'ok': False, 'hits': [], 'rerank': None, 'signals': {}, 'error': f'json:{exc}'}, latency, proc.stdout[:500]
+
+
+def run_recall(brain_root: Path, topic: str, query: str, *, top_k: int, rerank: bool, timeout: float) -> tuple[dict, float, str | None]:
+    if os.environ.get('CONSULTING_EVAL_RECALL_MODE') == 'subprocess':
+        return run_recall_subprocess(brain_root, topic, query, top_k=top_k, rerank=rerank, timeout=timeout)
+    start = time.perf_counter()
+    try:
+        backend = _load_backend(brain_root)
+        result = backend.recall(topic, query, top_k=top_k, rerank=rerank, backend=os.environ.get('CONSULTING_BRAIN_BACKEND') or None)
+        return result, time.perf_counter() - start, None
+    except Exception as exc:
+        err = ''.join(traceback.format_exception_only(type(exc), exc)).strip()
+        return {'ok': False, 'hits': [], 'rerank': None, 'signals': {}, 'error': err}, time.perf_counter() - start, traceback.format_exc()[-500:]
 
 
 def hit_expected(result: dict, expected: str) -> bool:
@@ -228,6 +276,7 @@ def main() -> None:
     parser.add_argument('--report-output', type=Path, default=None)
     parser.add_argument('--baseline-json', type=Path, default=None)
     args = parser.parse_args()
+    ensure_eval_python(args.brain_root)
 
     db_path = args.brain_root / 'db' / 'consulting.db'
     questions = build_questions(db_path, args.topic)
@@ -243,6 +292,8 @@ def main() -> None:
         os.environ['CONSULTING_RERANK_PRUNE'] = str(args.rerank_prune)
     else:
         os.environ.setdefault('CONSULTING_RERANK_PRUNE', '4')
+    if args.rerank:
+        os.environ.setdefault('CONSULTING_RERANKER_KEEP_LOADED', '1')
     if args.raw_weight is not None:
         os.environ['CONSULTING_RECALL_RAW_WEIGHT'] = str(args.raw_weight)
 

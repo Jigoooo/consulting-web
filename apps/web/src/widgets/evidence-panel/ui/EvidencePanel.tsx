@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { useEvidence, useProjectEvidence, useAddEvidence, useEvidenceDecisionSummary, useReviewQueue } from '../../../lib/collab';
-import { useHoveredMessage } from '../../../lib/threadCtx';
+import { useEvidence, useProjectEvidence, useAddEvidence, useEvidenceDecisionSummary, useReviewQueue, useReviewQueueDecision } from '../../../lib/collab';
+import { composerDraftRequestStore, useHoveredMessage } from '../../../lib/threadCtx';
 import { useToast } from '../../../shared/ui/toast/Toast';
 import { Icon } from '../../../shared/icons/Icon';
 import type { EvidenceDecisionSummaryResponse, ReviewQueueResponse } from '@consulting/contracts';
@@ -59,6 +59,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
   const projectEv = useProjectEvidence(projectId, Boolean(projectId));
   const decision = useEvidenceDecisionSummary(threadId);
   const review = useReviewQueue(threadId);
+  const reviewDecision = useReviewQueueDecision(threadId);
   const data = scope === 'project' ? projectEv.data : channelEv.data;
   const isLoading = scope === 'project' ? projectEv.isLoading : channelEv.isLoading;
   const hovered = useHoveredMessage();
@@ -69,6 +70,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
   const [excerpt, setExcerpt] = useState('');
   const [url, setUrl] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [pendingReviewItemId, setPendingReviewItemId] = useState<string | null>(null);
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
   const showLoading = useDelayedFlag(isLoading, 300, 260);
 
@@ -126,6 +128,23 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
     closeForm();
   }
 
+  function queueReviewPrompt(prompt: string) {
+    composerDraftRequestStore.request(threadId, prompt);
+    toast('info', '작성창에 검토 요청을 넣었어요. 확인 후 전송해주세요.');
+  }
+
+  async function decideReviewItem(itemId: string, action: 'resolve' | 'ignore') {
+    setPendingReviewItemId(itemId);
+    try {
+      await reviewDecision.mutateAsync({ itemId, body: { action } });
+      toast('success', action === 'resolve' ? '검토 항목을 완료 처리했어요.' : '검토 항목을 숨겼어요.');
+    } catch {
+      toast('error', '검토 항목 처리 실패. 다시 시도해주세요.');
+    } finally {
+      setPendingReviewItemId(null);
+    }
+  }
+
   const items = data?.evidence ?? [];
   const selected = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
 
@@ -178,7 +197,14 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
       ) : null}
 
       {mode === 'review' ? (
-        <ReviewQueueView isLoading={review.isLoading} items={review.data?.items ?? []} />
+        <ReviewQueueView
+          isLoading={review.isLoading}
+          items={review.data?.items ?? []}
+          pendingItemId={pendingReviewItemId}
+          onPrompt={queueReviewPrompt}
+          onResolve={(itemId) => void decideReviewItem(itemId, 'resolve')}
+          onIgnore={(itemId) => void decideReviewItem(itemId, 'ignore')}
+        />
       ) : null}
 
       {mode === 'sources' && showLoading ? (
@@ -383,21 +409,53 @@ function ScorecardView({ isLoading, summary }: { isLoading: boolean; summary: De
   );
 }
 
-function ReviewQueueView({ isLoading, items }: { isLoading: boolean; items: ReviewItem[] }) {
+function ReviewQueueView({
+  isLoading,
+  items,
+  pendingItemId,
+  onPrompt,
+  onResolve,
+  onIgnore,
+}: {
+  isLoading: boolean;
+  items: ReviewItem[];
+  pendingItemId: string | null;
+  onPrompt: (prompt: string) => void;
+  onResolve: (itemId: string) => void;
+  onIgnore: (itemId: string) => void;
+}) {
   if (isLoading) return <PanelLoading label="검토큐 불러오는 중" />;
   if (items.length === 0) return <EmptyState icon="check" title="열린 검토 항목이 없어요" description="반박되었거나 근거가 부족한 주장이 생기면 우선순위순으로 표시됩니다." />;
   return (
     <div className={s.decisionStack} data-testid="active-review-queue-panel">
-      {items.map((item) => (
-        <div key={item.id} className={s.reviewRow}>
-          <div className={s.reviewTop}>
-            <span>{item.itemKind === 'refuted_claim' ? '반박 확인' : '근거 보강'}</span>
-            <b>{item.priorityScore.toFixed(2)}</b>
+      {items.map((item) => {
+        const disabled = pendingItemId === item.id;
+        return (
+          <div key={item.id} className={s.reviewRow}>
+            <div className={s.reviewTop}>
+              <span>{item.itemKind === 'refuted_claim' ? '반박 확인' : '근거 보강'}</span>
+              <b>{item.priorityScore.toFixed(2)}</b>
+            </div>
+            <div className={s.reviewTitle}>{item.title}</div>
+            <div className={s.reviewReasons}>{item.reasons.join(' · ')}</div>
+            <div className={s.reviewPromptActions} aria-label="검토 작업 작성">
+              {item.actions.map((action) => (
+                <button key={action.id} type="button" className={`${s.reviewPromptButton} cwTap`} onClick={() => onPrompt(action.prompt)}>
+                  {action.label}
+                </button>
+              ))}
+            </div>
+            <div className={s.reviewDecisionActions} aria-label="검토 항목 처리">
+              <button type="button" className={`${s.reviewDecisionButton} cwTap`} disabled={disabled} onClick={() => onResolve(item.id)}>
+                완료 처리
+              </button>
+              <button type="button" className={`${s.reviewDecisionButton} ${s.reviewDecisionButtonMuted} cwTap`} disabled={disabled} onClick={() => onIgnore(item.id)}>
+                나중에 보기
+              </button>
+            </div>
           </div>
-          <div className={s.reviewTitle}>{item.title}</div>
-          <div className={s.reviewReasons}>{item.reasons.join(' · ')}</div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

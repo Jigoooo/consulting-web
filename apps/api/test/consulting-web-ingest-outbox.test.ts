@@ -33,7 +33,7 @@ const liveScope = {
 };
 
 describe('ConsultingWebIngestService outbox path', () => {
-  it('records a pending outbox event instead of running best-effort ingest inline', async () => {
+  it('records a quarantined assistant memory candidate and a segmented outbox event', async () => {
     const db = makeDb();
     const resolver = { resolveThread: vi.fn(async () => liveScope) };
     const service = new ConsultingWebIngestService(
@@ -50,9 +50,21 @@ describe('ConsultingWebIngestService outbox path', () => {
     });
 
     expect(resolver.resolveThread).toHaveBeenCalledWith(liveScope.threadId);
-    expect(db.insert).toHaveBeenCalledTimes(1);
-    expect(db.inserted).toHaveLength(1);
-    const row = db.inserted[0] as Record<string, unknown>;
+    expect(db.insert).toHaveBeenCalledTimes(2);
+    expect(db.inserted).toHaveLength(2);
+    const candidate = db.inserted[0] as Record<string, unknown>;
+    expect(candidate).toMatchObject({
+      workspaceId: liveScope.workspaceId,
+      threadId: liveScope.threadId,
+      assistantMessageId: '66666666-6666-4666-8666-666666666666',
+      runId: 'run_abc',
+      policyDecisionId: 'memory-write-guard:v1:66666666-6666-4666-8666-666666666666',
+      traceId: 'run_abc',
+      candidateText: '정원·인건비 영향과 함께 봐야 합니다.',
+      status: 'quarantined',
+      reason: 'assistant_output_requires_review',
+    });
+    const row = db.inserted[1] as Record<string, unknown>;
     expect(row.eventType).toBe('ConsultingWebTurnCompleted');
     expect(row.aggregateType).toBe('thread');
     expect(row.aggregateId).toBe(liveScope.threadId);
@@ -70,12 +82,32 @@ describe('ConsultingWebIngestService outbox path', () => {
       threadId: liveScope.threadId,
       scopePath: liveScope.scopePath,
       userText: '정원 검토해줘',
-      assistantText: '정원·인건비 영향과 함께 봐야 합니다.',
+      allowedSegments: [{
+        id: 'user:66666666-6666-4666-8666-666666666666',
+        kind: 'user',
+        text: '정원 검토해줘',
+        reason: 'user_input_allowed',
+      }],
+      assistantCandidate: {
+        id: 'assistant:66666666-6666-4666-8666-666666666666',
+        text: '정원·인건비 영향과 함께 봐야 합니다.',
+        sourceMessageId: '66666666-6666-4666-8666-666666666666',
+        status: 'quarantined',
+        reason: 'assistant_output_requires_review',
+      },
+      blockedSegments: [{
+        id: 'assistant:66666666-6666-4666-8666-666666666666',
+        kind: 'assistant',
+        text: '정원·인건비 영향과 함께 봐야 합니다.',
+        reason: 'assistant_output_requires_review',
+      }],
+      policyDecisionId: 'memory-write-guard:v1:66666666-6666-4666-8666-666666666666',
+      traceId: 'run_abc',
       runId: 'run_abc',
       assistantMessageId: '66666666-6666-4666-8666-666666666666',
     });
+    expect(row.payload).not.toHaveProperty('assistantText');
   });
-
   it('does not enqueue archived or empty turns', async () => {
     const db = makeDb();
     const resolver = { resolveThread: vi.fn(async () => ({ ...liveScope, archived: true })) };
