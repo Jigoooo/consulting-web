@@ -177,6 +177,129 @@ def test_decision_allows_repeatable_precision_gain_when_trace_is_clean() -> None
     assert decision["blockers"] == []
 
 
+def test_record_p6_ledger_uses_docker_psql_and_returns_clean_readback(tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_runner(cmd, *, input, text, stdout, stderr, timeout, check):
+        captured["cmd"] = list(cmd)
+        captured["sql"] = input
+        payload = {
+            "checked": True,
+            "trace_rows": 1,
+            "retrieval_rows": 1,
+            "eval_rows": 1,
+            "leakage_count": 0,
+            "note": "unit",
+        }
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+
+    aggregate = mod.aggregate_runs([
+        {"config_slug": "rw020-prune4-top1", "config": {"top_k": 1}, "returncode": 0, "summary": _summary(precision=0.83, recall=0.91, hit_rate=0.91, p95=3.7)},
+    ])[0]
+    probe = mod.record_p6_ledger(
+        {
+            "generated_at": "2026-07-09T00:00:00+00:00",
+            "topic": "changwon-org-mgmt-diagnosis",
+            "aggregates": [aggregate],
+        },
+        output_dir=tmp_path,
+        container="consulting-web-pg-1",
+        trace_id="p6-entry:unit",
+        runner=fake_runner,
+    )
+
+    assert probe["checked"] is True
+    assert probe["trace_rows"] == 1
+    assert probe["retrieval_rows"] == 1
+    assert probe["eval_rows"] == 1
+    assert captured["cmd"] == [
+        "docker",
+        "exec",
+        "-i",
+        "consulting-web-pg-1",
+        "sh",
+        "-lc",
+        'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -AtX -v ON_ERROR_STOP=1',
+    ]
+    sql = str(captured["sql"])
+    assert "INSERT INTO trace_spans" in sql
+    assert "INSERT INTO retrieval_runs" in sql
+    assert "INSERT INTO eval_runs" in sql
+    assert "SELECT count(*) FROM trace_insert" in sql
+    assert "SELECT count(*) FROM retrieval_insert" in sql
+    assert "SELECT count(*) FROM eval_insert" in sql
+    assert "p6-entry:unit" in sql
+    assert "rw020-prune4-top1" in sql
+
+
+def test_record_p6_ledger_auto_mode_degrades_to_metric_only_when_db_is_unavailable(tmp_path: Path) -> None:
+    def failing_runner(cmd, *, input, text, stdout, stderr, timeout, check):
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="docker unavailable")
+
+    probe = mod.record_p6_ledger(
+        {"topic": "changwon-org-mgmt-diagnosis", "aggregates": []},
+        output_dir=tmp_path,
+        container="consulting-web-pg-1",
+        trace_id="p6-entry:unit",
+        runner=failing_runner,
+    )
+
+    assert probe["checked"] is False
+    assert probe["trace_rows"] == 0
+    assert "docker unavailable" in probe["note"]
+
+
+def test_resolve_trace_probe_records_ledger_when_no_manual_trace_json(tmp_path: Path) -> None:
+    calls = {"count": 0}
+
+    def fake_runner(cmd, *, input, text, stdout, stderr, timeout, check):
+        calls["count"] += 1
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps({"checked": True, "trace_rows": 1, "retrieval_rows": 1, "eval_rows": 1, "leakage_count": 0}),
+            stderr="",
+        )
+
+    probe = mod.resolve_trace_probe(
+        trace_json=None,
+        ledger_mode="auto",
+        matrix_result={"topic": "changwon-org-mgmt-diagnosis", "aggregates": []},
+        output_dir=tmp_path,
+        ledger_container="consulting-web-pg-1",
+        ledger_trace_id="p6-entry:unit",
+        dry_run=False,
+        runner=fake_runner,
+    )
+
+    assert calls["count"] == 1
+    assert probe["checked"] is True
+    assert probe["retrieval_rows"] == 1
+
+
+def test_resolve_trace_probe_manual_json_overrides_ledger_writer(tmp_path: Path) -> None:
+    trace_json = tmp_path / "trace.json"
+    trace_json.write_text(json.dumps({"checked": True, "trace_rows": 2, "retrieval_rows": 3, "eval_rows": 4, "leakage_count": 0}), encoding="utf-8")
+
+    def forbidden_runner(**kwargs):
+        raise AssertionError("ledger writer should not run when --trace-json is supplied")
+
+    probe = mod.resolve_trace_probe(
+        trace_json=trace_json,
+        ledger_mode="auto",
+        matrix_result={"aggregates": []},
+        output_dir=tmp_path,
+        ledger_container="consulting-web-pg-1",
+        ledger_trace_id=None,
+        dry_run=False,
+        runner=forbidden_runner,
+    )
+
+    assert probe["trace_rows"] == 2
+    assert probe["retrieval_rows"] == 3
+    assert probe["eval_rows"] == 4
+
+
 def test_write_outputs_persists_matrix_and_decision_markdown(tmp_path: Path) -> None:
     matrix_result = {
         "generated_at": "2026-07-09T00:00:00+09:00",

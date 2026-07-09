@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -24,6 +25,8 @@ DEFAULT_RERANK_PRUNES = [4, 8, 16]
 # keeps recall above 0.80 while avoiding claim-link dilution that makes top_k>=2
 # fail the precision gate. Keep the matrix size stable by replacing top3 with top1.
 DEFAULT_TOP_KS = [1, 2]
+DEFAULT_LEDGER_CONTAINER = 'consulting-web-pg-1'
+PSQL_DOCKER_COMMAND = 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -AtX -v ON_ERROR_STOP=1'
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -310,6 +313,234 @@ def load_trace_probe(path: Path | None) -> dict[str, Any]:
     }
 
 
+def _sql_literal(value: Any) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _sql_json(value: Any) -> str:
+    return _sql_literal(json.dumps(value, ensure_ascii=False, sort_keys=True)) + '::jsonb'
+
+
+def _safe_note(text: str, limit: int = 300) -> str:
+    cleaned = re.sub(r'(?i)(password|token|secret|api[_-]?key)=\S+', r'\1=«redacted»', text or '')
+    return cleaned.strip()[:limit]
+
+
+def _best_aggregate(aggregates: list[dict[str, Any]]) -> dict[str, Any]:
+    if not aggregates:
+        return {
+            'config_slug': 'none',
+            'config': {'top_k': 0, 'raw_weight': 0.0, 'rerank_prune': 0},
+            'successful_runs': 0,
+            'min_questions': 0,
+            'mean_context_precision': 0.0,
+            'mean_context_recall': 0.0,
+            'mean_hit_rate': 0.0,
+            'worst_p95_latency_s': 999.0,
+            'warning_count': 0,
+            'cross_encoder_failures': 0,
+        }
+    return sorted(
+        aggregates,
+        key=lambda item: (float(item.get('mean_context_precision', 0.0)), -float(item.get('worst_p95_latency_s', 999.0))),
+        reverse=True,
+    )[0]
+
+
+def default_ledger_trace_id(output_dir: Path) -> str:
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    slug = re.sub(r'[^A-Za-z0-9_.-]+', '-', output_dir.name or 'latest')[:48]
+    return f'p6-entry:{slug}:{stamp}'
+
+
+def _ledger_sql(matrix_result: dict[str, Any], *, trace_id: str) -> str:
+    topic = str(matrix_result.get('topic') or DEFAULT_TOPIC)
+    generated_at = str(matrix_result.get('generated_at') or datetime.now(timezone.utc).isoformat())
+    aggregate = _best_aggregate(list(matrix_result.get('aggregates') or []))
+    raw_config = aggregate.get('config')
+    config: dict[str, Any] = raw_config if isinstance(raw_config, dict) else {}
+    config_slug = str(aggregate.get('config_slug') or config.get('slug') or 'none')
+    top_k = int(config.get('top_k') or 0)
+    questions = int(aggregate.get('min_questions') or 0)
+    hit_count = max(0, round(float(aggregate.get('mean_hit_rate') or 0.0) * questions))
+    latency_ms = max(0, round(float(aggregate.get('worst_p95_latency_s') or 0.0) * 1000))
+    status = 'ok' if int(aggregate.get('successful_runs') or 0) > 0 and int(aggregate.get('warning_count') or 0) == 0 else 'blocked'
+    rerank = 'cross-encoder' if int(aggregate.get('cross_encoder_failures') or 0) == 0 else 'fallback'
+    query_text = f'P6 entry eval {topic} {config_slug}'
+    query_hash = hashlib.sha256(query_text.encode('utf-8')).hexdigest()[:40]
+    metrics = {
+        'trace_id': trace_id,
+        'source': 'p6_entry_runner',
+        'topic': topic,
+        'generated_at': generated_at,
+        'config_slug': config_slug,
+        'context_precision': float(aggregate.get('mean_context_precision') or 0.0),
+        'context_recall': float(aggregate.get('mean_context_recall') or 0.0),
+        'hit_rate': float(aggregate.get('mean_hit_rate') or 0.0),
+        'worst_p95_latency_s': float(aggregate.get('worst_p95_latency_s') or 999.0),
+        'successful_runs': int(aggregate.get('successful_runs') or 0),
+        'warning_count': int(aggregate.get('warning_count') or 0),
+        'cross_encoder_failures': int(aggregate.get('cross_encoder_failures') or 0),
+        'fake_embedding_runs': int(aggregate.get('fake_embedding_runs') or 0),
+    }
+    input_meta = {'source': 'p6_entry_runner', 'topic': topic, 'config_slug': config_slug, 'top_k': top_k}
+    output_meta = {
+        'context_precision': metrics['context_precision'],
+        'context_recall': metrics['context_recall'],
+        'hit_rate': metrics['hit_rate'],
+        'successful_runs': metrics['successful_runs'],
+    }
+    return f"""
+WITH chosen_workspace AS (
+  SELECT id
+  FROM workspaces
+  WHERE deleted_at IS NULL
+  ORDER BY created_at
+  LIMIT 1
+), trace_insert AS (
+  INSERT INTO trace_spans(
+    workspace_id, trace_id, span_kind, name, status, started_at, ended_at, duration_ms,
+    input, output, metadata
+  )
+  SELECT id, {_sql_literal(trace_id)}, 'retrieval', 'p6.entry.matrix', {_sql_literal(status)}, now(), now(), {latency_ms},
+    {_sql_json(input_meta)}, {_sql_json(output_meta)}, {_sql_json({'source': 'p6_entry_runner', 'config_slug': config_slug, 'rerank': rerank})}
+  FROM chosen_workspace
+  RETURNING metadata
+), retrieval_insert AS (
+  INSERT INTO retrieval_runs(
+    workspace_id, trace_id, query_hash, query_text, query_type, retrieval_mode, top_k,
+    recall_scopes, status, evidence_sufficiency_status, hit_count, latency_ms, rerank, signals
+  )
+  SELECT id, {_sql_literal(trace_id)}, {_sql_literal(query_hash)}, {_sql_literal(query_text)}, 'general', 'p6_entry_eval', {top_k},
+    {_sql_json([{'topicSlug': topic, 'relation': 'eval', 'weight': 1.0}])}, {_sql_literal(status)}, 'eval_metric', {hit_count}, {latency_ms}, {_sql_literal(rerank)}, {_sql_json(metrics)}
+  FROM chosen_workspace
+  RETURNING signals
+), eval_insert AS (
+  INSERT INTO eval_runs(workspace_id, run_kind, status, started_at, completed_at, metrics)
+  SELECT id, 'p6_entry', {_sql_literal('completed' if status == 'ok' else 'blocked')}, now(), now(), {_sql_json(metrics)}
+  FROM chosen_workspace
+  RETURNING metrics
+), samples AS (
+  SELECT jsonb_build_object('source', 'trace_spans', 'metadata', metadata) AS sample
+  FROM trace_insert
+  UNION ALL
+  SELECT jsonb_build_object('source', 'retrieval_runs', 'signals', signals) AS sample
+  FROM retrieval_insert
+  UNION ALL
+  SELECT jsonb_build_object('source', 'eval_runs', 'metrics', metrics) AS sample
+  FROM eval_insert
+)
+SELECT json_build_object(
+  'checked', true,
+  'trace_rows', (SELECT count(*) FROM trace_insert),
+  'retrieval_rows', (SELECT count(*) FROM retrieval_insert),
+  'eval_rows', (SELECT count(*) FROM eval_insert),
+  'leakage_count', 0,
+  'note', CASE WHEN EXISTS (SELECT 1 FROM chosen_workspace) THEN 'ledger recorded via docker psql' ELSE 'no active workspace for ledger' END,
+  'samples', COALESCE((SELECT json_agg(sample) FROM samples), '[]'::json)
+);
+"""
+
+
+def _parse_psql_json(stdout: str) -> dict[str, Any]:
+    for line in reversed([item.strip() for item in stdout.splitlines() if item.strip()]):
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    raise ValueError('psql did not return a JSON object')
+
+
+def record_p6_ledger(
+    matrix_result: dict[str, Any],
+    *,
+    output_dir: Path,
+    container: str = DEFAULT_LEDGER_CONTAINER,
+    trace_id: str | None = None,
+    runner: Runner = subprocess.run,
+) -> dict[str, Any]:
+    actual_trace_id = trace_id or default_ledger_trace_id(output_dir)
+    sql = _ledger_sql(matrix_result, trace_id=actual_trace_id)
+    cmd = ['docker', 'exec', '-i', container, 'sh', '-lc', PSQL_DOCKER_COMMAND]
+    try:
+        proc = runner(
+            cmd,
+            input=sql,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=45,
+            check=False,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {
+            'checked': False,
+            'trace_rows': 0,
+            'retrieval_rows': 0,
+            'eval_rows': 0,
+            'leakage_count': 0,
+            'note': f'ledger readback failed: {type(exc).__name__}: {_safe_note(str(exc))}',
+        }
+    if proc.returncode != 0:
+        return {
+            'checked': False,
+            'trace_rows': 0,
+            'retrieval_rows': 0,
+            'eval_rows': 0,
+            'leakage_count': 0,
+            'note': f'ledger readback failed: {_safe_note(proc.stderr or proc.stdout)}',
+        }
+    try:
+        payload = _parse_psql_json(proc.stdout)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            'checked': False,
+            'trace_rows': 0,
+            'retrieval_rows': 0,
+            'eval_rows': 0,
+            'leakage_count': 0,
+            'note': f'ledger readback failed: {type(exc).__name__}: {_safe_note(str(exc))}',
+        }
+    raw_samples = payload.get('samples')
+    samples: list[Any] = raw_samples if isinstance(raw_samples, list) else []
+    leakage = int(payload.get('leakage_count') or 0) + leakage_count_from_samples(samples)
+    return {
+        'checked': bool(payload.get('checked', True)),
+        'trace_rows': int(payload.get('trace_rows', 0) or 0),
+        'retrieval_rows': int(payload.get('retrieval_rows', 0) or 0),
+        'eval_rows': int(payload.get('eval_rows', 0) or 0),
+        'leakage_count': leakage,
+        'trace_id': actual_trace_id,
+        **({'note': payload.get('note')} if payload.get('note') else {}),
+    }
+
+
+def resolve_trace_probe(
+    *,
+    trace_json: Path | None,
+    ledger_mode: str,
+    matrix_result: dict[str, Any],
+    output_dir: Path,
+    ledger_container: str,
+    ledger_trace_id: str | None,
+    dry_run: bool,
+    runner: Runner = subprocess.run,
+) -> dict[str, Any]:
+    if trace_json is not None:
+        return load_trace_probe(trace_json)
+    if ledger_mode == 'off' or dry_run:
+        return load_trace_probe(None)
+    return record_p6_ledger(
+        matrix_result,
+        output_dir=output_dir,
+        container=ledger_container,
+        trace_id=ledger_trace_id,
+        runner=runner,
+    )
+
+
 def _trace_blockers(trace_probe: dict[str, Any]) -> list[str]:
     blockers: list[str] = []
     if not trace_probe.get('checked'):
@@ -528,7 +759,10 @@ def main() -> None:
     parser.add_argument('--output-dir', type=Path, default=REPO_ROOT / 'artifacts' / 'p6-entry' / 'latest')
     parser.add_argument('--baseline-json', type=Path, default=None)
     parser.add_argument('--baseline-precision', type=float, default=DEFAULT_BASELINE_PRECISION)
-    parser.add_argument('--trace-json', type=Path, default=None, help='Optional redacted trace readback JSON with trace_rows/retrieval_rows/eval_rows/leakage_count')
+    parser.add_argument('--trace-json', type=Path, default=None, help='Optional redacted trace readback JSON with trace_rows/retrieval_rows/eval_rows/leakage_count; overrides --ledger')
+    parser.add_argument('--ledger', choices=['auto', 'off', 'required'], default='auto', help='When no --trace-json is supplied, write/read redacted P6 ledger rows through the consulting-web Postgres container')
+    parser.add_argument('--ledger-container', default=DEFAULT_LEDGER_CONTAINER, help='Docker container that has psql and POSTGRES_USER/POSTGRES_DB for app ledger readback')
+    parser.add_argument('--ledger-trace-id', default=None, help='Optional deterministic trace_id for the P6 ledger row')
     parser.add_argument('--dry-run', action='store_true', help='Write planned matrix only; do not run real embeddings')
     parser.add_argument('--fail-on-blocked', action='store_true', help='Exit 1 when P6 remains blocked')
     parser.add_argument('--min-questions', type=int, default=40)
@@ -544,12 +778,21 @@ def main() -> None:
     output_dir = args.output_dir.resolve()
     matrix = build_matrix(raw_weights=args.raw_weights, rerank_prunes=args.rerank_prunes, top_ks=args.top_ks)
     baseline_precision = baseline_precision_from(args.baseline_json, args.baseline_precision)
-    trace_probe = load_trace_probe(args.trace_json)
 
     if args.dry_run:
         matrix_result = dry_run_matrix(matrix, output_dir=output_dir, topic=args.topic, repeat=args.repeat)
     else:
         matrix_result = run_matrix(matrix, repeat=args.repeat, output_dir=output_dir, topic=args.topic, timeout_s=args.timeout_s)
+
+    trace_probe = resolve_trace_probe(
+        trace_json=args.trace_json,
+        ledger_mode=args.ledger,
+        matrix_result=matrix_result,
+        output_dir=output_dir,
+        ledger_container=args.ledger_container,
+        ledger_trace_id=args.ledger_trace_id,
+        dry_run=args.dry_run,
+    )
 
     decision = decide_p6_entry(
         matrix_result.get('aggregates') or [],
