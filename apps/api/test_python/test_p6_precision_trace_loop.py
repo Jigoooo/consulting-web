@@ -43,6 +43,17 @@ def test_build_matrix_uses_stable_slug_and_cartesian_product() -> None:
     assert matrix[2].top_k == 2
 
 
+def test_default_matrix_includes_top1_precision_gate_candidate() -> None:
+    matrix = mod.build_matrix(
+        raw_weights=mod.DEFAULT_RAW_WEIGHTS,
+        rerank_prunes=mod.DEFAULT_RERANK_PRUNES,
+        top_ks=mod.DEFAULT_TOP_KS,
+    )
+
+    assert 1 in {item.top_k for item in matrix}
+    assert 3 not in set(mod.DEFAULT_TOP_KS)
+
+
 def test_run_matrix_forces_pg_real_embeddings_and_captures_each_repeat(tmp_path: Path) -> None:
     calls: list[dict] = []
 

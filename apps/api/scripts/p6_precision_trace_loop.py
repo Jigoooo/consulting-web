@@ -18,6 +18,12 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 EVAL_SCRIPT = API_ROOT / 'scripts' / 'graphrag_eval_gate.py'
 DEFAULT_TOPIC = 'changwon-org-mgmt-diagnosis'
 DEFAULT_BASELINE_PRECISION = 0.2881
+DEFAULT_RAW_WEIGHTS = [0.00, 0.10, 0.20, 0.30]
+DEFAULT_RERANK_PRUNES = [4, 8, 16]
+# P6 entry is a high-precision gate. Real eval on 2026-07-09 showed top_k=1
+# keeps recall above 0.80 while avoiding claim-link dilution that makes top_k>=2
+# fail the precision gate. Keep the matrix size stable by replacing top3 with top1.
+DEFAULT_TOP_KS = [1, 2]
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -515,9 +521,9 @@ def main() -> None:
     parser.add_argument('--topic', default=DEFAULT_TOPIC)
     parser.add_argument('--repeat', type=int, default=3)
     parser.add_argument('--required-repeats', type=int, default=None)
-    parser.add_argument('--raw-weights', type=parse_float_list, default=parse_float_list('0.00,0.10,0.20,0.30'))
-    parser.add_argument('--rerank-prunes', type=parse_int_list, default=parse_int_list('4,8,16'))
-    parser.add_argument('--top-ks', type=parse_int_list, default=parse_int_list('2,3'))
+    parser.add_argument('--raw-weights', type=parse_float_list, default=DEFAULT_RAW_WEIGHTS)
+    parser.add_argument('--rerank-prunes', type=parse_int_list, default=DEFAULT_RERANK_PRUNES)
+    parser.add_argument('--top-ks', type=parse_int_list, default=DEFAULT_TOP_KS)
     parser.add_argument('--timeout-s', type=float, default=45.0)
     parser.add_argument('--output-dir', type=Path, default=REPO_ROOT / 'artifacts' / 'p6-entry' / 'latest')
     parser.add_argument('--baseline-json', type=Path, default=None)
