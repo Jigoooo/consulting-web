@@ -118,6 +118,8 @@ current baseline:
 따라서 이 문서의 ColBERT/SPLADE/RAPTOR 관련 항목은 “당장 제품 기본값으로 넣기”가 아니라
 `docs/plans/2026-07-09-colbert-splade-raptor-restart-plan.md` 기준의 read-only comparison lab으로 재개한다.
 
+2026-07-09 SPLADE-lite read-only spike는 baseline 대비 precision/recall/hit 개선이 0.0000이라 HOLD다. 제품 경로는 변경하지 않았다.
+
 ---
 
 ## 1. 현재 구조 진단 요약

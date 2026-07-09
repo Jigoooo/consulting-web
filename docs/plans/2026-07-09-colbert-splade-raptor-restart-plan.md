@@ -18,6 +18,7 @@
 - real embedding repeat=3 matrix
 - app PG trace/eval/retrieval ledger write + readback
 - product baseline package script 추가
+- SPLADE-lite read-only spike 완료: baseline 대비 개선 없음 → HOLD
 
 현행 product baseline:
 - command: pnpm --filter @consulting/api run test:p6-product-baseline
@@ -179,6 +180,25 @@ FAIL/SKIP → record result in docs, delete temporary generated artifacts, produ
 ---
 
 ## 5. Task C — SPLADE read-only spike
+
+**Status:** 2026-07-09 dependency-free SPLADE-lite spike 완료 → HOLD.
+
+```text
+command: pnpm --filter @consulting/api run test:p6-splade-lite
+mode: dependency-free SPLADE-style sparse query expansion
+real SPLADE dependency: not installed; no heavy dependency added
+questions: 45
+baseline precision/recall/hit: 0.8310 / 0.9111 / 0.9111
+splade-lite precision/recall/hit: 0.8310 / 0.9111 / 0.9111
+precision_delta: +0.0000
+recall_delta: +0.0000
+hit_rate_delta: +0.0000
+latency_ratio: 0.9589
+changed_rows: 0 / 45
+decision: hold
+blocker: precision_delta_low
+product_path_mutated: false
+```
 
 **Objective:** Korean lexical/identifier precision을 SPLADE sparse expansion이 개선하는지 확인한다.
 

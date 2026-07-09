@@ -1941,6 +1941,7 @@ dialogue/file separate       LIKE fallback                 exact code +1000 boos
    `test:p6-product-baseline` 기준 현재 product baseline은 allowed=true다.
    ColBERT/SPLADE/RAPTOR/Leiden류는 제품 기본값이 아니라 baseline 대비 개선을 증명하는
    read-only comparison lab으로만 재개한다.
+   2026-07-09 SPLADE-lite spike는 precision_delta=0.0000으로 HOLD; product path unchanged.
    재개 계획: `docs/plans/2026-07-09-colbert-splade-raptor-restart-plan.md`
 ```
 

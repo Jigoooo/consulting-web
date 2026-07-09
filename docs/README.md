@@ -44,3 +44,18 @@ ledger: trace/retrieval/eval rows 1/1/1, leakage_count 0
 ```
 
 ColBERT/SPLADE/RAPTOR는 완료된 product baseline을 대체하지 않는다. 다음에 다시 한다면 `plans/2026-07-09-colbert-splade-raptor-restart-plan.md`대로 read-only comparison lab에서 baseline 대비 개선을 증명해야 한다.
+
+## P6 advanced lab 최근 결과
+
+```text
+2026-07-09 SPLADE-lite read-only spike:
+command: pnpm --filter @consulting/api run test:p6-splade-lite
+decision: hold
+reason: precision_delta_low
+baseline precision/recall/hit: 0.8310 / 0.9111 / 0.9111
+splade-lite precision/recall/hit: 0.8310 / 0.9111 / 0.9111
+changed_rows: 0 / 45
+product_path_mutated: false
+```
+
+해석: dependency-free SPLADE-style sparse query expansion은 안전하지만 현재 데이터셋에서는 baseline보다 낫지 않다. real SPLADE 모델/인덱스 실험은 heavy dependency 승인 후 별도 branch에서만 재개한다.
