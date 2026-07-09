@@ -32,6 +32,22 @@ SQLite fallback consulting.db:
   file_edges      1,949
 ```
 
+2026-07-09 PG recall/reranker parity 재측정:
+
+```text
+eval: graphrag_eval_gate.py --rerank --no-fake-embeddings --top-k 2 --rerank-prune 4 --raw-weight 0.20
+questions: 45
+rerank_modes: [cross-encoder]
+fake_embeddings: false
+warning_count: 0
+hit_rate/context_recall: 0.9333
+context_precision: 0.3251
+p95_latency_s: 3.5018
+
+baseline(SQLite/original): context_precision 0.2881 / context_recall 0.8667
+판정: PG hot path는 baseline parity를 회복했다. P6 실험 투입 전 목표(context_precision >= 0.45)는 별도 precision 개선 과제로 남긴다.
+```
+
 운영 판정:
 
 ```text
