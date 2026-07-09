@@ -19,6 +19,7 @@
 - app PG trace/eval/retrieval ledger write + readback
 - product baseline package script 추가
 - SPLADE-lite read-only spike 완료: baseline 대비 개선 없음 → HOLD
+- RAPTOR-lite read-only spike 완료: global-summary coverage/precision 개선 없음 → HOLD
 
 현행 product baseline:
 - command: pnpm --filter @consulting/api run test:p6-product-baseline
@@ -231,6 +232,26 @@ Product adoption only if it beats baseline without large latency/cost regression
 ---
 
 ## 6. Task D — RAPTOR read-only spike
+
+**Status:** 2026-07-09 dependency-free RAPTOR-lite spike 완료 → HOLD.
+
+```text
+command: pnpm --filter @consulting/api run test:p6-raptor-lite
+mode: dependency-free hierarchical summary query expansion
+real RAPTOR dependency: not installed; no heavy dependency added
+summary_rows: 4
+global_questions: 4
+baseline global_coverage/global_precision/hit: 0.8389 / 0.5333 / 1.0000
+raptor-lite global_coverage/global_precision/hit: 0.8056 / 0.5136 / 1.0000
+coverage_delta: -0.0333
+precision_delta: -0.0197
+hit_rate_delta: +0.0000
+latency_ratio: 0.6510
+changed_rows: 4 / 4
+decision: hold
+blocker: coverage_delta_low
+product_path_mutated: false
+```
 
 **Objective:** long-document/global-summary queries에서 hierarchical summaries가 recall/precision을 개선하는지 확인한다.
 

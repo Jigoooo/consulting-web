@@ -56,6 +56,20 @@ baseline precision/recall/hit: 0.8310 / 0.9111 / 0.9111
 splade-lite precision/recall/hit: 0.8310 / 0.9111 / 0.9111
 changed_rows: 0 / 45
 product_path_mutated: false
+
+2026-07-09 RAPTOR-lite read-only spike:
+command: pnpm --filter @consulting/api run test:p6-raptor-lite
+decision: hold
+reason: coverage_delta_low
+summary_rows: 4
+global_questions: 4
+baseline global_coverage/global_precision/hit: 0.8389 / 0.5333 / 1.0000
+raptor-lite global_coverage/global_precision/hit: 0.8056 / 0.5136 / 1.0000
+coverage_delta: -0.0333
+precision_delta: -0.0197
+latency_ratio: 0.6510
+changed_rows: 4 / 4
+product_path_mutated: false
 ```
 
-해석: dependency-free SPLADE-style sparse query expansion은 안전하지만 현재 데이터셋에서는 baseline보다 낫지 않다. real SPLADE 모델/인덱스 실험은 heavy dependency 승인 후 별도 branch에서만 재개한다.
+해석: dependency-free SPLADE-style sparse query expansion은 안전하지만 현재 데이터셋에서는 baseline보다 낫지 않다. RAPTOR-lite hierarchical query expansion은 global-summary 질문에서도 baseline coverage를 넘지 못했다. real SPLADE/RAPTOR 모델·인덱스 실험은 heavy dependency 승인 후 별도 branch에서만 재개한다.

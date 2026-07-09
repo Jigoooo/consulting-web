@@ -1942,6 +1942,7 @@ dialogue/file separate       LIKE fallback                 exact code +1000 boos
    ColBERT/SPLADE/RAPTOR/Leiden류는 제품 기본값이 아니라 baseline 대비 개선을 증명하는
    read-only comparison lab으로만 재개한다.
    2026-07-09 SPLADE-lite spike는 precision_delta=0.0000으로 HOLD; product path unchanged.
+   2026-07-09 RAPTOR-lite spike는 global coverage_delta=-0.0333으로 HOLD; product path unchanged.
    재개 계획: `docs/plans/2026-07-09-colbert-splade-raptor-restart-plan.md`
 ```
 

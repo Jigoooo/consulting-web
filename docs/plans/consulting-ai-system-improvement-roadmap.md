@@ -120,6 +120,8 @@ current baseline:
 
 2026-07-09 SPLADE-lite read-only spike는 baseline 대비 precision/recall/hit 개선이 0.0000이라 HOLD다. 제품 경로는 변경하지 않았다.
 
+2026-07-09 RAPTOR-lite read-only spike는 global-summary 질문에서 coverage_delta=-0.0333, precision_delta=-0.0197이라 HOLD다. 제품 경로는 변경하지 않았다.
+
 ---
 
 ## 1. 현재 구조 진단 요약
