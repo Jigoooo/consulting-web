@@ -20,6 +20,7 @@
     "backfill:test": "tsx scripts/test_backfill_commit.ts",
     "test:ralph": "python3 scripts/ralph_graphrag_hardening.py --iterations 3 --output ../../artifacts/ralph-graphrag-hardening.json",
     "test:p6-entry": "python3 scripts/p6_precision_trace_loop.py --repeat 3 --output-dir ../../artifacts/p6-entry/latest",
+    "test:p6-product-baseline": "python3 scripts/p6_precision_trace_loop.py --repeat 3 --required-repeats 3 --raw-weights 0.20 --rerank-prunes 4 --top-ks 1 --ledger required --output-dir ../../artifacts/p6-product-baseline/latest",
     "clean": "rm -rf dist .turbo *.tsbuildinfo"
   },
   "dependencies": {

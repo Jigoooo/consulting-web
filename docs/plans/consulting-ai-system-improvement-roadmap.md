@@ -98,6 +98,26 @@ live runtime delta:
    - P2에서는 no-dependency component summary/cache까지만 허용한다.
 ```
 
+## 0.3 2026-07-09 P6 baseline 갱신
+
+```text
+product baseline command:
+  pnpm --filter @consulting/api run test:p6-product-baseline
+
+current baseline:
+  config = rw020-prune4-top1
+  allowed = true
+  context_precision = 0.8310
+  context_recall = 0.9111
+  hit_rate = 0.9111
+  worst_p95_latency_s = 4.1768
+  app PG trace/retrieval/eval ledger rows = 1/1/1
+  leakage_count = 0
+```
+
+따라서 이 문서의 ColBERT/SPLADE/RAPTOR 관련 항목은 “당장 제품 기본값으로 넣기”가 아니라
+`docs/plans/2026-07-09-colbert-splade-raptor-restart-plan.md` 기준의 read-only comparison lab으로 재개한다.
+
 ---
 
 ## 1. 현재 구조 진단 요약

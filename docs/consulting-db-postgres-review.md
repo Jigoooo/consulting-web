@@ -48,6 +48,24 @@ baseline(SQLite/original): context_precision 0.2881 / context_recall 0.8667
 판정: PG hot path는 baseline parity를 회복했다. P6 실험 투입 전 목표(context_precision >= 0.45)는 별도 precision 개선 과제로 남긴다.
 ```
 
+2026-07-09 P6 product baseline:
+
+```text
+command: pnpm --filter @consulting/api run test:p6-product-baseline
+config: rw020-prune4-top1
+repeat: 3 / required_repeats: 3
+context_precision: 0.8310
+context_recall: 0.9111
+hit_rate: 0.9111
+worst_p95_latency_s: 4.1768
+trace/retrieval/eval ledger rows: 1/1/1
+leakage_count: 0
+decision: allowed=true
+
+판정: 현재 product baseline은 통과했다. ColBERT/SPLADE/RAPTOR는 이 baseline 대비
+개선을 증명해야 하는 read-only comparison lab으로 남긴다.
+```
+
 운영 판정:
 
 ```text

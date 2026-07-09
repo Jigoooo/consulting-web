@@ -268,7 +268,26 @@ context_precision: 0.3251
 p95_latency_s: 3.5018
 
 baseline(SQLite/original): context_precision 0.2881 / context_recall 0.8667
-판정: PG hot path가 baseline parity를 회복했다. 다만 P6 aspirational gate(context_precision >= 0.45)는 아직 별도 개선 대상이다.
+판정: PG hot path가 baseline parity를 회복했다. 다만 P6 aspirational gate(context_precision >= 0.45)는 별도 개선 대상이다.
+```
+
+2026-07-09 P6 product baseline 고정:
+
+```text
+command: pnpm --filter @consulting/api run test:p6-product-baseline
+config: rw020-prune4-top1
+repeat: 3 / required_repeats: 3
+fake_embeddings: false
+warning_count: 0
+context_precision: 0.8310
+context_recall: 0.9111
+hit_rate: 0.9111
+worst_p95_latency_s: 4.1768
+trace_probe: trace_rows=1, retrieval_rows=1, eval_rows=1, leakage_count=0
+decision: allowed=true
+
+판정: P6 product path의 현재 baseline은 통과 상태다. ColBERT/SPLADE/RAPTOR는
+이 baseline보다 좋아지는지 비교하는 별도 read-only lab으로만 재개한다.
 ```
 
 ### 3.2 `consulting-web` Postgres
@@ -1919,10 +1938,10 @@ dialogue/file separate       LIKE fallback                 exact code +1000 boos
    exact binding 0이라 Telegram topic별 정밀 분리는 다음 작업 후보.
 
 5. P6 advanced labs 진입 조건
-   real embedding 기준 context_precision 0.2881은 아직 낮음.
-   `apps/api/scripts/p6_precision_trace_loop.py` runner와 `test:p6-entry` script로
-   반복 real-embedding matrix/trace gate를 측정할 수 있다.
-   ColBERT/SPLADE/RAPTOR/Leiden류는 이 루프에서 precision/trace gate를 통과할 때까지 보류한다.
+   `test:p6-product-baseline` 기준 현재 product baseline은 allowed=true다.
+   ColBERT/SPLADE/RAPTOR/Leiden류는 제품 기본값이 아니라 baseline 대비 개선을 증명하는
+   read-only comparison lab으로만 재개한다.
+   재개 계획: `docs/plans/2026-07-09-colbert-splade-raptor-restart-plan.md`
 ```
 
 ---
@@ -1959,5 +1978,5 @@ consulting-web이 scope tree + graph + Hermes SSE + verifier로 제품화
 - exact Telegram/web topic binding을 안전하게 채우는가
 - context graph fanout이 과잉참조 없이 precision을 유지하는가
 - final export gate를 실제 PDF/PPT 산출물 흐름에서 얼마나 강하게 켤 것인가
-- P6 labs보다 먼저 real-embedding precision/trace 측정 루프가 3회 연속 통과하는가
+- P6 product baseline보다 ColBERT/SPLADE/RAPTOR가 실제로 precision/recall/latency에서 이기는가
 ```
