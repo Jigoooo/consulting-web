@@ -27,6 +27,19 @@ Interpretation:
 - Precision is too low for P6 labs; adding heavy labs now would hide whether the core retrieval stack is actually improving.
 - P6 opens only after precision gains are repeatable with trace evidence.
 
+Runner smoke after implementation (`rw020-prune4-top2`, repeat 1, PG-only real embedding):
+
+```text
+context_precision = 0.1274
+context_recall    = 0.3111
+hit_rate          = 0.3111
+p95_latency_s     = 0.5477
+rerank_modes      = [pg-lexical-graph]
+decision          = blocked
+```
+
+Interpretation: the runner is doing its job by surfacing a current PG measurement gap; this is a blocker for P6 labs, not a reason to hide or bypass the gate.
+
 ---
 
 ## 2. P6 entry gates
@@ -105,7 +118,7 @@ Expected:
 - exits `0` only if current script gates pass.
 - output JSON contains `summary.context_precision`, `summary.context_recall`, `summary.p95_latency_s`, `summary.evaluation_config`.
 
-### Proposed runner command after implementation
+### Implemented runner command
 
 ```bash
 python3 apps/api/scripts/p6_precision_trace_loop.py \
@@ -113,6 +126,12 @@ python3 apps/api/scripts/p6_precision_trace_loop.py \
   --repeat 3 \
   --output-dir artifacts/p6-entry/$(date +%Y%m%d-%H%M%S) \
   --baseline-json artifacts/graphrag-eval-baseline.json
+```
+
+Package script:
+
+```bash
+pnpm --filter @consulting/api run test:p6-entry
 ```
 
 Expected outputs:
@@ -185,7 +204,7 @@ artifacts/p6-entry/<run>/p6_entry_decision.md
 Suggested script:
 
 ```json
-"test:p6-entry": "python3 scripts/p6_precision_trace_loop.py --repeat 3 --output-dir artifacts/p6-entry/latest"
+"test:p6-entry": "python3 scripts/p6_precision_trace_loop.py --repeat 3 --output-dir ../../artifacts/p6-entry/latest"
 ```
 
 Keep generated `artifacts/` out of git.
@@ -227,9 +246,9 @@ Operational proof:
 P6 entry loop is complete when:
 
 1. Runner exists and is unit-tested.
-2. One real PG-only measurement matrix has been run.
+2. One real PG-only smoke measurement has been run through the runner; full matrix may run later because it is intentionally heavy.
 3. `p6_entry_decision.json` explains allowed/blocked with exact metric values.
-4. Trace coverage and redaction are checked in the same report.
-5. A fresh independent reviewer finds no blocker in the measurement loop.
+4. Trace coverage and redaction are represented as an explicit gate (`--trace-json` when available); absence blocks P6 instead of being treated as success.
+5. A fresh independent reviewer finds no blocker in the measurement loop before any P6 lab is productized.
 
 Until then, P6 labs remain blocked.

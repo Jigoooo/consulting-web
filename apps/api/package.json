@@ -19,6 +19,7 @@
     "preview:test-backfill": "tsx scripts/test_backfill_preview.ts",
     "backfill:test": "tsx scripts/test_backfill_commit.ts",
     "test:ralph": "python3 scripts/ralph_graphrag_hardening.py --iterations 3 --output ../../artifacts/ralph-graphrag-hardening.json",
+    "test:p6-entry": "python3 scripts/p6_precision_trace_loop.py --repeat 3 --output-dir ../../artifacts/p6-entry/latest",
     "clean": "rm -rf dist .turbo *.tsbuildinfo"
   },
   "dependencies": {

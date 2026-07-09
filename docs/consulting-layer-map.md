@@ -1904,8 +1904,9 @@ dialogue/file separate       LIKE fallback                 exact code +1000 boos
 
 5. P6 advanced labs 진입 조건
    real embedding 기준 context_precision 0.2881은 아직 낮음.
-   ColBERT/SPLADE/RAPTOR/Leiden류는 `.hermes/plans/2026-07-09_092024-p6-precision-trace-measurement-loop.md`
-   측정 루프에서 precision/trace gate를 통과할 때까지 보류한다.
+   `apps/api/scripts/p6_precision_trace_loop.py` runner와 `test:p6-entry` script로
+   반복 real-embedding matrix/trace gate를 측정할 수 있다.
+   ColBERT/SPLADE/RAPTOR/Leiden류는 이 루프에서 precision/trace gate를 통과할 때까지 보류한다.
 ```
 
 ---
