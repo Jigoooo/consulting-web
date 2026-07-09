@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "graphrag_eval_gate.py"
+HUMAN_GLOBAL_FIXTURE = ROOT / "fixtures" / "eval" / "changwon_human_global_cases.json"
 spec = importlib.util.spec_from_file_location("graphrag_eval_gate", SCRIPT)
 assert spec and spec.loader
 mod = importlib.util.module_from_spec(spec)
@@ -105,3 +106,27 @@ def test_ensure_eval_python_reexecs_to_venv_path_without_resolving_symlink(monke
     mod.ensure_eval_python(tmp_path)
 
     assert exec_calls == [(str(venv_python.absolute()), [str(venv_python.absolute()), "scripts/graphrag_eval_gate.py", "--rerank"])]
+
+
+def test_load_human_global_cases_are_non_oracle_multi_claim_questions() -> None:
+    cases = mod.load_human_global_cases(HUMAN_GLOBAL_FIXTURE, topic="changwon-org-mgmt-diagnosis")
+
+    assert len(cases) >= 6
+    assert all(case["question_type"] == "human_global" for case in cases)
+    assert all(case["human_authored"] is True for case in cases)
+    assert all(case["expected_claims"] and len(case["expected_claims"]) >= 2 for case in cases)
+    assert all("CL-" not in case["query"] for case in cases)
+    assert len({case["id"] for case in cases}) == len(cases)
+
+
+def test_human_global_metrics_score_expected_claim_sets() -> None:
+    rows = [
+        {"id": "hg-1", "hit": True, "ok": True, "expected_claims": ["A", "B", "C"], "retrieved_claims": ["A", "B", "X"], "warnings": [], "question_type": "human_global"},
+        {"id": "hg-2", "hit": False, "ok": True, "expected_claims": ["D", "E"], "retrieved_claims": ["Z"], "warnings": [], "question_type": "human_global"},
+    ]
+
+    metrics = mod.compute_ragas_lite_metrics(rows)
+
+    assert metrics["context_recall"] == 0.3333
+    assert metrics["context_precision"] == 0.3333
+    assert metrics["human_global_questions"] == 2

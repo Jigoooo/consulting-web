@@ -29,7 +29,7 @@ Thumbs.db
 
 # test
 coverage/
-artifacts/
+/artifacts/
 
 # drizzle
 packages/db-schema/drizzle/**/*.sql.bak

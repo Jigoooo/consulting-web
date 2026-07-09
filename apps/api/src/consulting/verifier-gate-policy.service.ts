@@ -6,6 +6,7 @@ import type { ConsultingJudgmentGuardIssue } from './consulting-judgment-guard.s
 export type VerifierGateMode = 'general_chat' | 'analysis_draft' | 'report_decision' | 'final_export';
 export type VerifierGateDecision = 'PASS' | 'PASS_WITH_WARNINGS' | 'BLOCKED';
 export type VerifierGateIssueCode =
+  | 'missing_verifier_telemetry'
   | 'exactness_blocked'
   | 'citation_issue'
   | 'high_impact_refute'
@@ -50,6 +51,14 @@ export class VerifierGatePolicyService {
 
     const structuralBlocksEnabled = input.mode === 'report_decision' || input.mode === 'final_export';
     const finalExport = input.mode === 'final_export';
+    const verifierTelemetryPresent = Boolean(input.exactnessStatus)
+      || Boolean(input.citationIssueCount && input.citationIssueCount > 0)
+      || Boolean(input.verdicts?.length)
+      || Boolean(input.judgmentIssues?.length);
+
+    if (finalExport && !verifierTelemetryPresent) {
+      push({ code: 'missing_verifier_telemetry', message: '원본 답변의 검증 텔레메트리(verdict/exactness/judgment)가 없어 최종 내보내기를 검증할 수 없습니다.' }, true);
+    }
 
     if (input.exactnessStatus === 'blocked') {
       push({ code: 'exactness_blocked', message: '수치·계산·원문 확인 게이트가 blocked 상태입니다.' }, structuralBlocksEnabled);

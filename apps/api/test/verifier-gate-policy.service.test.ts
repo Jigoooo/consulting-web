@@ -86,4 +86,17 @@ describe('VerifierGatePolicyService', () => {
     expect(report.blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'judgment_guard_blocker' })]));
     expect(final.decision).toBe('BLOCKED');
   });
+
+  it('blocks final export when no persisted verifier telemetry exists for a sourced artifact', () => {
+    const result = service.evaluate({
+      mode: 'final_export',
+      citationIssueCount: 0,
+      verdicts: [],
+    });
+
+    expect(result.decision).toBe('BLOCKED');
+    expect(result.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'missing_verifier_telemetry' }),
+    ]));
+  });
 });

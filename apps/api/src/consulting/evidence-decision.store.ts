@@ -71,6 +71,8 @@ export class EvidenceDecisionStore {
     answer: string;
     runId: string | null;
   }): Promise<void> {
+    const verificationStartedAt = new Date();
+    const verificationStartedMs = Date.now();
     await this.assertThreadInWorkspace(input.workspaceId, input.threadId);
     const judgmentGuard = this.judgmentGuard.evaluate({ query: input.userPrompt, hits: [], userFeedback: input.answer, now: new Date() });
     if (judgmentGuard.required) await this.persistJudgmentGuardRun(input, judgmentGuard);
@@ -238,6 +240,152 @@ export class EvidenceDecisionStore {
           reasons: item.reasons,
         })),
       );
+    }
+
+    await this.persistPostAnswerTelemetry({
+      input,
+      exactnessRun,
+      verdictSummary: lattice.summary,
+      verifierGate,
+      verificationMetrics: verification.metrics,
+      startedAt: verificationStartedAt,
+      durationMs: Date.now() - verificationStartedMs,
+    });
+  }
+
+  private async persistPostAnswerTelemetry(args: {
+    input: {
+      workspaceId: string;
+      threadId: string;
+      assistantMessageId: string;
+      userPrompt: string;
+      answer: string;
+      runId: string | null;
+    };
+    exactnessRun: ExactnessGateResult;
+    verdictSummary: { supports: number; refutes: number; mixed: number; notEnoughInfo: number; claimCount: number };
+    verifierGate: VerifierGateResult;
+    verificationMetrics: unknown;
+    startedAt: Date;
+    durationMs: number;
+  }): Promise<void> {
+    const { input, exactnessRun, verdictSummary, verifierGate } = args;
+    const traceId = `post-answer:${input.runId ?? input.assistantMessageId}`;
+    const claimCount = Math.max(1, verdictSummary.claimCount);
+    const supportRate = clamp01(verdictSummary.supports / claimCount);
+    const refutedRate = clamp01((verdictSummary.refutes + verdictSummary.mixed) / claimCount);
+    const unsupportedRate = clamp01(verdictSummary.notEnoughInfo / claimCount);
+    const exactnessScore = exactnessRun.status === 'blocked' ? 0 : 1;
+    const finalExportScore = verifierGate.decision === 'BLOCKED' ? 0 : 1;
+    const status = exactnessRun.status === 'blocked' || verifierGate.decision === 'BLOCKED' ? 'blocked' : 'completed';
+    const endedAt = new Date(args.startedAt.getTime() + Math.max(0, Math.round(args.durationMs)));
+    const sharedMetrics = {
+      source: 'post_answer_verification_v1',
+      traceId,
+      runId: input.runId,
+      assistantMessageId: input.assistantMessageId,
+      exactnessStatus: exactnessRun.status,
+      verifierGateDecision: verifierGate.decision,
+      verdictSummary,
+      verificationMetrics: args.verificationMetrics,
+    };
+    try {
+      await this.db.insert(schema.traceSpans).values({
+        workspaceId: input.workspaceId,
+        threadId: input.threadId,
+        traceId,
+        spanKind: 'verifier',
+        name: 'consulting.post_answer.verification',
+        status: status === 'blocked' ? 'blocked' : 'ok',
+        startedAt: args.startedAt,
+        endedAt,
+        durationMs: Math.max(0, Math.round(args.durationMs)),
+        input: { promptHash: exactnessQueryHash(input.userPrompt, ''), answerLength: input.answer.length },
+        output: {
+          exactnessStatus: exactnessRun.status,
+          verifierGateDecision: verifierGate.decision,
+          verdictSummary,
+        },
+        metadata: sharedMetrics,
+      });
+      const [evalCase] = await this.db
+        .insert(schema.evalCases)
+        .values({
+          workspaceId: input.workspaceId,
+          threadId: input.threadId,
+          caseKind: 'human_feedback',
+          sourceRef: `message:${input.assistantMessageId}:post_answer_verification`,
+          prompt: input.userPrompt,
+          expected: {
+            source: 'post_answer_verification_v1',
+            exactnessStatus: exactnessRun.status,
+            noHighImpactRefutes: verifierGate.decision !== 'BLOCKED',
+          },
+          status: 'active',
+          metadata: sharedMetrics,
+        })
+        .returning({ id: schema.evalCases.id });
+      const [evalRun] = await this.db
+        .insert(schema.evalRuns)
+        .values({
+          workspaceId: input.workspaceId,
+          runKind: 'post_answer_verification',
+          status,
+          startedAt: args.startedAt,
+          completedAt: endedAt,
+          metrics: sharedMetrics,
+        })
+        .returning({ id: schema.evalRuns.id });
+      if (!evalCase || !evalRun) return;
+      await this.db.insert(schema.evalScores).values([
+        {
+          workspaceId: input.workspaceId,
+          evalRunId: evalRun.id,
+          evalCaseId: evalCase.id,
+          metricName: 'claim_support_rate',
+          score: String(supportRate),
+          passed: supportRate >= 0.5 && refutedRate === 0,
+          detail: { supports: verdictSummary.supports, claimCount: verdictSummary.claimCount },
+        },
+        {
+          workspaceId: input.workspaceId,
+          evalRunId: evalRun.id,
+          evalCaseId: evalCase.id,
+          metricName: 'unsupported_rate',
+          score: String(unsupportedRate),
+          passed: unsupportedRate === 0,
+          detail: { notEnoughInfo: verdictSummary.notEnoughInfo, claimCount: verdictSummary.claimCount },
+        },
+        {
+          workspaceId: input.workspaceId,
+          evalRunId: evalRun.id,
+          evalCaseId: evalCase.id,
+          metricName: 'refuted_rate',
+          score: String(refutedRate),
+          passed: refutedRate === 0,
+          detail: { refutes: verdictSummary.refutes, mixed: verdictSummary.mixed, claimCount: verdictSummary.claimCount },
+        },
+        {
+          workspaceId: input.workspaceId,
+          evalRunId: evalRun.id,
+          evalCaseId: evalCase.id,
+          metricName: 'exactness_status',
+          score: String(exactnessScore),
+          passed: exactnessRun.status !== 'blocked',
+          detail: { status: exactnessRun.status, required: exactnessRun.required, summary: exactnessRun.summary },
+        },
+        {
+          workspaceId: input.workspaceId,
+          evalRunId: evalRun.id,
+          evalCaseId: evalCase.id,
+          metricName: 'final_export_gate',
+          score: String(finalExportScore),
+          passed: verifierGate.decision !== 'BLOCKED',
+          detail: { decision: verifierGate.decision, blockers: verifierGate.blockers, warnings: verifierGate.warnings },
+        },
+      ]);
+    } catch (error) {
+      if (!isMissingRelationError(error)) throw error;
     }
   }
 
@@ -692,7 +840,7 @@ function isMissingRelationError(error: unknown): boolean {
   const code = error.code;
   if (code === '42P01') return true;
   const message = typeof error.message === 'string' ? error.message : '';
-  return /relation .*(exactness_runs|judgment_guard_runs|provenance_graph_edges).* does not exist|no such table: (exactness_runs|judgment_guard_runs|provenance_graph_edges)/iu.test(message);
+  return /relation .*(exactness_runs|judgment_guard_runs|provenance_graph_edges|trace_spans|eval_cases|eval_runs|eval_scores).* does not exist|no such table: (exactness_runs|judgment_guard_runs|provenance_graph_edges|trace_spans|eval_cases|eval_runs|eval_scores)/iu.test(message);
 }
 
 function reviewActions(title: string): ReviewAction[] {

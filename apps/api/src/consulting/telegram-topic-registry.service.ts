@@ -60,6 +60,59 @@ export interface TelegramTopicBackfillPlan {
   warnings: string[];
 }
 
+export interface TelegramTopicBindingAuditRow {
+  telegramChatId: string;
+  telegramThreadId: string | null;
+  telegramTopicName: string | null;
+  consultingTopicSlug: string | null;
+  memoryTopicId: string | null;
+  webTopicSlug: string | null;
+  webTopicName: string | null;
+  webTopicMemoryTopicId: string | null;
+  threadTitle: string | null;
+  status: string | null;
+}
+
+export interface TelegramTopicBindingAuditSnapshot {
+  workspaceId: string;
+  projectId: string;
+  projectName: string;
+  topicLinks: TelegramTopicBindingAuditRow[];
+}
+
+export type TelegramTopicBindingAuditIssueCode =
+  | 'BROAD_OR_NULL_THREAD_BINDING'
+  | 'DUPLICATE_ACTIVE_TELEGRAM_TOPIC_LINK'
+  | 'MISSING_TELEGRAM_TOPIC_LINK'
+  | 'UNEXPECTED_TELEGRAM_TOPIC_LINK'
+  | 'MEMORY_TOPIC_MISMATCH'
+  | 'WEB_TOPIC_MISMATCH'
+  | 'THREAD_TITLE_MISMATCH'
+  | 'CONSULTING_TOPIC_MISMATCH'
+  | 'TELEGRAM_TOPIC_NAME_MISMATCH';
+
+export interface TelegramTopicBindingAuditIssue {
+  code: TelegramTopicBindingAuditIssueCode;
+  severity: 'blocker' | 'warning';
+  key: string;
+  detail: string;
+  evidence: Record<string, unknown>;
+}
+
+export interface TelegramTopicBindingAuditResult {
+  readOnly: true;
+  status: 'ok' | 'blocked';
+  workspaceId: string;
+  projectId: string;
+  projectName: string;
+  registryCount: number;
+  activeBindingCount: number;
+  exactBindingKeys: string[];
+  matchedKeys: string[];
+  blockers: TelegramTopicBindingAuditIssue[];
+  warnings: TelegramTopicBindingAuditIssue[];
+}
+
 const CHANGWON_CHAT_ID = '-1004453868195';
 const CHANGWON_BRAIN = 'changwon-org-mgmt-diagnosis';
 const TELEGRAM_MEMORY_PREFIX = `consulting:${CHANGWON_BRAIN}#telegram`;
@@ -147,6 +200,77 @@ export const CHANGWON_TELEGRAM_TOPIC_REGISTRY: TelegramTopicRegistryEntry[] = [
     },
   },
 ];
+
+export function auditTelegramTopicBindingsFromSnapshot(snapshot: TelegramTopicBindingAuditSnapshot): TelegramTopicBindingAuditResult {
+  const exactBindingKeys = CHANGWON_TELEGRAM_TOPIC_REGISTRY.map((entry) => telegramBindingKey(entry.telegramChatId, entry.telegramThreadId));
+  const registryByKey = new Map(CHANGWON_TELEGRAM_TOPIC_REGISTRY.map((entry) => [telegramBindingKey(entry.telegramChatId, entry.telegramThreadId), entry]));
+  const blockers: TelegramTopicBindingAuditIssue[] = [];
+  const warnings: TelegramTopicBindingAuditIssue[] = [];
+  const activeRows = snapshot.topicLinks.filter((row) => (row.status ?? 'active') === 'active');
+  const rowsByKey = new Map<string, TelegramTopicBindingAuditRow[]>();
+
+  for (const row of activeRows) {
+    if (!row.telegramThreadId) {
+      blockers.push(bindingIssue('BROAD_OR_NULL_THREAD_BINDING', 'blocker', `${row.telegramChatId}:NULL`, 'Active Telegram link is not scoped to an exact forum thread.', { row }));
+      continue;
+    }
+    const key = telegramBindingKey(row.telegramChatId, row.telegramThreadId);
+    const grouped = rowsByKey.get(key) ?? [];
+    grouped.push(row);
+    rowsByKey.set(key, grouped);
+    if (!registryByKey.has(key) && row.telegramChatId === CHANGWON_CHAT_ID) {
+      blockers.push(bindingIssue('UNEXPECTED_TELEGRAM_TOPIC_LINK', 'blocker', key, 'Active Changwon Telegram link is not present in the registry.', { row }));
+    }
+  }
+
+  const matchedKeys: string[] = [];
+  for (const [key, entry] of registryByKey) {
+    const rows = rowsByKey.get(key) ?? [];
+    if (rows.length === 0) {
+      blockers.push(bindingIssue('MISSING_TELEGRAM_TOPIC_LINK', 'blocker', key, 'Registry thread has no active web telegram_topic_links row.', { expected: entry }));
+      continue;
+    }
+    if (rows.length > 1) {
+      blockers.push(bindingIssue('DUPLICATE_ACTIVE_TELEGRAM_TOPIC_LINK', 'blocker', key, 'Registry thread has duplicate active web telegram_topic_links rows.', { rows }));
+      continue;
+    }
+    const row = rows[0]!;
+    const before = blockers.length;
+    if (row.memoryTopicId !== entry.memoryTopicId || row.webTopicMemoryTopicId !== entry.memoryTopicId) {
+      blockers.push(bindingIssue('MEMORY_TOPIC_MISMATCH', 'blocker', key, 'Telegram link memory topic does not match the registry/web topic memory id.', { expected: entry.memoryTopicId, actualLink: row.memoryTopicId, actualWebTopic: row.webTopicMemoryTopicId }));
+    }
+    if (row.webTopicSlug !== entry.webTopicSlug) {
+      blockers.push(bindingIssue('WEB_TOPIC_MISMATCH', 'blocker', key, 'Telegram link points at a different web topic slug.', { expected: entry.webTopicSlug, actual: row.webTopicSlug }));
+    }
+    if (row.threadTitle !== entry.defaultThreadTitle) {
+      blockers.push(bindingIssue('THREAD_TITLE_MISMATCH', 'blocker', key, 'Telegram link points at a different default web thread title.', { expected: entry.defaultThreadTitle, actual: row.threadTitle }));
+    }
+    if (row.consultingTopicSlug !== entry.consultingTopicSlug) {
+      blockers.push(bindingIssue('CONSULTING_TOPIC_MISMATCH', 'blocker', key, 'Telegram link points at a different consulting brain slug.', { expected: entry.consultingTopicSlug, actual: row.consultingTopicSlug }));
+    }
+    if (row.telegramTopicName !== entry.telegramTopicName) {
+      warnings.push(bindingIssue('TELEGRAM_TOPIC_NAME_MISMATCH', 'warning', key, 'Telegram topic display name differs from the registry; routing remains exact but labels may be stale.', { expected: entry.telegramTopicName, actual: row.telegramTopicName }));
+    }
+    if (blockers.length === before) matchedKeys.push(key);
+  }
+
+  matchedKeys.sort(bindingKeySort);
+  blockers.sort(issueSort);
+  warnings.sort(issueSort);
+  return {
+    readOnly: true,
+    status: blockers.length === 0 ? 'ok' : 'blocked',
+    workspaceId: snapshot.workspaceId,
+    projectId: snapshot.projectId,
+    projectName: snapshot.projectName,
+    registryCount: CHANGWON_TELEGRAM_TOPIC_REGISTRY.length,
+    activeBindingCount: activeRows.length,
+    exactBindingKeys: [...exactBindingKeys].sort(bindingKeySort),
+    matchedKeys,
+    blockers,
+    warnings,
+  };
+}
 
 export function buildTelegramTopicBackfillPlanFromSnapshot(snapshot: TelegramTopicBackfillSnapshot): TelegramTopicBackfillPlan {
   const plannedRows: TelegramTopicBackfillPlan['plannedRows'] = { topics: [], threads: [], telegramTopicLinks: [], topicProfiles: [] };
@@ -293,6 +417,35 @@ export class TelegramTopicRegistryService {
       warnings: serviceWarnings,
     }));
   }
+}
+
+function telegramBindingKey(chatId: string, threadId: string): string {
+  return `${chatId}:${threadId}`;
+}
+
+function bindingKeySort(a: string, b: string): number {
+  const [, threadA = ''] = a.split(':');
+  const [, threadB = ''] = b.split(':');
+  const nA = Number(threadA);
+  const nB = Number(threadB);
+  if (Number.isFinite(nA) && Number.isFinite(nB) && nA !== nB) return nA - nB;
+  return a.localeCompare(b);
+}
+
+function bindingIssue(
+  code: TelegramTopicBindingAuditIssueCode,
+  severity: TelegramTopicBindingAuditIssue['severity'],
+  key: string,
+  detail: string,
+  evidence: Record<string, unknown>,
+): TelegramTopicBindingAuditIssue {
+  return { code, severity, key, detail, evidence };
+}
+
+function issueSort(a: TelegramTopicBindingAuditIssue, b: TelegramTopicBindingAuditIssue): number {
+  const keyCompare = bindingKeySort(a.key, b.key);
+  if (keyCompare !== 0) return keyCompare;
+  return a.code.localeCompare(b.code);
 }
 
 function isMissingRelationError(error: unknown, relationName: string): boolean {

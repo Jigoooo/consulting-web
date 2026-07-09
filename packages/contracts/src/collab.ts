@@ -158,6 +158,7 @@ export type VerificationMetrics = z.infer<typeof VerificationMetricsSchema>;
 export const VerifierGateIssueSchema = z
   .object({
     code: z.enum([
+      'missing_verifier_telemetry',
       'exactness_blocked',
       'citation_issue',
       'high_impact_refute',

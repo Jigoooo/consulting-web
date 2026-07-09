@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "topic": "changwon-org-mgmt-diagnosis",
+  "author": "human-authored-consulting-eval",
+  "cases": [
+    {
+      "id": "hg-finance-workforce-package",
+      "query": "창원시가 보수·승진·수당 요구를 검토할 때 재정과 총인건비 관점에서 함께 봐야 할 쟁점을 종합해줘",
+      "expected_claims": ["CL-D5-01", "CL-RP03", "CL-RP06", "CL-RP07"],
+      "question_type": "human_global",
+      "rationale": "재정 제약, 공무직 승진체계, 수당 연쇄 요구, 누비자 처우 제약을 하나의 노무·재정 패키지로 묻는다."
+    },
+    {
+      "id": "hg-parking-transfer-agency",
+      "query": "공영주차장 이관처럼 대행사업이 늘어날 때 조직 확대와 최소 인력 판단을 어떻게 묶어서 봐야 해?",
+      "expected_claims": ["CL-RP02", "CL-D1-01", "CL-D5-01"],
+      "question_type": "human_global",
+      "rationale": "대행사업 확대, 현장운영·민원·정산·안전점검, 기능확대와 정원·재정 제약을 함께 묻는다."
+    },
+    {
+      "id": "hg-leports-revenue-transfer",
+      "query": "레포츠파크 관련 수익구조 취약성과 파크골프장 이관·기관통합 요구는 창원시 의사결정에서 어떻게 연결돼?",
+      "expected_claims": ["CL-D4-01", "CL-RP09", "CL-RP11"],
+      "question_type": "human_global",
+      "rationale": "경륜 중심 수익구조, 파크골프장 이관, 기관 통합 요구를 하나의 사업재편 맥락으로 묻는다."
+    },
+    {
+      "id": "hg-final-decision-scenario",
+      "query": "최종 보고서는 단일 결론보다 어떤 실행형 패키지와 시나리오 구조를 가져야 하는지 정리해줘",
+      "expected_claims": ["CL-D6-01", "CL-RP14", "CL-RP15"],
+      "question_type": "human_global",
+      "rationale": "최종 산출물의 의사결정 패키지성, 신임시장·인수위 변수, 원자료 재검증을 함께 묻는다."
+    },
+    {
+      "id": "hg-safety-team-org-expansion",
+      "query": "안전시설팀 분리나 기능 확대 요구가 있을 때 무조건 조직 확대가 아니라는 판단 근거를 종합해줘",
+      "expected_claims": ["CL-RP01", "CL-D1-01", "CL-D5-01"],
+      "question_type": "human_global",
+      "rationale": "안전시설팀 분리 요구, 기능확대 선별 보강, 정원·인건비 영향 동시 검토를 묻는다."
+    },
+    {
+      "id": "hg-labor-retirement-allowance",
+      "query": "정년·공로연수·수당 같은 노무 요구를 용역 권고로 단정하기 어려운 이유와 연동 리스크를 정리해줘",
+      "expected_claims": ["CL-RP04", "CL-RP05", "CL-RP06"],
+      "question_type": "human_global",
+      "rationale": "정년 개선, 공로연수, 수당 신설 요구의 권고 한계와 정원·인건비 연동을 묻는다."
+    }
+  ]
+}

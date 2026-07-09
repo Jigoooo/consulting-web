@@ -15,6 +15,8 @@
     "test:quality": "pnpm run test:nli && pnpm run test:hallucination && pnpm run test:graphrag",
     "report:provisioning": "tsx scripts/project_provisioning_report.ts",
     "audit:telegram-topics": "python3 scripts/telegram_topic_audit.py",
+    "audit:telegram-web-bindings": "tsx scripts/audit_telegram_web_bindings.ts",
+    "audit:artifact-export-preflight": "tsx scripts/audit_artifact_export_preflight.ts",
     "preview:telegram-topic-backfill": "tsx scripts/sync_telegram_topics_to_web.ts --dry-run",
     "preview:test-backfill": "tsx scripts/test_backfill_preview.ts",
     "backfill:test": "tsx scripts/test_backfill_commit.ts",
@@ -23,6 +25,7 @@
     "test:p6-product-baseline": "python3 scripts/p6_precision_trace_loop.py --repeat 3 --required-repeats 3 --raw-weights 0.20 --rerank-prunes 4 --top-ks 1 --ledger required --output-dir ../../artifacts/p6-product-baseline/latest",
     "test:p6-splade-lite": "python3 scripts/p6_splade_candidate_probe.py --no-fake-embeddings --rerank --top-k 1 --rerank-prune 4 --raw-weight 0.20 --output ../../artifacts/p6-splade-lite/latest/comparison.json",
     "test:p6-raptor-lite": "python3 scripts/p6_raptor_candidate_probe.py --no-fake-embeddings --rerank --top-k 3 --rerank-prune 8 --raw-weight 0.20 --output ../../artifacts/p6-raptor-lite/latest/comparison.json",
+    "test:graphrag-human-global": "python3 scripts/graphrag_eval_gate.py --only-human-global-cases --human-global-cases default --rerank --no-fake-embeddings --top-k 5 --rerank-prune 8 --raw-weight 0.20 --output ../../artifacts/graphrag-human-global/latest/eval.json",
     "clean": "rm -rf dist .turbo *.tsbuildinfo"
   },
   "dependencies": {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CHANGWON_TELEGRAM_TOPIC_REGISTRY,
+  auditTelegramTopicBindingsFromSnapshot,
   buildTelegramTopicBackfillPlanFromSnapshot,
 } from '../src/consulting/telegram-topic-registry.service.js';
 
@@ -51,5 +52,71 @@ describe('TelegramTopicRegistryService dry-run planner', () => {
     ]);
     expect(plan.warnings).toContain('thread_1_review_required');
     expect(plan.warnings).not.toContain('would_create_null_thread_binding');
+  });
+
+  it('audits live web topic links as exact registry bindings and blocks broad/missing/mismatched rows', () => {
+    const ok = auditTelegramTopicBindingsFromSnapshot({
+      projectId: 'project-1',
+      projectName: '창원시 컨설팅',
+      workspaceId: 'workspace-1',
+      topicLinks: CHANGWON_TELEGRAM_TOPIC_REGISTRY.map((entry) => ({
+        telegramChatId: entry.telegramChatId,
+        telegramThreadId: entry.telegramThreadId,
+        telegramTopicName: entry.telegramTopicName,
+        consultingTopicSlug: entry.consultingTopicSlug,
+        memoryTopicId: entry.memoryTopicId,
+        webTopicSlug: entry.webTopicSlug,
+        webTopicName: entry.webTopicName,
+        webTopicMemoryTopicId: entry.memoryTopicId,
+        threadTitle: entry.defaultThreadTitle,
+        status: 'active',
+      })),
+    });
+
+    expect(ok.readOnly).toBe(true);
+    expect(ok.status).toBe('ok');
+    expect(ok.matchedKeys).toEqual(ok.exactBindingKeys);
+    expect(ok.blockers).toEqual([]);
+
+    const broken = auditTelegramTopicBindingsFromSnapshot({
+      projectId: 'project-1',
+      projectName: '창원시 컨설팅',
+      workspaceId: 'workspace-1',
+      topicLinks: [
+        {
+          telegramChatId: '-1004453868195',
+          telegramThreadId: null,
+          telegramTopicName: 'broad legacy',
+          consultingTopicSlug: 'changwon-org-mgmt-diagnosis',
+          memoryTopicId: 'consulting:changwon-org-mgmt-diagnosis#telegram/broad',
+          webTopicSlug: 'changwon-consulting',
+          webTopicName: '창원-컨설팅',
+          webTopicMemoryTopicId: 'consulting:changwon-org-mgmt-diagnosis#telegram/changwon-consulting',
+          threadTitle: '창원-컨설팅',
+          status: 'active',
+        },
+        {
+          telegramChatId: '-1004453868195',
+          telegramThreadId: '12',
+          telegramTopicName: '창원-컨설팅',
+          consultingTopicSlug: 'changwon-org-mgmt-diagnosis',
+          memoryTopicId: 'consulting:changwon-org-mgmt-diagnosis#telegram/wrong',
+          webTopicSlug: 'wrong-topic',
+          webTopicName: '오류 토픽',
+          webTopicMemoryTopicId: 'consulting:changwon-org-mgmt-diagnosis#telegram/wrong',
+          threadTitle: '오류 토픽',
+          status: 'active',
+        },
+      ],
+    });
+
+    expect(broken.status).toBe('blocked');
+    expect(broken.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'BROAD_OR_NULL_THREAD_BINDING' }),
+      expect.objectContaining({ code: 'MEMORY_TOPIC_MISMATCH', key: '-1004453868195:12' }),
+      expect.objectContaining({ code: 'WEB_TOPIC_MISMATCH', key: '-1004453868195:12' }),
+      expect.objectContaining({ code: 'MISSING_TELEGRAM_TOPIC_LINK', key: '-1004453868195:524' }),
+      expect.objectContaining({ code: 'MISSING_TELEGRAM_TOPIC_LINK', key: '-1004453868195:533' }),
+    ]));
   });
 });

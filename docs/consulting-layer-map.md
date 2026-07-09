@@ -1,6 +1,6 @@
 # consulting / consulting-web 전체 레이어 맵
 
-> Last measured: 2026-07-09
+> Last measured: 2026-07-10
 > Scope: `/home/jigoo/.hermes/workspace/consulting` shared brain + `/home/jigoo/.hermes/workspace/consulting-web` web/API/product layer.
 > 원칙: 이 문서는 기억이 아니라 코드/DB/컨테이너 실측값으로 갱신한다.
 
@@ -1404,9 +1404,9 @@ dialogue_telegram_thread_bindings 0
 의미:
 
 ```text
-- 예전 broad Telegram topic binding은 있음.
-- exact chat_id + thread_id binding은 아직 0.
-- consulting-web 쪽에는 telegram_topic_links schema가 별도로 있음.
+- consulting brain 쪽 broad Telegram topic binding은 legacy reference로 남아 있다.
+- consulting-web의 `telegram_topic_links`가 web scope ↔ Telegram forum topic exact binding 정본이다.
+- exact binding은 chat_id + thread_id + consulting_topic_slug + web topic memory_topic_id를 모두 맞춰 감사한다.
 ```
 
 `telegram_topic_links` schema:
@@ -1434,7 +1434,25 @@ Telegram forum topic
   ↔ consulting brain topic slug
 ```
 
-아직 운영 데이터상 exact thread binding은 brain 쪽 0이므로, 주제별 완전 자동 routing은 추가 작업 여지가 있다.
+2026-07-10 live exact binding audit:
+
+```text
+package script: pnpm --filter @consulting/api run audit:telegram-web-bindings -- --project-id <projectId>
+project: 창원시 컨설팅 / 01fba1a5-7b16-4267-93df-f9ca6cf0462f
+registryCount: 5
+activeBindingCount: 5
+matchedKeys:
+  -1004453868195:1
+  -1004453868195:12
+  -1004453868195:356
+  -1004453868195:524
+  -1004453868195:533
+blockers: []
+warnings: []
+artifact: artifacts/topic-binding/telegram-web-binding-audit.json
+```
+
+따라서 창원 Telegram/web 토픽 binding은 현재 exact readback gate 기준 통과 상태다.
 
 ---
 
@@ -1616,7 +1634,60 @@ real embedding / raw=0.20:
   p95       4.1242s
 ```
 
-### 18.2 NLI / hallucination / quality scripts
+2026-07-10 human-authored global eval:
+
+```text
+package script: pnpm --filter @consulting/api run test:graphrag-human-global
+fixture: apps/api/fixtures/eval/changwon_human_global_cases.json
+questions: 6
+human_global_questions: 6
+fake_embeddings: false
+rerank: cross-encoder
+hit_rate: 1.0000
+context_recall: 1.0000
+context_precision: 0.2653
+citation_correctness: 1.0000
+p95_latency_s: 7.4871
+warning_count: 0
+
+판정: claim_code를 질문에 직접 노출하지 않는 수동 global case 6문항은 통과했다.
+자동 claim-code fixture와 별개로, 사용자가 실제로 묻는 종합 질문형 regression gate다.
+```
+
+### 18.2 Artifact final export preflight gate
+
+스크립트:
+
+```text
+apps/api/scripts/audit_artifact_export_preflight.ts
+package script: pnpm --filter @consulting/api run audit:artifact-export-preflight -- --project-id <projectId>
+```
+
+정책:
+
+```text
+- sourceMessageId 없는 수동/hand-authored artifact: NO_SOURCE_MESSAGE, export 허용
+- sourceMessageId 있는 artifact: final_export VerifierGatePolicyService 평가 필수
+- exactness/verdict/judgment telemetry가 모두 없으면 missing_verifier_telemetry blocker
+- blocker가 있으면 VERIFIER_GATE_BLOCKED, non-allow 실행 exit code 1
+```
+
+2026-07-10 live PG readback (`창원시 컨설팅`, project `01fba1a5-7b16-4267-93df-f9ca6cf0462f`):
+
+```text
+artifact head versions: total=3
+exportable=0
+blocked=3
+noSourceMessage=0
+blocker_codes=[missing_verifier_telemetry]
+non_allow_exit_code=1
+artifact: artifacts/artifact-export-preflight/latest/audit.json
+
+판정: 현재 실제 창원 source-linked 산출물 3개는 verifier telemetry가 없어 최종 export가 차단된다.
+이는 정상적인 안전 차단이며, 산출물을 export하려면 원본 답변의 post-answer verifier/exactness telemetry를 먼저 쌓아야 한다.
+```
+
+### 18.3 NLI / hallucination / quality scripts
 
 package scripts:
 
