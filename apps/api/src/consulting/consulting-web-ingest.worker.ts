@@ -5,6 +5,7 @@ import { Worker } from 'bullmq';
 import { ENV_TOKEN } from '../config/config.module.js';
 import type { Env } from '../config/env.schema.js';
 import { QUEUE_NAMES } from '../queues/queue.tokens.js';
+import { redactLogText } from '../security/redact-sensitive-text.js';
 import {
   CONSULTING_WEB_TURN_COMPLETED_EVENT,
   type ConsultingAssistantMemoryCandidate,
@@ -232,7 +233,7 @@ export class ConsultingWebIngestWorker implements OnModuleInit, OnModuleDestroy 
 
   onModuleInit(): void {
     this.worker = new Worker(
-      QUEUE_NAMES.outboxRelay,
+      QUEUE_NAMES.consultingWebIngest,
       async (job) => {
         await this.processOutboxJob(job.data as OutboxJobData);
       },
@@ -242,7 +243,7 @@ export class ConsultingWebIngestWorker implements OnModuleInit, OnModuleDestroy 
       },
     );
     this.worker.on('failed', (job, err) => {
-      this.logger.warn(`consulting web ingest job ${job?.id} failed: ${err.message}`);
+      this.logger.warn(redactLogText(`consulting web ingest job ${job?.id} failed: ${err.message}`));
     });
   }
 
@@ -251,7 +252,9 @@ export class ConsultingWebIngestWorker implements OnModuleInit, OnModuleDestroy 
   }
 
   async processOutboxJob(job: OutboxJobData): Promise<void> {
-    if (job.eventType !== CONSULTING_WEB_TURN_COMPLETED_EVENT) return;
+    if (job.eventType !== CONSULTING_WEB_TURN_COMPLETED_EVENT) {
+      throw new Error(`unsupported outbox event for consulting web ingest worker: ${job.eventType}`);
+    }
     const payload = parseConsultingWebTurnPayload(job.payload);
     await this.runner(payload);
   }

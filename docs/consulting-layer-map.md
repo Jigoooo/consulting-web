@@ -1357,7 +1357,25 @@ ConsultingWebIngestService
        idempotencyKey = consulting-web-ingest:{threadId}:{assistantMessageId}
 ```
 
-outbox relay가 published 처리하면 Python ingest script가 호출되는 구조다.
+outbox relay는 event type별 queue를 고른 뒤 enqueue 성공 시 published 처리한다.
+BullMQ job id는 `SHA-256(idempotency_key)`로 생성해 구분자 치환 충돌 없이 재enqueue를 dedup한다.
+
+```text
+ConsultingWebTurnCompleted                         ──▶ consulting-web-ingest ──▶ ConsultingWebIngestWorker
+Workspace/Channel/Topic/ThreadCreated (audit-only) ──▶ outbox-relay          ──▶ GenericDomainEventAuditWorker
+registry에 없는 event                              ──▶ queue 미발행 + outbox dead
+```
+
+두 worker는 자기 allowlist 밖 event를 성공으로 무시하지 않고 실패시킨다. generic creation event는
+명시적 audit-only consumer가 완료하므로 waiting job도 영구 누적되지 않는다. relay registry 밖 event는
+어느 queue에도 넣지 않고 `dead + last_error`로 남긴다. Python ingest script는 전용 worker만 호출한다.
+
+outbox claim은 `lease_token` owner와 `lease_expires_at`을 함께 기록한다. enqueue가 진행 중이면
+10초 heartbeat가 30초 lease를 연장한다. 프로세스가 죽어 heartbeat가 멈추면 만료 row를 다른 relay가
+재claim한다. 성공·실패 상태 변경은 현재 owner token이 일치할 때만 허용하므로, 늦게 끝난 이전 relay가
+새 owner의 `published`를 `pending`으로 되돌릴 수 없다. broker enqueue 실패는 `next_attempt_at`에
+5초 exponential backoff(최대 300초)를 기록하고, 12번째 실패는 `dead`로 종료한다.
+`attempt_count`와 redacted `last_error`가 재시도 이력을 남긴다.
 
 Python ingest payload:
 

@@ -1,7 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { schema } from '@consulting/db-schema';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
+import { CONSULTING_WEB_TURN_COMPLETED_EVENT } from '../queues/outbox-routing.js';
 import { ConsultingTopicResolver } from './consulting-topic-resolver.service.js';
+
+export { CONSULTING_WEB_TURN_COMPLETED_EVENT } from '../queues/outbox-routing.js';
 
 export interface ConsultingWebTurnIngestInput {
   threadId: string;
@@ -67,8 +70,6 @@ export interface ConsultingWebTurnIngestPayload {
   timestamp: number;
   verifiedContradictions: ConsultingVerifiedContradiction[];
 }
-
-export const CONSULTING_WEB_TURN_COMPLETED_EVENT = 'ConsultingWebTurnCompleted';
 
 @Injectable()
 export class ConsultingWebIngestService {

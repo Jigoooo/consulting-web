@@ -1,4 +1,4 @@
-import { pgTable, text, uuid, jsonb, numeric, index, unique } from 'drizzle-orm/pg-core';
+import { pgTable, text, uuid, jsonb, numeric, integer, timestamp, index, unique } from 'drizzle-orm/pg-core';
 import { outboxStatus, scopeType } from './enums';
 import { workspaces } from './organization';
 import { users } from './identity';
@@ -22,12 +22,19 @@ export const outboxEvents = pgTable(
     status: outboxStatus('status').notNull().default('pending'),
     idempotencyKey: text('idempotency_key').notNull(),
     requestId: text('request_id'),
+    leaseToken: text('lease_token'),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    lastError: text('last_error'),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }),
     ...timestamps,
   },
   (t) => [
     unique('outbox_idem_unique').on(t.idempotencyKey),
     index('outbox_status_idx').on(t.status),
     index('outbox_status_created_idx').on(t.status, t.createdAt),
+    index('outbox_status_lease_idx').on(t.status, t.leaseExpiresAt),
+    index('outbox_status_next_attempt_idx').on(t.status, t.nextAttemptAt),
     index('outbox_workspace_idx').on(t.workspaceId),
   ],
 );

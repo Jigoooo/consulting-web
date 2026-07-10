@@ -47,14 +47,14 @@ describe('ConsultingWebIngestWorker', () => {
       runner,
     );
 
-    await worker.processOutboxJob({
+    await expect(worker.processOutboxJob({
       eventId: 'evt-1',
       eventType: 'WorkspaceCreated',
       aggregateType: 'workspace',
       aggregateId: 'workspace-1',
       workspaceId: 'ws',
       payload: { ignored: true },
-    });
+    })).rejects.toThrow(/unsupported outbox event/i);
     expect(runner).not.toHaveBeenCalled();
 
     await worker.processOutboxJob({

@@ -9,7 +9,7 @@ describe('OutboxRelayService lifecycle loop', () => {
 
   it('starts a non-overlapping periodic relay on module init and stops it on destroy', async () => {
     vi.useFakeTimers();
-    const service = new OutboxRelayService({} as never, {} as never);
+    const service = new OutboxRelayService({} as never, {} as never, {} as never);
     const relay = vi.spyOn(service, 'relayOnce').mockResolvedValue(0);
 
     service.onModuleInit();
