@@ -618,3 +618,51 @@ isolated PostgreSQL migrations 0000..0027: PASS
 real ledger insert/read tenant/hash/malformed/status regression: PASS
 production table/readback: pending deploy
 ```
+
+---
+
+## W1 방법론 스키마 스캐폴드 (2026-07-11, additive-only)
+
+`docs/plans/2026-07-10-roadmap-gap-audit-and-methodology-plan.md` §6 W1의 스키마 선행.
+게이트 로직(W2) 도입 시 마이그레이션 0을 위해 데이터 적은 지금 그릇만 놓음.
+
+웹 App PG (drizzle 0028_retrieval_hit_relevance_labels.sql):
+
+```text
+retrieval_hits += judged_relevant boolean NULL, failure_type text NULL
+  partial index retrieval_hits_label_idx (workspace_id, failure_type) WHERE failure_type IS NOT NULL
+목적: retrieval precision 튜닝용 relevance-label 피드백 축적 (§3.4)
+안전: nullable 추가 + drizzle ORM 객체 insert라 기존 write 경로 무영향
+```
+
+뇌 shared brain — SQLite baseline + PG18 live 양쪽 idempotent 적용:
+
+```text
+directions += parent_direction_id (INTEGER/bigint) NULL, tree_kind text NULL, node_form text NULL
+  목적: 이슈트리 구조 (diagnostic|solution|hypothesis_pyramid / question|assertion) (§4.4)
+  SQLite: REFERENCES directions(id) ON DELETE SET NULL (self-FK, fail-safe)
+  PG18: 컬럼만, self-FK는 W2 issue-tree writer 도입 시 정합화 (현재 전 행 NULL·미사용)
+
+community_summaries (신규 빈 테이블, SQLite 006 + PG18)
+  id / topic_id / community_key / method(default connected_component) / member_chunk_ids / summary / built_at
+  UNIQUE(topic_id, community_key, method)
+  목적: graph community summary 저장소 선행 (§3.3)
+  안전: 빈 테이블 = 런타임 무변경. recall read-path는 pg_backend _component_summary_hits 온더플라이 계산,
+        community_summaries 코드 참조 0건. Leiden 도입 시 method 컬럼으로 구분해 동일 테이블 write.
+```
+
+DDL 불필요 판정 (실측):
+
+```text
+claim_logic_edges.relation_type = text 자유값 → CONTRADICTS/QUALIFIES/SUPERSEDES 등 그냥 write (§3.2)
+dialogue_state.working_hypotheses = JSON 텍스트 배열 → falsification_condition은 요소 필드 (§4.3)
+```
+
+검증:
+
+```text
+directions 11행 전부 신규 컬럼 NULL / community_summaries 0행
+창원 텔레그램 recall 무손상: ok:true hits:2 rerank:pg-semantic-lexical-graph
+웹 라이브 채팅: retrieval_run graphrag_fanout/ok/hit_count=1, retrieval_hit 신규 컬럼 NULL 정상 기록
+독립 리뷰: passed=true, 0 blockers/highs (5개 공격벡터 additive-safe)
+```

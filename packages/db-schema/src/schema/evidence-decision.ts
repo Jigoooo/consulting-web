@@ -1,4 +1,5 @@
 import { boolean, index, integer, jsonb, numeric, pgTable, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { primaryId, softDelete, timestamps } from './_shared';
 import { evidenceItems, fileAttachments, documentExtractions } from './collab';
 import { workspaces } from './organization';
@@ -481,6 +482,9 @@ export const retrievalHits = pgTable(
     textPreview: text('text_preview').notNull(),
     linked: jsonb('linked').$type<string[]>().notNull().default([]),
     signalBreakdown: jsonb('signal_breakdown').$type<Record<string, unknown> | null>(),
+    // W1 §3.4: relevance-label feedback for retrieval precision tuning (additive, nullable).
+    judgedRelevant: boolean('judged_relevant'),
+    failureType: text('failure_type'),
     ...timestamps,
     ...softDelete,
   },
@@ -489,5 +493,7 @@ export const retrievalHits = pgTable(
     index('retrieval_hits_run_idx').on(t.retrievalRunId, t.rank),
     index('retrieval_hits_thread_idx').on(t.threadId, t.createdAt),
     index('retrieval_hits_source_idx').on(t.workspaceId, t.sourceTopicSlug),
+    // W1 §3.4: partial index for failure-label queries (matches 0028 migration).
+    index('retrieval_hits_label_idx').on(t.workspaceId, t.failureType).where(sql`${t.failureType} IS NOT NULL`),
   ],
 );
