@@ -34,3 +34,12 @@ describe('ingest_web_dialogue.py auto topic provisioning (P1)', () => {
     expect(result.code, result.stderr || result.stdout).toBe(0);
   }, 20_000);
 });
+
+describe('ingest_web_dialogue.py verified contradiction bridge', () => {
+  it('writes verifier-approved contradiction pairs idempotently without ingesting assistant text as dialogue memory', async () => {
+    const script = resolve(process.cwd(), 'test/fixtures/consulting_web_ingest_verified_contradiction.py');
+    const result = await runPython(script);
+
+    expect(result.code, result.stderr || result.stdout).toBe(0);
+  }, 20_000);
+});

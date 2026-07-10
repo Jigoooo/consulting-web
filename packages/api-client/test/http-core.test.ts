@@ -186,6 +186,22 @@ describe('HttpCore fetch binding', () => {
     });
   });
 
+  it('requests the review queue with an explicit kind filter', async () => {
+    const calls: Array<{ url: string; method: string | undefined }> = [];
+    const fakeFetch = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), method: init?.method });
+      return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    });
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+
+    await client.reviewQueue('thread-1', 'refuted_claim');
+
+    expect(calls[0]).toEqual({
+      url: '/api/chat/threads/thread-1/review-queue?kind=refuted_claim',
+      method: 'GET',
+    });
+  });
+
   it('posts review queue item decisions through the thread-scoped adapter', async () => {
     const calls: Array<{ url: string; body: string | null; method: string | undefined }> = [];
     const fakeFetch = vi.fn((url: string | URL | Request, init?: RequestInit) => {

@@ -168,6 +168,9 @@ export const DocumentUnitsSummarySchema = z
   .strict();
 export type DocumentUnitsSummary = z.infer<typeof DocumentUnitsSummarySchema>;
 
+export const ReviewQueueFilterSchema = z.enum(['all', 'refuted_claim', 'unsupported_claim']);
+export type ReviewQueueFilter = z.infer<typeof ReviewQueueFilterSchema>;
+
 export const ReviewQueueItemSchema = z
   .object({
     id: UuidSchema,

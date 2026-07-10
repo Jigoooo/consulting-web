@@ -47,6 +47,17 @@ describe('ConsultingWebIngestService outbox path', () => {
       assistantText: '정원·인건비 영향과 함께 봐야 합니다.',
       runId: 'run_abc',
       assistantMessageId: '66666666-6666-4666-8666-666666666666',
+      verifiedContradictions: [{
+        verdictRef: 'assistant:66666666-6666-4666-8666-666666666666:MSG-66666666-1',
+        claimId: 'MSG-66666666-1',
+        claimText: '기본급은 2,100,000원이다.',
+        verdict: 'refutes',
+        confidence: 0.91,
+        rationale: '공식 표의 금액과 다름',
+        evidenceItemId: '77777777-7777-4777-8777-777777777777',
+        evidenceRef: 'EV-PAY-01',
+        evidenceText: '공식 호봉표의 1호봉 기본급은 2,000,000원이다.',
+      }],
     });
 
     expect(resolver.resolveThread).toHaveBeenCalledWith(liveScope.threadId);
@@ -105,6 +116,11 @@ describe('ConsultingWebIngestService outbox path', () => {
       traceId: 'run_abc',
       runId: 'run_abc',
       assistantMessageId: '66666666-6666-4666-8666-666666666666',
+      verifiedContradictions: [expect.objectContaining({
+        claimId: 'MSG-66666666-1',
+        verdict: 'refutes',
+        evidenceRef: 'EV-PAY-01',
+      })],
     });
     expect(row.payload).not.toHaveProperty('assistantText');
   });

@@ -9,6 +9,19 @@ export interface ConsultingWebTurnIngestInput {
   assistantText: string;
   runId: string | null;
   assistantMessageId: string;
+  verifiedContradictions?: ConsultingVerifiedContradiction[];
+}
+
+export interface ConsultingVerifiedContradiction {
+  verdictRef: string;
+  claimId: string;
+  claimText: string;
+  verdict: 'refutes' | 'mixed';
+  confidence: number;
+  rationale: string;
+  evidenceItemId: string;
+  evidenceRef: string;
+  evidenceText: string;
 }
 
 export interface ConsultingMemoryAllowedSegment {
@@ -52,6 +65,7 @@ export interface ConsultingWebTurnIngestPayload {
   runId: string | null;
   assistantMessageId: string;
   timestamp: number;
+  verifiedContradictions: ConsultingVerifiedContradiction[];
 }
 
 export const CONSULTING_WEB_TURN_COMPLETED_EVENT = 'ConsultingWebTurnCompleted';
@@ -108,6 +122,7 @@ export class ConsultingWebIngestService {
       runId: input.runId,
       assistantMessageId: input.assistantMessageId,
       timestamp: Date.now() / 1000,
+      verifiedContradictions: (input.verifiedContradictions ?? []).map((item) => ({ ...item })),
     };
 
     await this.db

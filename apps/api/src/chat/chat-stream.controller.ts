@@ -18,6 +18,7 @@ import {
   ListMessagesResponseSchema,
   OkResponseSchema,
   ReviewQueueDecisionRequestSchema,
+  ReviewQueueFilterSchema,
   ReviewQueueResponseSchema,
   RecordRetrievalHitFeedbackRequestSchema,
   SearchMessagesRequestSchema,
@@ -174,9 +175,14 @@ export class ChatStreamController {
   /** Active review queue ordered by decision impact × uncertainty × evidence gap. */
   @Get('threads/:threadId/review-queue')
   @UseGuards(AccessTokenGuard)
-  async reviewQueue(@Param('threadId') threadId: string, @Req() req: AuthenticatedRequest) {
+  async reviewQueue(
+    @Param('threadId') threadId: string,
+    @Query('kind') kind: string | undefined,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const filter = parseBody(ReviewQueueFilterSchema, kind ?? 'all');
     await this.requireThreadRead(requireAuthUserId(req), threadId);
-    return parseResponse(ReviewQueueResponseSchema, await this.evidenceDecision.reviewQueue(threadId));
+    return parseResponse(ReviewQueueResponseSchema, await this.evidenceDecision.reviewQueue(threadId, 30, filter));
   }
 
   /** Resolve/ignore one active review item after an operator has handled it. */
@@ -346,7 +352,7 @@ export class ChatStreamController {
           toolUses,
         });
         if (finishState === 'complete' && assistantText.length > 0) {
-          await this.evidenceDecision.recordCompletedAnswer({
+          const evidenceDecisionResult = await this.evidenceDecision.recordCompletedAnswer({
             workspaceId: access.workspaceId,
             threadId: cmd.threadId,
             assistantMessageId: messageId,
@@ -360,6 +366,7 @@ export class ChatStreamController {
             assistantText,
             runId,
             assistantMessageId: messageId,
+            verifiedContradictions: evidenceDecisionResult.verifiedContradictions,
           });
           await this.notifications.notifyWorkspace({
             workspaceId: access.workspaceId,

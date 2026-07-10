@@ -151,7 +151,6 @@ d('Evidence-to-Decision API', () => {
       '해당 문장 제거',
       '추가 자료 요청',
     ]);
-
     const resolvedItemId = queue.items[0]!.id;
     const decision = OkResponseSchema.parse((await request(app.getHttpServer())
       .post(`/chat/threads/${thread.id}/review-queue/${resolvedItemId}/decision`)
@@ -181,6 +180,62 @@ d('Evidence-to-Decision API', () => {
         warnings: expect.any(Array),
       }),
     }));
+  });
+
+  it('filters the live review queue by explicit claim kind and rejects unknown filters', async () => {
+    const owner = await makeUser('review-filter-owner');
+    const { thread } = await makeSpaces(owner.bearer, owner.personalWorkspaceId);
+    await db.insert(schema.activeReviewItems).values([
+      {
+        workspaceId: owner.personalWorkspaceId,
+        threadId: thread.id,
+        itemKind: 'refuted_claim',
+        title: '반박된 주장',
+        targetRef: 'MSG-REFUTED-1',
+        decisionImpact: '0.9',
+        uncertainty: '0.1',
+        evidenceGap: '0.2',
+        deadlineWeight: '0',
+        priorityScore: '0.81',
+        status: 'open',
+        reasons: ['공식 근거와 반대'],
+      },
+      {
+        workspaceId: owner.personalWorkspaceId,
+        threadId: thread.id,
+        itemKind: 'unsupported_claim',
+        title: '근거부족 주장',
+        targetRef: 'MSG-UNSUPPORTED-1',
+        decisionImpact: '0.7',
+        uncertainty: '0.8',
+        evidenceGap: '1',
+        deadlineWeight: '0',
+        priorityScore: '0.56',
+        status: 'open',
+        reasons: ['확인 가능한 근거 없음'],
+      },
+    ]);
+
+    const all = ReviewQueueResponseSchema.parse((await request(app.getHttpServer())
+      .get(`/chat/threads/${thread.id}/review-queue`)
+      .set('authorization', owner.bearer)
+      .expect(200)).body);
+    const refuted = ReviewQueueResponseSchema.parse((await request(app.getHttpServer())
+      .get(`/chat/threads/${thread.id}/review-queue?kind=refuted_claim`)
+      .set('authorization', owner.bearer)
+      .expect(200)).body);
+    const unsupported = ReviewQueueResponseSchema.parse((await request(app.getHttpServer())
+      .get(`/chat/threads/${thread.id}/review-queue?kind=unsupported_claim`)
+      .set('authorization', owner.bearer)
+      .expect(200)).body);
+
+    expect(all.items.map((item) => item.itemKind).sort()).toEqual(['refuted_claim', 'unsupported_claim']);
+    expect(refuted.items.map((item) => item.itemKind)).toEqual(['refuted_claim']);
+    expect(unsupported.items.map((item) => item.itemKind)).toEqual(['unsupported_claim']);
+    await request(app.getHttpServer())
+      .get(`/chat/threads/${thread.id}/review-queue?kind=contradiction`)
+      .set('authorization', owner.bearer)
+      .expect(400);
   });
 
   it('lists thread retrieval hits and records one-click relevance feedback without cross-workspace access', async () => {

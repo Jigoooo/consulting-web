@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EvidenceDecisionSummaryResponseSchema, ReviewQueueDecisionRequestSchema } from '../src/index.js';
+import { EvidenceDecisionSummaryResponseSchema, ReviewQueueDecisionRequestSchema, ReviewQueueFilterSchema } from '../src/index.js';
 
 const uuid = '00000000-0000-4000-8000-000000000001';
 
@@ -44,5 +44,12 @@ describe('collab evidence-decision contracts', () => {
     expect(ReviewQueueDecisionRequestSchema.parse({ action: 'ignore' })).toEqual({ action: 'ignore' });
     expect(ReviewQueueDecisionRequestSchema.safeParse({ action: 'delete' }).success).toBe(false);
     expect(ReviewQueueDecisionRequestSchema.safeParse({ action: 'resolve', itemId: uuid }).success).toBe(false);
+  });
+
+  it('accepts only explicit review queue filters', () => {
+    expect(ReviewQueueFilterSchema.parse('all')).toBe('all');
+    expect(ReviewQueueFilterSchema.parse('refuted_claim')).toBe('refuted_claim');
+    expect(ReviewQueueFilterSchema.parse('unsupported_claim')).toBe('unsupported_claim');
+    expect(ReviewQueueFilterSchema.safeParse('contradiction').success).toBe(false);
   });
 });

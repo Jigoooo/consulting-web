@@ -65,6 +65,7 @@ const StrictJsonVerdictSchema = z
     verdict: z.enum(['supports', 'refutes', 'mixed', 'not_enough_info']),
     confidence: z.number().min(0).max(1),
     evidence_id: z.string().nullable(),
+    counter_evidence_id: z.string().nullable().optional(),
     rationale: z.string().min(1),
   })
   .strict();
@@ -217,6 +218,8 @@ export function parseStrictJsonVerifierOutput(rawJson: string, allowedClaimIds: 
   for (const verdict of result.data.verdicts) {
     if (!allowedClaimIds.has(verdict.claim_id)) throw new Error(`unknown claim_id in strict JSON verifier output: ${verdict.claim_id}`);
     if (verdict.evidence_id !== null && !allowedEvidenceIds.has(verdict.evidence_id)) throw new Error(`unknown evidence_id in strict JSON verifier output: ${verdict.evidence_id}`);
+    if (verdict.counter_evidence_id != null && !allowedEvidenceIds.has(verdict.counter_evidence_id)) throw new Error(`unknown counter_evidence_id in strict JSON verifier output: ${verdict.counter_evidence_id}`);
+    if (verdict.verdict !== 'mixed' && verdict.counter_evidence_id != null) throw new Error('counter_evidence_id is only valid for mixed verdicts');
   }
   return result.data;
 }
@@ -370,9 +373,11 @@ export class HermesStrictJsonVerifier implements LlmStrictJsonVerifier {
 
   private strictJsonPrompt(input: { claims: ClaimInput[]; evidence: EvidenceInput[]; nliVerdicts: ClaimVerdict[] }): string {
     return JSON.stringify({
-      task: 'Return strict JSON: {"verdicts":[{"claim_id":"...","verdict":"supports|refutes|mixed|not_enough_info","confidence":0..1,"evidence_id":"... or null","rationale":"short reason"}]}',
+      task: 'Return strict JSON: {"verdicts":[{"claim_id":"...","verdict":"supports|refutes|mixed|not_enough_info","confidence":0..1,"evidence_id":"... or null","counter_evidence_id":"required counter source for mixed, otherwise null","rationale":"short reason"}]}',
       rules: [
         'Use only provided evidence IDs.',
+        'For mixed, counter_evidence_id must identify the contradicting source; if none is identifiable, use not_enough_info.',
+        'For non-mixed verdicts, return counter_evidence_id as null.',
         'Use not_enough_info if evidence is absent or ambiguous.',
         'Do not invent claim_id or evidence_id.',
         'Return JSON only.',
@@ -437,6 +442,7 @@ export class ClaimVerifierService {
           verdict: verdict.verdict,
           confidence: verdict.confidence,
           evidence_id: verdict.evidenceId,
+          counter_evidence_id: verdict.counterEvidenceId ?? null,
           rationale: verdict.rationale,
         })),
       },
@@ -529,6 +535,7 @@ export class ClaimVerifierService {
       claimId: claim.id,
       claimText: claim.text,
       evidenceId: verdict.evidence_id,
+      counterEvidenceId: verdict.counter_evidence_id ?? null,
       verdict: verdict.verdict,
       confidence: round4(clamp01(verdict.confidence)),
       matchedTerms: [],

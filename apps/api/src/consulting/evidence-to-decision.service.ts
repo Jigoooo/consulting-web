@@ -71,6 +71,7 @@ export interface ClaimVerdict {
   claimId: string;
   claimText: string;
   evidenceId: string | null;
+  counterEvidenceId?: string | null;
   verdict: ClaimVerdictKind;
   confidence: number;
   matchedTerms: string[];
@@ -96,6 +97,7 @@ export interface StrictJsonVerificationResult {
       verdict: ClaimVerdictKind;
       confidence: number;
       evidence_id: string | null;
+      counter_evidence_id?: string | null;
       rationale: string;
     }>;
   };

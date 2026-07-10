@@ -3,7 +3,7 @@ import { useEvidence, useProjectEvidence, useAddEvidence, useEvidenceDecisionSum
 import { composerDraftRequestStore, useHoveredMessage } from '../../../lib/threadCtx';
 import { useToast } from '../../../shared/ui/toast/Toast';
 import { Icon } from '../../../shared/icons/Icon';
-import type { EvidenceDecisionSummaryResponse, ListRetrievalHitFeedbackResponse, RecordRetrievalHitFeedbackRequest, RetrievalFailureType, ReviewQueueResponse } from '@consulting/contracts';
+import type { EvidenceDecisionSummaryResponse, ListRetrievalHitFeedbackResponse, RecordRetrievalHitFeedbackRequest, RetrievalFailureType, ReviewQueueFilter, ReviewQueueResponse } from '@consulting/contracts';
 import type { IconName } from '../../../shared/icons/registry';
 import { Button } from '../../../shared/ui/button/Button';
 import { Input, Textarea } from '../../../shared/ui/input/Input';
@@ -46,6 +46,12 @@ const modeTabs: readonly { id: EvidenceMode; label: string }[] = [
   { id: 'review', label: '검토큐' },
 ];
 
+const reviewFilters: readonly { id: ReviewQueueFilter; label: string }[] = [
+  { id: 'all', label: '전체' },
+  { id: 'refuted_claim', label: '반박' },
+  { id: 'unsupported_claim', label: '근거부족' },
+];
+
 function modeIndex(mode: EvidenceMode) {
   return modeTabs.findIndex((item) => item.id === mode);
 }
@@ -60,6 +66,7 @@ function modeIndex(mode: EvidenceMode) {
 export function EvidencePanel({ threadId, projectId }: { threadId: string; projectId?: string }) {
   const [scope, setScope] = useState<EvidenceScope>('channel');
   const [mode, setMode] = useState<EvidenceMode>('sources');
+  const [reviewFilter, setReviewFilter] = useState<ReviewQueueFilter>('all');
   const [modeDirection, setModeDirection] = useState<'forward' | 'back'>('forward');
   const channelEv = useEvidence(threadId);
   // Preload project-wide evidence so the first scope toggle moves the thumb
@@ -68,7 +75,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
   const decision = useEvidenceDecisionSummary(threadId);
   const retrieval = useRetrievalHits(threadId);
   const retrievalFeedback = useRetrievalHitFeedback(threadId);
-  const review = useReviewQueue(threadId);
+  const review = useReviewQueue(threadId, reviewFilter);
   const reviewDecision = useReviewQueueDecision(threadId);
   const data = scope === 'project' ? projectEv.data : channelEv.data;
   const isLoading = scope === 'project' ? projectEv.isLoading : channelEv.isLoading;
@@ -228,14 +235,30 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
       ) : null}
 
       {mode === 'review' ? (
-        <ReviewQueueView
-          isLoading={review.isLoading}
-          items={review.data?.items ?? []}
-          pendingItemId={pendingReviewItemId}
-          onPrompt={queueReviewPrompt}
-          onResolve={(itemId) => void decideReviewItem(itemId, 'resolve')}
-          onIgnore={(itemId) => void decideReviewItem(itemId, 'ignore')}
-        />
+        <div className={s.decisionStack}>
+          <div className={s.reviewFilters} aria-label="검토큐 필터">
+            {reviewFilters.map((filter) => (
+              <button
+                key={filter.id}
+                type="button"
+                className={s.reviewFilterButton}
+                aria-pressed={reviewFilter === filter.id}
+                onClick={() => setReviewFilter(filter.id)}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
+          <ReviewQueueView
+            isLoading={review.isLoading}
+            items={review.data?.items ?? []}
+            filter={reviewFilter}
+            pendingItemId={pendingReviewItemId}
+            onPrompt={queueReviewPrompt}
+            onResolve={(itemId) => void decideReviewItem(itemId, 'resolve')}
+            onIgnore={(itemId) => void decideReviewItem(itemId, 'ignore')}
+          />
+        </div>
       ) : null}
 
       {mode === 'sources' && showLoading ? (
@@ -451,7 +474,8 @@ function RetrievalFeedbackView({
                 disabled={disabled}
                 onClick={() => onFeedback(hit.id, { judgedRelevant: true })}
               >
-                👍 유효
+                <Icon name="check" size="xs" decorative />
+                유효
               </button>
               {retrievalFailureActions.map((action) => (
                 <button
@@ -462,7 +486,8 @@ function RetrievalFeedbackView({
                   disabled={disabled}
                   onClick={() => onFeedback(hit.id, { judgedRelevant: false, failureType: action.failureType })}
                 >
-                  👎 {action.label}
+                  <Icon name="x" size="xs" decorative />
+                  {action.label}
                 </button>
               ))}
             </div>
@@ -500,6 +525,7 @@ function ScorecardView({ isLoading, summary }: { isLoading: boolean; summary: De
 function ReviewQueueView({
   isLoading,
   items,
+  filter,
   pendingItemId,
   onPrompt,
   onResolve,
@@ -507,13 +533,24 @@ function ReviewQueueView({
 }: {
   isLoading: boolean;
   items: ReviewItem[];
+  filter: ReviewQueueFilter;
   pendingItemId: string | null;
   onPrompt: (prompt: string) => void;
   onResolve: (itemId: string) => void;
   onIgnore: (itemId: string) => void;
 }) {
   if (isLoading) return <PanelLoading label="검토큐 불러오는 중" />;
-  if (items.length === 0) return <EmptyState icon="check" title="열린 검토 항목이 없어요" description="반박되었거나 근거가 부족한 주장이 생기면 우선순위순으로 표시됩니다." />;
+  if (items.length === 0) {
+    const title = filter === 'refuted_claim'
+      ? '반박 검토 항목이 없어요'
+      : filter === 'unsupported_claim'
+        ? '근거부족 검토 항목이 없어요'
+        : '열린 검토 항목이 없어요';
+    const description = filter === 'all'
+      ? '반박되었거나 근거가 부족한 주장이 생기면 우선순위순으로 표시됩니다.'
+      : '다른 필터를 선택하면 남아 있는 검토 항목을 확인할 수 있습니다.';
+    return <EmptyState icon="check" title={title} description={description} />;
+  }
   return (
     <div className={s.decisionStack} data-testid="active-review-queue-panel">
       {items.map((item) => {

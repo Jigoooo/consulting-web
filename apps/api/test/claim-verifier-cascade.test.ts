@@ -82,6 +82,51 @@ describe('ClaimVerifierService cascade', () => {
     expect(() => parseStrictJsonVerifierOutput('{not json}', new Set(['c1']), new Set(['e1']))).toThrow(/invalid strict json/iu);
   });
 
+  it('validates an explicit counter evidence id before a mixed verdict can identify contradiction provenance', () => {
+    const parsed = parseStrictJsonVerifierOutput(JSON.stringify({
+      verdicts: [{
+        claim_id: 'c1',
+        verdict: 'mixed',
+        confidence: 0.8,
+        evidence_id: 'e1',
+        counter_evidence_id: 'e2',
+        rationale: '일부는 지지하지만 반대 수치도 존재',
+      }],
+    }), new Set(['c1']), new Set(['e1', 'e2']));
+
+    expect(parsed.verdicts[0]?.counter_evidence_id).toBe('e2');
+    expect(() => parseStrictJsonVerifierOutput(JSON.stringify({
+      verdicts: [{ claim_id: 'c1', verdict: 'mixed', confidence: 0.8, evidence_id: 'e1', counter_evidence_id: 'ghost', rationale: 'x' }],
+    }), new Set(['c1']), new Set(['e1', 'e2']))).toThrow(/unknown counter_evidence_id/iu);
+    expect(() => parseStrictJsonVerifierOutput(JSON.stringify({
+      verdicts: [{ claim_id: 'c1', verdict: 'supports', confidence: 0.8, evidence_id: 'e1', counter_evidence_id: 'e2', rationale: 'x' }],
+    }), new Set(['c1']), new Set(['e1', 'e2']))).toThrow(/counter_evidence_id.*mixed/iu);
+  });
+
+  it('propagates mixed counter evidence provenance into the verification lattice', async () => {
+    const nli: NliProvider = {
+      providerId: 'neutral_nli',
+      model: 'neutral-v1',
+      classify: async () => ({ label: 'neutral', confidence: 0.2, latencyMs: 1, rationale: 'uncertain' }),
+    };
+    const llm: LlmStrictJsonVerifier = {
+      providerId: 'mixed_llm',
+      model: 'mixed-v1',
+      verifyJson: async () => ({
+        rawJson: JSON.stringify({ verdicts: [{ claim_id: 'c1', verdict: 'mixed', confidence: 0.82, evidence_id: 'e1', counter_evidence_id: 'e2', rationale: 'mixed sources' }] }),
+        latencyMs: 2,
+      }),
+    };
+
+    const result = await new ClaimVerifierService(nli, llm).verify({ claims: [claims[0]!], evidence, highRiskClaimIds: ['c1'] });
+
+    expect(result.lattice.verdictsByClaim.c1).toEqual(expect.objectContaining({
+      verdict: 'mixed',
+      evidenceId: 'e1',
+      counterEvidenceId: 'e2',
+    }));
+  });
+
   it('treats directional numeric/economic opposites as refuted before LLM fallback', async () => {
     const result = await new ClaimVerifierService(new LocalNliProvider()).verify({
       claims: [{ id: 'directional-c1', text: '주차장 수입은 감소했다', decisionImpact: 0.82 }],

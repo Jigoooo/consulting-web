@@ -10,6 +10,7 @@ import {
   type ConsultingAssistantMemoryCandidate,
   type ConsultingMemoryAllowedSegment,
   type ConsultingMemoryBlockedSegment,
+  type ConsultingVerifiedContradiction,
   type ConsultingWebTurnIngestPayload,
 } from './consulting-web-ingest.service.js';
 
@@ -78,6 +79,35 @@ function parseBlockedSegment(value: unknown): ConsultingMemoryBlockedSegment | n
   return { id, kind: kind as ConsultingMemoryBlockedSegment['kind'], text, reason };
 }
 
+function parseVerifiedContradiction(value: unknown): ConsultingVerifiedContradiction | null {
+  if (!isRecord(value)) return null;
+  const verdictRef = asNonEmptyString(value.verdictRef);
+  const claimId = asNonEmptyString(value.claimId);
+  const claimText = asNonEmptyString(value.claimText);
+  const verdict = asNonEmptyString(value.verdict);
+  const confidence = asNumber(value.confidence);
+  const rationale = asNonEmptyString(value.rationale);
+  const evidenceItemId = asNonEmptyString(value.evidenceItemId);
+  const evidenceRef = asNonEmptyString(value.evidenceRef);
+  const evidenceText = asNonEmptyString(value.evidenceText);
+  if (
+    !verdictRef || !claimId || !claimText || !['refutes', 'mixed'].includes(verdict ?? '')
+    || confidence === null || confidence < 0 || confidence > 1
+    || !rationale || !evidenceItemId || !evidenceRef || !evidenceText
+  ) return null;
+  return {
+    verdictRef,
+    claimId,
+    claimText,
+    verdict: verdict as ConsultingVerifiedContradiction['verdict'],
+    confidence,
+    rationale,
+    evidenceItemId,
+    evidenceRef,
+    evidenceText,
+  };
+}
+
 export function parseConsultingWebTurnPayload(value: unknown): ConsultingWebTurnIngestPayload {
   if (!isRecord(value)) throw new Error('invalid consulting web ingest payload: not an object');
   const assistantMessageId = asNonEmptyString(value.assistantMessageId);
@@ -106,6 +136,17 @@ export function parseConsultingWebTurnPayload(value: unknown): ConsultingWebTurn
       ? [{ id: assistantCandidate.id, kind: 'assistant' as const, text: assistantCandidate.text, reason: assistantCandidate.reason }]
       : [];
 
+  if (value.verifiedContradictions !== undefined && !Array.isArray(value.verifiedContradictions)) {
+    throw new Error('invalid consulting web ingest payload: malformed verified contradiction list');
+  }
+  const parsedContradictions = Array.isArray(value.verifiedContradictions)
+    ? value.verifiedContradictions.map(parseVerifiedContradiction)
+    : [];
+  if (parsedContradictions.some((item) => item === null)) {
+    throw new Error('invalid consulting web ingest payload: malformed verified contradiction');
+  }
+  const verifiedContradictions = parsedContradictions as ConsultingVerifiedContradiction[];
+
   const payload = {
     consultingTopicSlug: asNonEmptyString(value.consultingTopicSlug),
     consultingTopicId: value.consultingTopicId === null || value.consultingTopicId === undefined
@@ -127,9 +168,15 @@ export function parseConsultingWebTurnPayload(value: unknown): ConsultingWebTurn
     runId: value.runId === null ? null : asNonEmptyString(value.runId),
     assistantMessageId,
     timestamp: asNumber(value.timestamp),
+    verifiedContradictions,
   };
   for (const [key, item] of Object.entries(payload)) {
-    if ((item === null || (Array.isArray(item) && item.length === 0)) && key !== 'runId' && key !== 'consultingTopicId') {
+    if (
+      (item === null || (Array.isArray(item) && item.length === 0))
+      && key !== 'runId'
+      && key !== 'consultingTopicId'
+      && key !== 'verifiedContradictions'
+    ) {
       throw new Error(`invalid consulting web ingest payload: missing ${key}`);
     }
   }

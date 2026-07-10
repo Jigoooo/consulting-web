@@ -14,6 +14,7 @@ import os
 import sqlite3
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -132,6 +133,87 @@ def _topic_title_seed(data: dict[str, Any], topic_slug: str) -> str:
     return topic_slug
 
 
+def _verified_contradictions(data: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = data.get('verifiedContradictions')
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError('verifiedContradictions must be a list')
+    out: list[dict[str, Any]] = []
+    string_fields = (
+        'verdictRef', 'claimId', 'claimText', 'rationale',
+        'evidenceItemId', 'evidenceRef', 'evidenceText',
+    )
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ValueError('verified contradiction must be an object')
+        normalized: dict[str, Any] = {}
+        for field in string_fields:
+            value = item.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f'verified contradiction missing {field}')
+            normalized[field] = value.strip()
+        verdict = item.get('verdict')
+        confidence = item.get('confidence')
+        if verdict not in {'refutes', 'mixed'}:
+            raise ValueError('verified contradiction verdict must be refutes or mixed')
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= float(confidence) <= 1:
+            raise ValueError('verified contradiction confidence must be between 0 and 1')
+        normalized['verdict'] = verdict
+        normalized['confidence'] = float(confidence)
+        out.append(normalized)
+    return out
+
+
+def _stable_ref(prefix: str, seed: str, size: int = 16) -> str:
+    digest = hashlib.sha256(seed.encode('utf-8')).hexdigest()[:size].upper()
+    return f'{prefix}-{digest}'
+
+
+def _write_verified_contradictions(
+    con: sqlite3.Connection | None,
+    *,
+    tid: int,
+    topic_slug: str,
+    data: dict[str, Any],
+    timestamp: float,
+) -> int:
+    items = _verified_contradictions(data)
+    if not items:
+        return 0
+    assistant_message_id = _require_str(data, 'assistantMessageId')
+    observed_at = datetime.fromtimestamp(timestamp, timezone.utc).isoformat()
+    for item in items:
+        source_ref = item['verdictRef']
+        from_code = _stable_ref('WEB-CLAIM', f"{topic_slug}|{assistant_message_id}|{item['claimId']}")
+        to_code = _stable_ref('WEB-EVID', f"{topic_slug}|{item['evidenceItemId']}")
+        edge_hash = hashlib.sha256(f'{topic_slug}|{source_ref}'.encode('utf-8')).hexdigest()[:24]
+        S.upsert_verified_contradiction(
+            con,
+            tid=tid,
+            from_claim_code=from_code,
+            from_claim_text=item['claimText'],
+            to_claim_code=to_code,
+            to_claim_text=item['evidenceText'],
+            edge_key=f'web-verdict:{edge_hash}',
+            source_ref=source_ref,
+            logic_note=item['rationale'],
+            metadata={
+                'source': 'consulting-web-claim-verifier',
+                'workspaceId': _optional_str(data, 'workspaceId'),
+                'threadId': _optional_str(data, 'threadId'),
+                'assistantMessageId': assistant_message_id,
+                'claimId': item['claimId'],
+                'evidenceItemId': item['evidenceItemId'],
+                'evidenceRef': item['evidenceRef'],
+                'verdict': item['verdict'],
+                'confidence': item['confidence'],
+            },
+            observed_at=observed_at,
+        )
+    return len(items)
+
+
 def ingest_turn(data: dict[str, Any], *, no_embed: bool = False) -> dict[str, Any]:
     topic_slug = _require_str(data, 'consultingTopicSlug')
     session_id = _require_str(data, 'sessionId')
@@ -159,9 +241,23 @@ def ingest_turn(data: dict[str, Any], *, no_embed: bool = False) -> dict[str, An
         )
         _write_scope(con, tid, data, session_id)
         S.bind_session(con, tid, session_id)
+        contradiction_count = _write_verified_contradictions(
+            con,
+            tid=tid,
+            topic_slug=topic_slug,
+            data=data,
+            timestamp=ts,
+        )
         if S.chunk_exists(con, content_hash):
             S.commit_optional(con)
-            return {"ok": True, "topic": topic_slug, "ingested": 0, "duplicate": True, **S.stats(con, tid)}
+            return {
+                "ok": True,
+                "topic": topic_slug,
+                "ingested": 0,
+                "duplicate": True,
+                "verified_contradictions": contradiction_count,
+                **S.stats(con, tid),
+            }
 
         topic_title = S.topic_title(con, tid, topic_slug)
         if no_embed:
@@ -211,6 +307,7 @@ def ingest_turn(data: dict[str, Any], *, no_embed: bool = False) -> dict[str, An
         S.commit_optional(con)
         return {"ok": True, "topic": topic_slug, "ingested": 1, "chunk_id": cid,
                 "allowed_segments": len(segments), "assistant_quarantined": assistant_quarantined,
+                "verified_contradictions": contradiction_count,
                 **S.stats(con, tid)}
     finally:
         if main is not None:

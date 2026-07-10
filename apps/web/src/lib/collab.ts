@@ -7,6 +7,7 @@ import type {
   VerifyArtifactVersionRequest,
   RecordRetrievalHitFeedbackRequest,
   ReviewQueueDecisionRequest,
+  ReviewQueueFilter,
   UploadAttachmentRequest,
 } from '@consulting/contracts';
 
@@ -14,7 +15,7 @@ export const collabKeys = {
   evidence: (threadId: string) => ['evidence', threadId] as const,
   evidenceDecision: (threadId: string) => ['evidence-decision', threadId] as const,
   retrievalHits: (threadId: string) => ['retrieval-hits', threadId] as const,
-  reviewQueue: (threadId: string) => ['review-queue', threadId] as const,
+  reviewQueue: (threadId: string, filter: ReviewQueueFilter = 'all') => ['review-queue', threadId, filter] as const,
   artifacts: (workspaceId: string) => ['artifacts', workspaceId] as const,
   artifact: (id: string) => ['artifact', id] as const,
   artifactExportPreflight: (id: string, version: number | 'head') => ['artifact-export-preflight', id, version] as const,
@@ -74,10 +75,10 @@ export function useRetrievalHitFeedback(threadId: string | undefined) {
   });
 }
 
-export function useReviewQueue(threadId: string | undefined) {
+export function useReviewQueue(threadId: string | undefined, filter: ReviewQueueFilter = 'all') {
   return useQuery({
-    queryKey: collabKeys.reviewQueue(threadId ?? ''),
-    queryFn: () => api.reviewQueue(threadId!),
+    queryKey: collabKeys.reviewQueue(threadId ?? '', filter),
+    queryFn: () => api.reviewQueue(threadId!, filter),
     enabled: Boolean(threadId),
   });
 }

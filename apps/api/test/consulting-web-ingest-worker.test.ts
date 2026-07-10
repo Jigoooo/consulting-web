@@ -26,6 +26,17 @@ const payload = {
   runId: 'run_abc',
   assistantMessageId: 'message-1',
   timestamp: 1770000000,
+  verifiedContradictions: [{
+    verdictRef: 'assistant:message-1:MSG-1',
+    claimId: 'MSG-1',
+    claimText: '기본급은 2,100,000원이다.',
+    verdict: 'refutes',
+    confidence: 0.91,
+    rationale: '공식 표와 다름',
+    evidenceItemId: 'evidence-1',
+    evidenceRef: 'EV-PAY-01',
+    evidenceText: '공식 표에는 2,000,000원으로 기재되어 있다.',
+  }],
 };
 
 describe('ConsultingWebIngestWorker', () => {
@@ -74,6 +85,27 @@ describe('ConsultingWebIngestWorker', () => {
       workspaceId: 'ws',
       payload: { ...payload, allowedSegments: [] },
     })).rejects.toThrow(/invalid consulting web ingest payload/i);
+    expect(runner).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed verified contradiction data instead of silently dropping it', async () => {
+    const runner = vi.fn(async () => undefined);
+    const worker = new ConsultingWebIngestWorker(
+      { REDIS_URL: 'redis://127.0.0.1:6379' } as never,
+      runner,
+    );
+
+    await expect(worker.processOutboxJob({
+      eventId: 'evt-invalid-verdict',
+      eventType: 'ConsultingWebTurnCompleted',
+      aggregateType: 'thread',
+      aggregateId: 'thread-1',
+      workspaceId: 'ws',
+      payload: {
+        ...payload,
+        verifiedContradictions: [{ ...payload.verifiedContradictions[0], verdict: 'supports', confidence: 2 }],
+      },
+    })).rejects.toThrow(/verified contradiction/i);
     expect(runner).not.toHaveBeenCalled();
   });
 

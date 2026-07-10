@@ -700,3 +700,60 @@ PG18:   116 total / effective=116 / policy=116 / expires=0
 웹 Judgment Guard는 GraphRAG hit의 호봉표·법령·조직도 등 시간민감 수치 자료에
 기준일/시행일이 없으면 `stale_source_warning`을 내고, pre-answer warning row를
 `judgment_guard_runs`에 `assistant_message_id=NULL`로 영속화한다.
+
+---
+
+## W2-3 refuted verdict → shared-brain contradiction edge (2026-07-11)
+
+웹 verifier의 `refutes|mixed` verdict를 그대로 raw assistant memory로 저장하지 않는다.
+실제 counter-evidence row가 매칭된 pair만 다음 비동기 경로로 shared brain에 기록한다.
+
+```text
+EvidenceDecisionStore
+  → refuted/mixed + evidenceItems(id/ref/excerpt) materialize
+  → ConsultingWebTurnCompleted.verifiedContradictions[]
+  → strict worker parser (malformed item fail-closed/retry)
+  → ingest_web_dialogue.py (assistantCandidate는 계속 quarantine)
+  → brain PG-only writer
+  → claims(retired proxy: web_verified_claim + web_counterevidence_claim)
+  → claim_logic_edges(relation_type='contradicts')
+```
+
+009 additive provenance/idempotency metadata:
+
+```text
+claim_logic_edges += edge_key, source_ref, metadata_json, observed_at
+UNIQUE(edge_key) WHERE edge_key IS NOT NULL
+INDEX(topic_id, source_ref) WHERE source_ref IS NOT NULL
+```
+
+안전 불변식:
+
+```text
+- assistant 답변 전체는 dialogue memory에 허용하지 않는다.
+- evidenceId가 현재 thread evidence row와 매칭되지 않으면 brain edge를 만들지 않는다.
+- mixed verdict는 allowlist 검증된 counter_evidence_id가 명시된 경우에만 그 row로 CONTRADICTS를 만든다.
+- mixed의 counter provenance가 없으면 검토큐에는 남기되 brain edge는 fail-closed로 생략한다.
+- edge_key는 topic+verdictRef 해시라 outbox retry가 같은 edge를 재사용한다.
+- imported bigint id의 MAX(id)+1은 global advisory + SHARE ROW EXCLUSIVE table locks로 직렬화한다.
+- 두 endpoint는 생성 즉시 status/maturity=retired + retired_at을 기록한다.
+- proxy claim_text에는 실제 주장/근거를 넣지 않고 명시적 retired placeholder만 저장한다.
+- 검증된 실제 pair는 claim_logic_edges.metadata_json에만 보관한다.
+- PG/SQLite valid_codes·claim_texts·GraphRAG hot-claim expansion은 retired_at IS NULL만 허용한다.
+- live write backend가 PG가 아니면 명시 실패한다(물리 dual-write/평행 원장 금지).
+- refuted/mixed verdict는 기존 active_review_items에도 refuted_claim으로 계속 노출된다.
+```
+
+검증:
+
+```text
+web contradiction vertical tests: 21 passed
+review filter contracts/client/UI fixtures: 7 passed
+live Postgres+Redis review API: all/refuted/unsupported 분리 + unknown filter 400
+brain dialogue-memory/writer/PG-only/migration regression: 61 passed
+temporary real PG: first+retry → claims=2, retired=2, active=0, edges=1, relation_type=contradicts
+temporary real PG active lookup: valid_codes claims=0, claim_texts=0
+temporary real PG payload isolation: proxy_texts=2, raw_claim_rows=0, metadata_has_pair=true
+temporary existing-table PG patch twice: provenance columns=4, indexes=2
+root typecheck/lint/build + py_compile/migration dry-run: exit 0, pending migrations 0
+```

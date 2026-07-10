@@ -18,4 +18,12 @@ describe('EvidencePanel retrieval feedback', () => {
     expect(source).toContain('오래된 자료');
     expect(source).toContain('중복');
   });
+
+  it('keeps explicit all, refuted, and unsupported review-queue filters wired to the query', () => {
+    expect(source).toContain("useState<ReviewQueueFilter>('all')");
+    expect(source).toContain('useReviewQueue(threadId, reviewFilter)');
+    expect(source).toContain("{ id: 'refuted_claim', label: '반박' }");
+    expect(source).toContain("{ id: 'unsupported_claim', label: '근거부족' }");
+    expect(source).toContain('aria-pressed={reviewFilter === filter.id}');
+  });
 });

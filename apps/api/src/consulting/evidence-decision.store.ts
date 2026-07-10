@@ -7,6 +7,7 @@ import {
   type EvidenceDecisionSummaryResponse,
   type ListRetrievalHitFeedbackResponse,
   type RetrievalFailureType,
+  type ReviewQueueFilter,
   type ReviewQueueResponse,
 } from '@consulting/contracts';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
@@ -15,6 +16,7 @@ import { ClaimVerifierService } from './claim-verifier.service.js';
 import { ExactnessGateService, type ExactnessGateResult, type ExactnessRunStatus } from './exactness-gate.service.js';
 import { VerifierGatePolicyService, type VerifierGateResult } from './verifier-gate-policy.service.js';
 import { ConsultingJudgmentGuardService, type ConsultingJudgmentGuardResult } from './consulting-judgment-guard.service.js';
+import type { ConsultingVerifiedContradiction } from './consulting-web-ingest.service.js';
 
 const FACTUAL_RE = /(이다|입니다|한다|합니다|된다|됩니다|있다|있습니다|없다|없습니다|필요|확정|증가|감소|부담|영향|제시|늘려|줄어|higher|lower|increase|decrease)/iu;
 
@@ -82,7 +84,7 @@ export class EvidenceDecisionStore {
     userPrompt: string;
     answer: string;
     runId: string | null;
-  }): Promise<void> {
+  }): Promise<{ verifiedContradictions: ConsultingVerifiedContradiction[] }> {
     const verificationStartedAt = new Date();
     const verificationStartedMs = Date.now();
     await this.assertThreadInWorkspace(input.workspaceId, input.threadId);
@@ -93,7 +95,7 @@ export class EvidenceDecisionStore {
     if (exactnessRun.required) await this.persistExactnessRun(input, exactnessRun);
 
     const claimTexts = splitClaims(input.answer);
-    if (claimTexts.length === 0) return;
+    if (claimTexts.length === 0) return { verifiedContradictions: [] };
 
     const evidenceRows = await this.db
       .select({
@@ -125,23 +127,45 @@ export class EvidenceDecisionStore {
     const highRiskClaimIds = claims.filter((claim) => (claim.decisionImpact ?? 0) >= 0.8).map((claim) => claim.id);
     const verification = await this.verifier.verify({ claims, evidence, highRiskClaimIds });
     const lattice = verification.lattice;
+    const evidenceById = new Map(evidenceRows.map((row) => [row.id, row]));
+    const verifiedContradictions: ConsultingVerifiedContradiction[] = [];
+    for (const verdict of lattice.verdicts) {
+      if (verdict.verdict !== 'refutes' && verdict.verdict !== 'mixed') continue;
+      const counterEvidenceId = verdict.verdict === 'refutes' ? verdict.evidenceId : verdict.counterEvidenceId;
+      const counterEvidence = counterEvidenceId ? evidenceById.get(counterEvidenceId) : undefined;
+      if (!counterEvidence?.ref || !counterEvidence.excerpt) continue;
+      verifiedContradictions.push({
+        verdictRef: `assistant:${input.assistantMessageId}:${verdict.claimId}`,
+        claimId: verdict.claimId,
+        claimText: verdict.claimText,
+        verdict: verdict.verdict,
+        confidence: verdict.confidence,
+        rationale: verdict.rationale,
+        evidenceItemId: counterEvidence.id,
+        evidenceRef: counterEvidence.ref,
+        evidenceText: counterEvidence.excerpt,
+      });
+    }
     if (lattice.verdicts.length > 0) {
       await this.db.insert(schema.claimVerificationVerdicts).values(
-        lattice.verdicts.map((verdict) => ({
-          workspaceId: input.workspaceId,
-          threadId: input.threadId,
-          assistantMessageId: input.assistantMessageId,
-          claimId: verdict.claimId,
-          claimText: verdict.claimText,
-          evidenceRef: verdict.evidenceId,
-          evidenceItemId: verdict.evidenceId,
-          verdict: verdict.verdict,
-          confidence: String(verdict.confidence),
-          matchedTerms: verdict.matchedTerms,
-          contradictedTerms: verdict.contradictedTerms,
-          rationale: verdict.rationale,
-          verifier: verification.verifier,
-        })),
+        lattice.verdicts.map((verdict) => {
+          const verdictEvidenceId = verdict.verdict === 'mixed' ? (verdict.counterEvidenceId ?? null) : verdict.evidenceId;
+          return {
+            workspaceId: input.workspaceId,
+            threadId: input.threadId,
+            assistantMessageId: input.assistantMessageId,
+            claimId: verdict.claimId,
+            claimText: verdict.claimText,
+            evidenceRef: verdictEvidenceId,
+            evidenceItemId: verdictEvidenceId,
+            verdict: verdict.verdict,
+            confidence: String(verdict.confidence),
+            matchedTerms: verdict.matchedTerms,
+            contradictedTerms: verdict.contradictedTerms,
+            rationale: verdict.rationale,
+            verifier: verification.verifier,
+          };
+        }),
       );
     }
 
@@ -263,6 +287,7 @@ export class EvidenceDecisionStore {
       startedAt: verificationStartedAt,
       durationMs: Date.now() - verificationStartedMs,
     });
+    return { verifiedContradictions };
   }
 
   private async persistPostAnswerTelemetry(args: {
@@ -699,7 +724,13 @@ export class EvidenceDecisionStore {
     };
   }
 
-  async reviewQueue(threadId: string, limit = 30): Promise<ReviewQueueResponse> {
+  async reviewQueue(threadId: string, limit = 30, filter: ReviewQueueFilter = 'all'): Promise<ReviewQueueResponse> {
+    const predicates = [
+      eq(schema.activeReviewItems.threadId, threadId),
+      eq(schema.activeReviewItems.status, 'open'),
+      isNull(schema.activeReviewItems.deletedAt),
+    ];
+    if (filter !== 'all') predicates.push(eq(schema.activeReviewItems.itemKind, filter));
     const rows = await this.db
       .select({
         id: schema.activeReviewItems.id,
@@ -716,7 +747,7 @@ export class EvidenceDecisionStore {
         createdAt: schema.activeReviewItems.createdAt,
       })
       .from(schema.activeReviewItems)
-      .where(and(eq(schema.activeReviewItems.threadId, threadId), eq(schema.activeReviewItems.status, 'open'), isNull(schema.activeReviewItems.deletedAt)))
+      .where(and(...predicates))
       .orderBy(desc(schema.activeReviewItems.priorityScore), desc(schema.activeReviewItems.createdAt))
       .limit(limit);
     return {

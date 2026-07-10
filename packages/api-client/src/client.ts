@@ -86,6 +86,7 @@ import {
   type RecordRetrievalHitFeedbackRequest,
   type ReviewQueueResponse,
   type ReviewQueueDecisionRequest,
+  type ReviewQueueFilter,
   type CreateArtifactRequest,
   type AddArtifactVersionRequest,
   type VerifyArtifactVersionRequest,
@@ -423,8 +424,9 @@ export class ConsultingApiClient {
     );
   }
 
-  reviewQueue(threadId: string): Promise<ReviewQueueResponse> {
-    return this.http.request(`/chat/threads/${threadId}/review-queue`, { method: 'GET' }, (d) =>
+  reviewQueue(threadId: string, filter: ReviewQueueFilter = 'all'): Promise<ReviewQueueResponse> {
+    const query = filter === 'all' ? '' : `?kind=${encodeURIComponent(filter)}`;
+    return this.http.request(`/chat/threads/${threadId}/review-queue${query}`, { method: 'GET' }, (d) =>
       ReviewQueueResponseSchema.parse(d),
     );
   }
