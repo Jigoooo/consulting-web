@@ -85,6 +85,7 @@ import {
   type ReviewQueueDecisionRequest,
   type CreateArtifactRequest,
   type AddArtifactVersionRequest,
+  type VerifyArtifactVersionRequest,
   type CreateArtifactResponse,
   type ListArtifactsResponse,
   type ArtifactDetailResponse,
@@ -442,6 +443,12 @@ export class ConsultingApiClient {
   addArtifactVersion(id: string, body: AddArtifactVersionRequest): Promise<CreateArtifactResponse> {
     return this.http.request(`/artifacts/${id}/versions`, { method: 'POST', body }, (d) =>
       CreateArtifactResponseSchema.parse(d),
+    );
+  }
+
+  verifyArtifactVersion(id: string, body: VerifyArtifactVersionRequest): Promise<ArtifactExportPreflightResponse> {
+    return this.http.request(`/artifacts/${id}/verify`, { method: 'POST', body }, (d) =>
+      ArtifactExportPreflightResponseSchema.parse(d),
     );
   }
 

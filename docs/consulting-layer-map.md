@@ -1654,37 +1654,71 @@ warning_count: 0
 자동 claim-code fixture와 별개로, 사용자가 실제로 묻는 종합 질문형 regression gate다.
 ```
 
-### 18.2 Artifact final export preflight gate
+### 18.2 Artifact version-bound final export gate
 
-스크립트:
+공용 판정 경로:
 
 ```text
-apps/api/scripts/audit_artifact_export_preflight.ts
+API preflight/export
+  -> ArtifactVerificationService
+  -> ArtifactVerificationDbLedger.latest(exact target)
+  -> auditArtifactExportPreflight
+
+CLI audit
+  -> ArtifactVerificationDbLedger.latest(exact target)
+  -> auditArtifactExportPreflight
+
+script: apps/api/scripts/audit_artifact_export_preflight.ts
 package script: pnpm --filter @consulting/api run audit:artifact-export-preflight -- --project-id <projectId>
 ```
 
-정책:
+불변식:
 
 ```text
-- sourceMessageId 없는 수동/hand-authored artifact: NO_SOURCE_MESSAGE, export 허용
-- sourceMessageId 있는 artifact: final_export VerifierGatePolicyService 평가 필수
-- exactness/verdict/judgment telemetry가 모두 없으면 missing_verifier_telemetry blocker
-- blocker가 있으면 VERIFIER_GATE_BLOCKED, non-allow 실행 exit code 1
+- sourceMessageId/sourceThreadId는 provenance일 뿐 export 승인 키가 아니다.
+- 승인은 workspaceId + projectId + artifactId + artifactVersionId + SHA-256(exact UTF-8 content) 조합에 귀속된다.
+- 검증 결과는 append-only artifact_version_verifications 원장에 기록한다.
+- artifactVersionId별 monotonic sequence 최신 verification을 먼저 확정한 뒤 identity/hash/deleted/status/gate를 검사한다. 조건 불일치 시 과거 PASS를 탐색하지 않는다.
+- verification이 없거나 tenant/version/hash가 다르면 ARTIFACT_VERIFICATION_REQUIRED로 fail-closed한다.
+- gate.decision이 정확히 PASS일 때만 export한다. PASS_WITH_WARNINGS와 BLOCKED는 모두 VERIFIER_GATE_BLOCKED다.
+- exactness=skipped 단독은 verifier telemetry로 세지 않는다. claim verdict/judgment/실제 exactness 결과가 모두 없으면 missing_verifier_telemetry blocker다.
+- POST /artifacts/:id/verify가 DB에서 읽은 현재 immutable version content 자체를 ClaimVerifierService + ExactnessGateService로 검증한다.
+- 원본 없는 수동 artifact도 동일한 본문 검증을 통과해야 한다.
+- hash·split·exactness보다 먼저 title 200자/content 200,000자 계약 상한을 O(1) 검사하며, 초과 입력은 413 `ARTIFACT_VERIFICATION_INPUT_TOO_LARGE`로 차단한다. 그 뒤 Markdown의 구조 heading과 구조 table cell allowlist를 제외한 1자 이상 본문 segment(표 cell·불릿·명사형·영문 포함), 그리고 generic system title이 아닌 사실형 artifact title을 모두 claim으로 검증한다. 최대 24 claim × claim당 2,000자, evidence 40건 × 2,000자로 제한해 최대 비교량을 24×40으로 고정하고, 초과·잘림·누락 verdict는 synthetic high-impact unsupported verdict로 fail-closed한다.
+- 동일 artifactVersionId+contentHash+titleHash 동시 검증은 singleflight로 합치고, 프로세스당 서로 다른 검증은 최대 2건만 허용한다. 초과 요청은 503 ARTIFACT_VERIFIER_BUSY다.
+- 원장 verifier는 `artifact_claim_coverage_v4:<titleSha256>:<provider>` 정책 identity를 포함한다. 다른 정책 또는 현재 title hash와 불일치하는 과거 PASS row는 latest verification으로 인정하지 않아 재검증을 강제한다.
+- 자연어 백분율 자동 검산은 NFKC·Unicode 부호·default-ignorable 정규화 뒤 token 경계, percent suffix 경계, answer 전체 transition marker 소비, 절별 단일 pair/claim 결합을 모두 만족할 때만 수행한다. 모호성은 invalid_input으로 fail-closed한다.
+- chat evidence 자동 저장은 canonical name이 정확히 web_search/web_extract인 tool.completed 결과만 허용한다. capture 시점뿐 아니라 saveRunEvidence 영속화 경계에서도 allowlist와 redaction을 다시 적용한다. JSON·malformed/닫히지 않은/backslash-escaped header는 auth/cookie label부터 줄 끝까지 fail-closed 제거하고, 확장 DB URI·JWT·AWS/Google signed URL의 raw/HTML-escaped query 전체·token prefix·email·완전/잘린 PEM secret을 redact한다. preview도 redaction 전에 유한 길이로 자른다.
+- PDF/DOCX renderer는 위 preflight가 통과한 뒤에만 실행한다.
 ```
 
-2026-07-10 live PG readback (`창원시 컨설팅`, project `01fba1a5-7b16-4267-93df-f9ca6cf0462f`):
+Schema/API:
 
 ```text
-artifact head versions: total=3
-exportable=0
-blocked=3
-noSourceMessage=0
-blocker_codes=[missing_verifier_telemetry]
-non_allow_exit_code=1
-artifact: artifacts/artifact-export-preflight/latest/audit.json
+migration: packages/db-schema/drizzle/0027_artifact_version_verification_ledger.sql
+table: artifact_version_verifications
+API: POST /artifacts/:id/verify { versionNo? }
+UI: ArtifactsSurface > 현재 버전 "본문 검증"
+```
 
-판정: 현재 실제 창원 source-linked 산출물 3개는 verifier telemetry가 없어 최종 export가 차단된다.
-이는 정상적인 안전 차단이며, 산출물을 export하려면 원본 답변의 post-answer verifier/exactness telemetry를 먼저 쌓아야 한다.
+2026-07-10 live verification:
+
+```text
+isolated PostgreSQL 18: migrations 0000..0027 applied successfully
+ledger integration: tenant/content/malformed-gate mismatch + legacy policy PASS invalidation fail-closed PASS
+focused regressions: strict claim coverage/service 8개 + evidence redaction/persistence 12개 + exactness 27개 + export/policy 회귀 PASS
+monorepo typecheck/lint/test/build + compose config PASS
+production migration head: 0027_artifact_version_verification_ledger.sql (28 migrations)
+production readiness: api/db/redis/bullmq/hermes 모두 ok
+project evidence_items: 국가법령정보센터 제33조·제33조의2 원문 2건
+기존 v3-policy PASS: v4 title-bound identity 불일치로 두 건 모두 ARTIFACT_VERIFICATION_REQUIRED 자동 무효화 확인
+artifact aba9... v3: content/title hash 일치, sequence=7, status=passed, verifier=artifact_claim_coverage_v4:<titleSha256>:nli_local_nli_v1, evidence=2, verdict supports=2/2
+artifact b4f0... v3: content/title hash 일치, sequence=8, status=passed, verifier=artifact_claim_coverage_v4:<titleSha256>:nli_local_nli_v1, evidence=2, verdict supports=3/3
+API preflight: 두 target 모두 HTTP 200, canExport=true, reason=OK
+CLI preflight: 두 target 모두 canExport=true, reason=OK; 의도적으로 미복구한 test artifact 1건 때문에 project summary 자체는 blocked
+real export: v3 PDF 2건 %PDF- signature, DOCX 2건 ZIP integrity(각 16 entries) 확인
+v3 SHA-256: aba9 PDF 04358e22...360d / DOCX bc56297d...45d9, b4f0 PDF d6b908b4...3022 / DOCX 7605a05f...56f8
+판정: 과거 정책 PASS를 재사용하지 않고, 등록 법령 원문 기반 v3 두 건을 title-bound strict coverage로 재검증·내보내기까지 운영에서 통과했다.
 ```
 
 ### 18.3 NLI / hallucination / quality scripts
@@ -1742,6 +1776,7 @@ test:ralph           python3 scripts/ralph_graphrag_hardening.py --iterations 3
 │ - ClaimVerifierService                                                        │
 │ - ExactnessGateService                                                        │
 │ - VerifierGatePolicyService                                                   │
+│ - ArtifactVerificationService / ArtifactVerificationDbLedger                  │
 │ - ConsultingWebIngestService                                                  │
 └──────────────────────────────────────────────────────────────────────────────┘
         │                              │                              │

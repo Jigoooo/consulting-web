@@ -5,7 +5,7 @@ import type { ArtifactExportPreflightResponse } from '@consulting/contracts';
 import { useSelectedWorkspace } from '../../lib/wsStore';
 import { useLastThread } from '../../lib/threadCtx';
 import { useWorkspaceTree } from '../../lib/spaces';
-import { useArtifacts, useArtifactDetail, useCreateArtifact, useAddArtifactVersion, useArtifactExportPreflight, saveArtifactExport } from '../../lib/collab';
+import { useArtifacts, useArtifactDetail, useCreateArtifact, useAddArtifactVersion, useVerifyArtifactVersion, useArtifactExportPreflight, saveArtifactExport } from '../../lib/collab';
 import { Markdown } from '../../shared/ui/markdown/Markdown';
 import { useToast } from '../../shared/ui/toast/Toast';
 import { Button } from '../../shared/ui/button/Button';
@@ -38,6 +38,7 @@ export function ArtifactsSurface({
   const detail = useArtifactDetail(selected ?? undefined);
   const createArtifact = useCreateArtifact(workspaceId ?? undefined);
   const addVersion = useAddArtifactVersion(workspaceId ?? undefined);
+  const verifyVersion = useVerifyArtifactVersion();
   const toast = useToast();
 
   const [creating, setCreating] = useState(false);
@@ -59,8 +60,7 @@ export function ArtifactsSurface({
     : versions[versions.length - 1];
   const exportPreflight = useArtifactExportPreflight(selected ?? undefined, shown?.versionNo);
   const preflightIssue = exportPreflight.data ? artifactPreflightIssue(exportPreflight.data) : null;
-  const sourceWarning = shown && !shown.sourceMessageId ? artifactSourceWarning() : null;
-  const visiblePreflightIssue = exportIssue ?? preflightIssue ?? sourceWarning;
+  const visiblePreflightIssue = exportIssue ?? preflightIssue;
   const exportBlocked = exportPreflight.data?.canExport === false;
 
   const isModal = variant === 'modal';
@@ -96,6 +96,22 @@ export function ArtifactsSurface({
       setViewVersion(null);
     } catch {
       toast('error', '버전 추가에 실패했어요.');
+    }
+  }
+
+  async function verifyCurrentVersion() {
+    if (!selected || !shown) return;
+    setExportIssue(null);
+    try {
+      const result = await verifyVersion.mutateAsync({ id: selected, body: { versionNo: shown.versionNo } });
+      const issue = artifactPreflightIssue(result);
+      setExportIssue(issue);
+      if (result.canExport) toast('success', `v${shown.versionNo} 본문 검증 통과`);
+      else toast('error', issue?.title ?? '본문 검증이 차단되었습니다');
+    } catch (err) {
+      const issue = artifactExportIssue(err);
+      setExportIssue(issue);
+      toast('error', issue.title);
     }
   }
 
@@ -255,6 +271,15 @@ export function ArtifactsSurface({
                 </div>
               </div>
               <div className={s.headActions}>
+                <Button
+                  type="button"
+                  variant={exportBlocked ? 'primary' : 'ghost'}
+                  size="sm"
+                  disabled={verifyVersion.isPending || !shown}
+                  onClick={() => void verifyCurrentVersion()}
+                >
+                  {verifyVersion.isPending ? '검증 중…' : '본문 검증'}
+                </Button>
                 <Button type="button" variant="ghost" size="sm" disabled={Boolean(exporting) || exportBlocked} onClick={() => void download('pdf')}>
                   {exporting === 'pdf' ? 'PDF 생성 중…' : 'PDF'}
                 </Button>
@@ -336,6 +361,13 @@ export function ArtifactsSurface({
 
 function artifactPreflightIssue(preflight: ArtifactExportPreflightResponse): ExportPreflightIssue | null {
   if (preflight.reason === 'OK' && preflight.messages.length === 0) return null;
+  if (preflight.reason === 'ARTIFACT_VERIFICATION_REQUIRED') {
+    return {
+      tone: 'blocked',
+      title: '현재 버전의 본문 검증이 필요합니다',
+      messages: preflight.messages,
+    };
+  }
   if (preflight.reason === 'VERIFIER_GATE_BLOCKED') {
     return {
       tone: 'blocked',
@@ -343,28 +375,10 @@ function artifactPreflightIssue(preflight: ArtifactExportPreflightResponse): Exp
       messages: preflight.messages.length > 0 ? preflight.messages : ['핵심 주장의 근거를 보강한 뒤 다시 시도하세요.'],
     };
   }
-  if (preflight.reason === 'NO_SOURCE_MESSAGE') {
-    return {
-      tone: 'warn',
-      title: '검증 연결이 없는 산출물입니다',
-      messages: preflight.messages,
-    };
-  }
   return {
     tone: 'warn',
     title: '검증 경고가 있습니다',
     messages: preflight.messages,
-  };
-}
-
-function artifactSourceWarning(): ExportPreflightIssue {
-  return {
-    tone: 'warn',
-    title: '검증 연결이 없는 산출물입니다',
-    messages: [
-      '이 버전은 원본 답변(sourceMessageId)과 연결되지 않아 내보내기 전 검증 게이트가 문장별 판정을 확인할 수 없습니다.',
-      '외부 제출 전에는 검증된 채팅 답변에서 다시 저장하거나, 근거검증 패널에서 차단 사유가 없는지 확인하세요.',
-    ],
   };
 }
 

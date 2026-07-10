@@ -45,19 +45,132 @@ export interface ExactnessGateResult {
   answerInstruction: string;
 }
 
-const EXACTNESS_TRIGGER_RE = /(계산|산정|비율|증감률|총액|합계|평균|중위값|가중치|인건비|승진|정원|기간|근속|row count|카운트|검산|DB|테이블|법령|조항|페이지|원문)/iu;
+const EXACTNESS_TRIGGER_RE = /(계산|산정|증감률|총액|합계|가중치|row count|카운트|검산|(?:비율|평균|중위값).{0,16}(?:얼마|구해|산출|계산)|(?:얼마|구해|산출|계산).{0,16}(?:비율|평균|중위값))/iu;
 const DECIMAL_TOKEN = '([+-]?\\d[\\d,]*(?:\\.\\d+)?)';
-const PERCENTAGE_CHANGE_RE = new RegExp(`${DECIMAL_TOKEN}\\s*(?:명|개|원|천원|만원|억원|%)?\\s*에서\\s*${DECIMAL_TOKEN}\\s*(?:명|개|원|천원|만원|억원|%)?\\s*(?:으로|로)`, 'iu');
+const NUMBER_START_BOUNDARY = '(?<![\\p{L}\\p{M}\\p{N}\\p{Pc}_.+\\-])';
+const VALUE_UNIT = '(?:명|개|원|천원|만원|억원|%)?';
+const PERCENT_RIGHT_CONTEXT = '(?=$|[^\\p{L}\\p{N}_]|(?:입니다|인가|이다|인|로|를|가|는|의|만|씩|포인트|증가|감소|상승|하락))';
+const PERCENTAGE_CHANGE_RE = new RegExp(`${NUMBER_START_BOUNDARY}${DECIMAL_TOKEN}\\s*${VALUE_UNIT}\\s*에서\\s*${NUMBER_START_BOUNDARY}${DECIMAL_TOKEN}\\s*${VALUE_UNIT}\\s*(?:으로|로)`, 'giu');
+const PERCENT_CLAIM_RE = new RegExp(`${NUMBER_START_BOUNDARY}${DECIMAL_TOKEN}\\s*(?:%|퍼센트|프로|percent|pct)${PERCENT_RIGHT_CONTEXT}`, 'giu');
+const TRANSITION_FROM_RE = new RegExp(`${NUMBER_START_BOUNDARY}${DECIMAL_TOKEN}\\s*${VALUE_UNIT}\\s*에서`, 'giu');
+const TRANSITION_TO_RE = new RegExp(`${NUMBER_START_BOUNDARY}${DECIMAL_TOKEN}\\s*${VALUE_UNIT}\\s*(?:으로|로)`, 'giu');
+
+interface PercentagePair {
+  oldValue: string;
+  newValue: string;
+  index: number;
+  end: number;
+}
+
+interface PercentClaim {
+  value: string;
+  index: number;
+}
 
 function extractChecks(query: string, answer: string): ExactnessCheckInput[] {
-  const haystack = `${query}\n${answer}`;
-  const percentageChange = PERCENTAGE_CHANGE_RE.exec(haystack);
-  if (percentageChange && /(증감률|증가율|감소율|비율|퍼센트|%)/iu.test(haystack)) {
-    const oldValue = percentageChange[1];
-    const newValue = percentageChange[2];
-    if (typeof oldValue === 'string' && typeof newValue === 'string') return [{ id: 'percentage_change_1', kind: 'percentage_change', oldValue, newValue }];
+  const normalizedQuery = normalizePercentageText(query);
+  const normalizedAnswer = normalizePercentageText(answer);
+  const combined = `${normalizedQuery}\n${normalizedAnswer}`;
+  if (!/(증감률|증가율|감소율|비율|퍼센트|프로|percent|pct|%)/iu.test(combined)) return [];
+
+  const answerPairs = findPercentagePairs(normalizedAnswer);
+  const queryPairs = findPercentagePairs(normalizedQuery);
+  const answerClaims = findPercentClaims(normalizedAnswer);
+  const allAnswerTransitionMarkersConsumed = countMatches(normalizedAnswer, TRANSITION_FROM_RE) === answerPairs.length
+    && countMatches(normalizedAnswer, TRANSITION_TO_RE) === answerPairs.length;
+  if (!allAnswerTransitionMarkersConsumed) {
+    return [invalidPercentageCheck(answerPairs[0] ?? queryPairs[0])];
   }
-  return [];
+  if (answerPairs.length === 0) {
+    if (queryPairs.length !== 1 || answerClaims.length !== 1) {
+      return [invalidPercentageCheck(queryPairs[0])];
+    }
+    return [percentageCheck(queryPairs[0]!, 0, answerClaims[0]!.value)];
+  }
+
+  const checks: ExactnessCheckInput[] = [];
+  let ambiguous = false;
+  for (const clause of splitPercentageClauses(normalizedAnswer)) {
+    const pairs = findPercentagePairs(clause);
+    const claims = findPercentClaims(clause);
+    const allTransitionMarkersConsumed = countMatches(clause, TRANSITION_FROM_RE) === pairs.length
+      && countMatches(clause, TRANSITION_TO_RE) === pairs.length;
+    if (pairs.length === 0 && claims.length === 0) continue;
+    if (pairs.length === 1 && claims.length === 1 && allTransitionMarkersConsumed) {
+      const pair = pairs[0]!;
+      const claim = claims[0]!;
+      const between = clause.slice(pair.end, claim.index);
+      if (claim.index >= pair.end && isSafePairClaimConnector(between)) {
+        checks.push(percentageCheck(pair, checks.length, claim.value));
+        continue;
+      }
+    }
+    ambiguous = true;
+  }
+  if (ambiguous || checks.length !== answerPairs.length) {
+    checks.push(invalidPercentageCheck(answerPairs[0]));
+  }
+  return checks;
+}
+
+function normalizePercentageText(source: string): string {
+  return source
+    .normalize('NFKC')
+    .replace(/[−‒–—﹣]/gu, '-')
+    .replace(/[＋﹢]/gu, '+')
+    .replace(/\p{Default_Ignorable_Code_Point}/gu, '');
+}
+
+function findPercentagePairs(source: string): PercentagePair[] {
+  return Array.from(source.matchAll(PERCENTAGE_CHANGE_RE)).flatMap((match) => {
+    const oldValue = match[1];
+    const newValue = match[2];
+    if (typeof match.index !== 'number' || typeof oldValue !== 'string' || typeof newValue !== 'string') return [];
+    return [{ oldValue, newValue, index: match.index, end: match.index + match[0].length }];
+  });
+}
+
+function findPercentClaims(source: string): PercentClaim[] {
+  return Array.from(source.matchAll(PERCENT_CLAIM_RE)).flatMap((match) => {
+    const value = match[1];
+    return typeof match.index === 'number' && typeof value === 'string' ? [{ value, index: match.index }] : [];
+  });
+}
+
+function countMatches(source: string, pattern: RegExp): number {
+  return Array.from(source.matchAll(pattern)).length;
+}
+
+function isSafePairClaimConnector(between: string): boolean {
+  const compact = between.replace(/\s+/gu, '');
+  return /^(?:(?:늘어|늘어나|늘어나서|증가해|증가하여|증가했고|줄어|줄어들어|줄어들어서|감소해|감소하여|감소했고|변경돼|변경되어|변경됐고|변경되었고|증감률은|증감률이|증가율은|증가율이|감소율은|감소율이|약))*$/u.test(compact);
+}
+
+function splitPercentageClauses(source: string): string[] {
+  return source
+    .split(/(?:[\n,，;；!?。]+|(?<!\d)\.(?!\d))/u)
+    .map((clause) => clause.trim())
+    .filter(Boolean);
+}
+
+function percentageCheck(pair: PercentagePair, index: number, expectedTotal?: string): ExactnessCheckInput {
+  return {
+    id: `percentage_change_${index + 1}`,
+    kind: 'percentage_change',
+    oldValue: pair.oldValue,
+    newValue: pair.newValue,
+    ...(expectedTotal ? { expectedTotal } : {}),
+  };
+}
+
+function invalidPercentageCheck(pair?: PercentagePair): ExactnessCheckInput {
+  return {
+    id: 'percentage_change_ambiguous',
+    kind: 'percentage_change',
+    oldValue: pair?.oldValue ?? '0',
+    newValue: pair?.newValue ?? '0',
+    expectedTotal: 'invalid_claimed_percent',
+  };
 }
 
 @Injectable()
@@ -144,19 +257,24 @@ export class ExactnessGateService {
     const value = divToScale(mul(delta, fromInt(100n)), oldValue, 6);
     const rounded = trimScale(value, 4);
     const formatted = formatDecimal(rounded);
+    const expected = check.expectedTotal === undefined ? null : parseDecimal(check.expectedTotal);
+    const tolerance = parseDecimal(check.tolerance ?? '0.01');
+    const status = expected === null || absCompare(sub(rounded, expected), tolerance) <= 0 ? 'passed' : 'mismatch';
     return {
       id: check.id,
       kind: check.kind,
-      status: 'passed',
+      status,
       value: formatted,
-      expected: null,
+      expected: expected === null ? null : formatDecimal(expected),
       ...(check.oldValue !== undefined ? { oldValue: check.oldValue } : {}),
       ...(check.newValue !== undefined ? { newValue: check.newValue } : {}),
       passes: [
         { method: 'decimal_formula', value: formatted, detail: '(new-old)/old*100' },
-        { method: 'decimal_invariant', value: formatted, detail: `old*(1+pct/100)≈new; old=${formatDecimal(oldValue)} new=${formatDecimal(newValue)}` },
+        { method: 'decimal_invariant', value: formatted, detail: expected === null
+          ? `old*(1+pct/100)≈new; old=${formatDecimal(oldValue)} new=${formatDecimal(newValue)}`
+          : `computed_pct == claimed_pct ± ${formatDecimal(tolerance)}; claimed=${formatDecimal(expected)}` },
       ],
-      reason: 'percentage_change_verified',
+      reason: status === 'passed' ? 'percentage_change_verified' : 'percentage_change_mismatch',
     };
   }
 

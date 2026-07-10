@@ -25,6 +25,7 @@ import {
   CreateArtifactResponseSchema,
   ListArtifactsResponseSchema,
   OkResponseSchema,
+  VerifyArtifactVersionRequestSchema,
 } from '@consulting/contracts';
 import type { ArtifactExportPreflightResponse } from '@consulting/contracts';
 import { AccessTokenGuard, requireAuthUserId, type AuthenticatedRequest } from '../auth/access-token.guard.js';
@@ -35,13 +36,13 @@ import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 import type { Response } from 'express';
 import { ArtifactStore } from './artifact.store.js';
 import { ArtifactExportService, type ArtifactExportFormat } from './artifact-export.service.js';
-import { EvidenceDecisionStore } from '../consulting/evidence-decision.store.js';
+import { ArtifactVerificationService } from './artifact-verification.service.js';
 
 /** Roles allowed to write artifacts. viewer/commenter are read-only. */
 const WRITE_ROLES = new Set(['owner', 'admin', 'editor']);
 
 type ArtifactOwnerRef = { workspaceId: string; projectId: string };
-type ArtifactExportVersionRef = { versionNo: number; sourceThreadId: string | null; sourceMessageId: string | null };
+type ArtifactExportVersionRef = { id: string; versionNo: number; content: string; sourceThreadId: string | null; sourceMessageId: string | null };
 
 @Controller('artifacts')
 @UseGuards(AccessTokenGuard)
@@ -52,7 +53,7 @@ export class ArtifactsController {
     @Inject(NotificationStore) private readonly notifications: NotificationStore,
     @Inject(DRIZZLE) private readonly db: Db,
     @Inject(ArtifactExportService) private readonly exporter: ArtifactExportService,
-    @Inject(EvidenceDecisionStore) private readonly gateStore: EvidenceDecisionStore,
+    @Inject(ArtifactVerificationService) private readonly artifactVerification: ArtifactVerificationService,
   ) {}
 
   @Get('workspaces/:workspaceId')
@@ -102,7 +103,7 @@ export class ArtifactsController {
     const version = detail.versions.find((v) => v.versionNo === versionNo);
     if (!version) throw new NotFoundException({ code: 'NOT_FOUND', message: 'artifact version not found' });
 
-    return parseResponse(ArtifactExportPreflightResponseSchema, await this.preflightExport(owner, version));
+    return parseResponse(ArtifactExportPreflightResponseSchema, await this.preflightExport(owner, detail.id, detail.title, version));
   }
 
   @Get(':id/export')
@@ -128,11 +129,12 @@ export class ArtifactsController {
     const version = detail.versions.find((v) => v.versionNo === versionNo);
     if (!version) throw new NotFoundException({ code: 'NOT_FOUND', message: 'artifact version not found' });
 
-    const preflight = await this.preflightExport(owner, version);
+    const preflight = await this.preflightExport(owner, detail.id, detail.title, version);
     if (!preflight.canExport) {
       throw new ConflictException({
         code: 'VERIFIER_GATE_BLOCKED',
         message: '검증 게이트가 이 산출물의 내보내기를 차단했습니다. 핵심 주장의 근거를 보강한 뒤 다시 시도하세요.',
+        reason: preflight.reason,
         gate: preflight.gate,
       });
     }
@@ -148,6 +150,38 @@ export class ArtifactsController {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeRFC5987(exported.fileName)}`);
     res.end(exported.buffer);
+  }
+
+  @Post(':id/verify')
+  async verifyArtifact(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const cmd = parseBody(VerifyArtifactVersionRequestSchema, body);
+    const userId = requireAuthUserId(req);
+    const owner = await this.artifacts.artifactWorkspace(id);
+    if (!owner) throw new NotFoundException({ code: 'NOT_FOUND', message: 'artifact not found' });
+    this.throwIfDenied(await this.access.workspaceMember(userId, owner.workspaceId));
+    await this.requireWriteRole(userId, owner.workspaceId);
+    const detail = await this.artifacts.detail(id);
+    if (!detail) throw new NotFoundException({ code: 'NOT_FOUND', message: 'artifact not found' });
+    const versionNo = cmd.versionNo ?? detail.headVersion;
+    const version = detail.versions.find((item) => item.versionNo === versionNo);
+    if (!version) throw new NotFoundException({ code: 'NOT_FOUND', message: 'artifact version not found' });
+
+    return parseResponse(ArtifactExportPreflightResponseSchema, await this.artifactVerification.verifyVersion({
+      artifactId: detail.id,
+      artifactVersionId: version.id,
+      workspaceId: owner.workspaceId,
+      projectId: owner.projectId,
+      title: detail.title,
+      versionNo: version.versionNo,
+      content: version.content,
+      sourceThreadId: version.sourceThreadId,
+      sourceMessageId: version.sourceMessageId,
+      verifiedByUserId: userId,
+    }));
   }
 
   @Post()
@@ -225,43 +259,21 @@ export class ArtifactsController {
 
   private async preflightExport(
     owner: ArtifactOwnerRef,
+    artifactId: string,
+    title: string,
     version: ArtifactExportVersionRef,
   ): Promise<ArtifactExportPreflightResponse> {
-    if (!version.sourceMessageId) {
-      return {
-        canExport: true,
-        reason: 'NO_SOURCE_MESSAGE',
-        versionNo: version.versionNo,
-        gate: null,
-        messages: [
-          '이 버전은 원본 답변(sourceMessageId)과 연결되지 않아 문장별 검증 게이트를 확인할 수 없습니다.',
-        ],
-      };
-    }
-
-    const source = await this.validateArtifactSource(owner.workspaceId, owner.projectId, version.sourceThreadId, version.sourceMessageId);
-    const gate = await this.gateStore.gateForAssistantMessage({
-      assistantMessageId: source.sourceMessageId!,
+    return this.artifactVerification.preflightVersion({
+      artifactId,
+      artifactVersionId: version.id,
       workspaceId: owner.workspaceId,
-      threadId: source.sourceThreadId,
-    });
-    const messages = [...gate.blockers, ...gate.warnings].map((issue) => issue.message);
-    if (gate.decision === 'BLOCKED') {
-      return {
-        canExport: false,
-        reason: 'VERIFIER_GATE_BLOCKED',
-        versionNo: version.versionNo,
-        gate,
-        messages: messages.length > 0 ? messages : ['검증 게이트가 이 산출물의 내보내기를 차단했습니다.'],
-      };
-    }
-    return {
-      canExport: true,
-      reason: 'OK',
+      projectId: owner.projectId,
+      title,
       versionNo: version.versionNo,
-      gate,
-      messages,
-    };
+      content: version.content,
+      sourceThreadId: version.sourceThreadId,
+      sourceMessageId: version.sourceMessageId,
+    });
   }
 
   /** Editor+ required for writes (A-2 role gate). */

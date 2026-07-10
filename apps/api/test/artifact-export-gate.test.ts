@@ -4,8 +4,7 @@ import { ArtifactsController } from '../src/artifacts/artifacts.controller.js';
 const ARTIFACT_ID = '11111111-1111-4111-8111-111111111111';
 const WORKSPACE_ID = '22222222-2222-4222-8222-222222222222';
 const PROJECT_ID = '33333333-3333-4333-8333-333333333333';
-const THREAD_ID = '44444444-4444-4444-8444-444444444444';
-const MESSAGE_ID = '55555555-5555-4555-8555-555555555555';
+const VERSION_ID = '66666666-6666-4666-8666-666666666666';
 
 function makeController() {
   const artifacts = {
@@ -13,18 +12,18 @@ function makeController() {
     detail: vi.fn().mockResolvedValue({
       id: ARTIFACT_ID,
       projectId: PROJECT_ID,
-      title: '검증 실패 보고서',
+      title: '무원본 미검증 보고서',
       headVersion: 1,
       versions: [
         {
-          id: '66666666-6666-4666-8666-666666666666',
+          id: VERSION_ID,
           versionNo: 1,
           content: '# 검증 실패 보고서\n\n정원 증가는 인건비 부담을 줄입니다.',
-          note: 'from assistant',
+          note: 'manual draft',
           authorUserId: 'user-1',
           authorName: 'User',
-          sourceThreadId: THREAD_ID,
-          sourceMessageId: MESSAGE_ID,
+          sourceThreadId: null,
+          sourceMessageId: null,
           createdAt: '2026-07-08T00:00:00.000Z',
         },
       ],
@@ -40,13 +39,20 @@ function makeController() {
       fileName: 'blocked.pdf',
     }),
   };
-  const gateStore = {
-    gateForAssistantMessage: vi.fn().mockResolvedValue({
-      decision: 'BLOCKED',
-      blockers: [
-        { code: 'high_impact_refute', severity: 'blocker', message: '핵심 claim이 근거와 모순됩니다.', claimId: 'CL-EXPORT-1' },
-      ],
-      warnings: [],
+  const artifactVerification = {
+    preflightVersion: vi.fn().mockResolvedValue({
+      canExport: false,
+      reason: 'ARTIFACT_VERIFICATION_REQUIRED',
+      versionNo: 1,
+      gate: null,
+      messages: ['현재 산출물 버전의 정확한 본문에 대한 검증 결과가 없습니다.'],
+    }),
+    verifyVersion: vi.fn().mockResolvedValue({
+      canExport: true,
+      reason: 'OK',
+      versionNo: 1,
+      gate: { decision: 'PASS', blockers: [], warnings: [] },
+      messages: [],
     }),
   };
   const controller = new (ArtifactsController as any)(
@@ -55,13 +61,13 @@ function makeController() {
     notifications,
     db,
     exporter,
-    gateStore,
+    artifactVerification,
   ) as ArtifactsController;
-  return { controller, exporter, gateStore };
+  return { controller, exporter, artifactVerification };
 }
 
 describe('ArtifactsController final export verifier gate', () => {
-  it('blocks PDF/DOCX export before rendering when source message gate is BLOCKED', async () => {
+  it('blocks PDF/DOCX export before rendering when the exact artifact version has not been verified', async () => {
     const { controller, exporter } = makeController();
     const res = { setHeader: vi.fn(), end: vi.fn() };
 
@@ -70,29 +76,50 @@ describe('ArtifactsController final export verifier gate', () => {
     ).rejects.toMatchObject({
       response: {
         code: 'VERIFIER_GATE_BLOCKED',
-        gate: {
-          decision: 'BLOCKED',
-          blockers: [expect.objectContaining({ code: 'high_impact_refute', claimId: 'CL-EXPORT-1' })],
-        },
+        gate: null,
       },
     });
     expect(exporter.export).not.toHaveBeenCalled();
   });
 
-  it('preflights blocked export without rendering the artifact', async () => {
-    const { controller, exporter } = makeController();
+  it('preflights the exact artifact version through the shared version verification service', async () => {
+    const { controller, exporter, artifactVerification } = makeController();
 
     const response = await controller.exportPreflight(ARTIFACT_ID, 'pdf', undefined, { authUserId: 'user-1' } as any);
 
     expect(response).toMatchObject({
       canExport: false,
-      reason: 'VERIFIER_GATE_BLOCKED',
-      gate: {
-        decision: 'BLOCKED',
-        blockers: [expect.objectContaining({ code: 'high_impact_refute', claimId: 'CL-EXPORT-1' })],
-      },
+      reason: 'ARTIFACT_VERIFICATION_REQUIRED',
+      gate: null,
     });
+    expect(artifactVerification.preflightVersion).toHaveBeenCalledWith(expect.objectContaining({
+      artifactId: ARTIFACT_ID,
+      artifactVersionId: VERSION_ID,
+      workspaceId: WORKSPACE_ID,
+      projectId: PROJECT_ID,
+    }));
     expect(exporter.export).not.toHaveBeenCalled();
+  });
+
+  it('verifies the current artifact body and binds the result to that version before export', async () => {
+    const { controller, artifactVerification } = makeController();
+    (controller as any).requireWriteRole = vi.fn().mockResolvedValue(undefined);
+
+    const response = await (controller as any).verifyArtifact(
+      ARTIFACT_ID,
+      { versionNo: 1 },
+      { authUserId: 'user-1' },
+    );
+
+    expect(response).toMatchObject({ canExport: true, reason: 'OK', versionNo: 1 });
+    expect(artifactVerification.verifyVersion).toHaveBeenCalledWith(expect.objectContaining({
+      artifactId: ARTIFACT_ID,
+      artifactVersionId: VERSION_ID,
+      workspaceId: WORKSPACE_ID,
+      projectId: PROJECT_ID,
+      content: '# 검증 실패 보고서\n\n정원 증가는 인건비 부담을 줄입니다.',
+      verifiedByUserId: 'user-1',
+    }));
   });
 });
 
@@ -105,7 +132,7 @@ function makeSourceDb() {
         limit: vi.fn(async () => [{
           workspaceId: WORKSPACE_ID,
           projectId: PROJECT_ID,
-          threadId: THREAD_ID,
+          threadId: null,
         }]),
       })),
     })),

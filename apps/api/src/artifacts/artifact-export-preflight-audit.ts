@@ -1,24 +1,26 @@
-import { VerifierGatePolicyService, type VerifierGateResult } from '../consulting/verifier-gate-policy.service.js';
-import type { ClaimVerdict, ClaimVerdictKind } from '../consulting/evidence-to-decision.service.js';
-import type { ExactnessRunStatus } from '../consulting/exactness-gate.service.js';
+import { createHash } from 'node:crypto';
+import type { VerifierGateResult } from '../consulting/verifier-gate-policy.service.js';
 
-export interface ArtifactExportPreflightAuditVerdictRow {
-  claimId: string;
-  claimText: string;
-  verdict: ClaimVerdictKind;
-  confidence: number | string | null;
-  rationale: string;
+export interface ArtifactVersionVerificationSnapshot {
+  artifactId: string;
+  artifactVersionId: string;
+  workspaceId: string;
+  projectId: string;
+  contentHash: string;
+  gate: VerifierGateResult;
 }
 
 export interface ArtifactExportPreflightAuditInputRow {
   artifactId: string;
+  artifactVersionId: string;
+  workspaceId: string;
+  projectId: string;
   title: string;
   versionNo: number;
+  content: string;
   sourceThreadId: string | null;
   sourceMessageId: string | null;
-  sourceValid: boolean | null;
-  exactnessStatus: ExactnessRunStatus | null;
-  verdicts: ArtifactExportPreflightAuditVerdictRow[];
+  verification: ArtifactVersionVerificationSnapshot | null;
 }
 
 export interface ArtifactExportPreflightAuditInput {
@@ -29,12 +31,13 @@ export interface ArtifactExportPreflightAuditInput {
 
 export interface ArtifactExportPreflightAuditRowResult {
   artifactId: string;
+  artifactVersionId: string;
   title: string;
   versionNo: number;
   sourceThreadId: string | null;
   sourceMessageId: string | null;
   canExport: boolean;
-  reason: 'OK' | 'NO_SOURCE_MESSAGE' | 'INVALID_SOURCE_MESSAGE' | 'VERIFIER_GATE_BLOCKED';
+  reason: 'OK' | 'ARTIFACT_VERIFICATION_REQUIRED' | 'VERIFIER_GATE_BLOCKED';
   gate: VerifierGateResult | null;
   messages: string[];
 }
@@ -44,17 +47,22 @@ export interface ArtifactExportPreflightAuditResult {
   status: 'ok' | 'blocked';
   projectId: string;
   projectName: string;
-  summary: { total: number; exportable: number; blocked: number; noSourceMessage: number; invalidSourceMessage: number };
+  summary: { total: number; exportable: number; blocked: number; verificationRequired: number };
   rows: ArtifactExportPreflightAuditRowResult[];
 }
 
-const gatePolicy = new VerifierGatePolicyService();
+export function artifactContentHash(content: string): string {
+  return createHash('sha256').update(content, 'utf8').digest('hex');
+}
+
+export function artifactTitleHash(title: string): string {
+  return createHash('sha256').update(title, 'utf8').digest('hex');
+}
 
 export function auditArtifactExportPreflight(input: ArtifactExportPreflightAuditInput): ArtifactExportPreflightAuditResult {
   const rows = input.rows.map(auditRow);
   const blocked = rows.filter((row) => !row.canExport).length;
-  const noSourceMessage = rows.filter((row) => row.reason === 'NO_SOURCE_MESSAGE').length;
-  const invalidSourceMessage = rows.filter((row) => row.reason === 'INVALID_SOURCE_MESSAGE').length;
+  const verificationRequired = rows.filter((row) => row.reason === 'ARTIFACT_VERIFICATION_REQUIRED').length;
   return {
     readOnly: true,
     status: blocked > 0 ? 'blocked' : 'ok',
@@ -64,87 +72,62 @@ export function auditArtifactExportPreflight(input: ArtifactExportPreflightAudit
       total: rows.length,
       exportable: rows.length - blocked,
       blocked,
-      noSourceMessage,
-      invalidSourceMessage,
+      verificationRequired,
     },
     rows,
   };
 }
 
 function auditRow(row: ArtifactExportPreflightAuditInputRow): ArtifactExportPreflightAuditRowResult {
-  if (!row.sourceMessageId) {
-    return {
-      artifactId: row.artifactId,
-      title: row.title,
-      versionNo: row.versionNo,
-      sourceThreadId: row.sourceThreadId,
-      sourceMessageId: row.sourceMessageId,
-      canExport: true,
-      reason: 'NO_SOURCE_MESSAGE',
-      gate: null,
-      messages: ['이 버전은 원본 답변(sourceMessageId)과 연결되지 않아 문장별 검증 게이트를 확인할 수 없습니다.'],
-    };
-  }
-
-  if (row.sourceValid === false) {
-    return {
-      artifactId: row.artifactId,
-      title: row.title,
-      versionNo: row.versionNo,
-      sourceThreadId: row.sourceThreadId,
-      sourceMessageId: row.sourceMessageId,
-      canExport: false,
-      reason: 'INVALID_SOURCE_MESSAGE',
-      gate: null,
-      messages: ['산출물 원본 답변(sourceMessageId)이 현재 프로젝트의 활성 thread/topic/channel에 속하지 않습니다.'],
-    };
-  }
-
-  const exactnessStatus = normalizeExactness(row.exactnessStatus);
-  const gate = gatePolicy.evaluate({
-    mode: 'final_export',
-    ...(exactnessStatus ? { exactnessStatus } : {}),
-    citationIssueCount: 0,
-    verdicts: row.verdicts.map(verdictForGate),
-  });
-  const messages = [...gate.blockers, ...gate.warnings].map((issue) => issue.message);
-  const blocked = gate.decision === 'BLOCKED';
-  return {
+  const base = {
     artifactId: row.artifactId,
+    artifactVersionId: row.artifactVersionId,
     title: row.title,
     versionNo: row.versionNo,
     sourceThreadId: row.sourceThreadId,
     sourceMessageId: row.sourceMessageId,
-    canExport: !blocked,
-    reason: blocked ? 'VERIFIER_GATE_BLOCKED' : 'OK',
-    gate,
-    messages: blocked && messages.length === 0 ? ['검증 게이트가 이 산출물의 내보내기를 차단했습니다.'] : messages,
   };
-}
+  if (!verificationMatches(row, row.verification)) {
+    return {
+      ...base,
+      canExport: false,
+      reason: 'ARTIFACT_VERIFICATION_REQUIRED',
+      gate: null,
+      messages: ['현재 산출물 버전의 정확한 본문에 대한 검증 결과가 없습니다. 본문 검증을 실행한 뒤 다시 시도하세요.'],
+    };
+  }
 
-function verdictForGate(row: ArtifactExportPreflightAuditVerdictRow): ClaimVerdict {
-  const verdict: ClaimVerdictKind = row.verdict === 'refutes' || row.verdict === 'mixed' || row.verdict === 'not_enough_info'
-    ? row.verdict
-    : 'supports';
+  const gate = row.verification.gate;
+  const messages = [...gate.blockers, ...gate.warnings].map((issue) => issue.message);
+  const cleanPass = gate.decision === 'PASS' && gate.blockers.length === 0 && gate.warnings.length === 0;
+  if (!cleanPass) {
+    return {
+      ...base,
+      canExport: false,
+      reason: 'VERIFIER_GATE_BLOCKED',
+      gate,
+      messages: messages.length > 0 ? messages : ['검증 게이트가 이 산출물의 내보내기를 차단했습니다.'],
+    };
+  }
   return {
-    claimId: row.claimId,
-    claimText: row.claimText,
-    evidenceId: null,
-    verdict,
-    confidence: clamp01(Number(row.confidence ?? 0)),
-    matchedTerms: [],
-    contradictedTerms: [],
-    rationale: row.rationale,
-    decisionImpact: verdict === 'refutes' || verdict === 'mixed' ? 0.82 : verdict === 'not_enough_info' ? 0.62 : 0.5,
+    ...base,
+    canExport: true,
+    reason: 'OK',
+    gate,
+    messages,
   };
 }
 
-function normalizeExactness(value: ExactnessRunStatus | null): ExactnessRunStatus | undefined {
-  if (value === 'blocked' || value === 'passed' || value === 'skipped') return value;
-  return undefined;
-}
-
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.min(1, value));
+function verificationMatches(
+  row: ArtifactExportPreflightAuditInputRow,
+  verification: ArtifactVersionVerificationSnapshot | null,
+): verification is ArtifactVersionVerificationSnapshot {
+  return Boolean(
+    verification
+      && verification.artifactId === row.artifactId
+      && verification.artifactVersionId === row.artifactVersionId
+      && verification.workspaceId === row.workspaceId
+      && verification.projectId === row.projectId
+      && verification.contentHash === artifactContentHash(row.content),
+  );
 }

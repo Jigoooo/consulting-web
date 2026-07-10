@@ -51,13 +51,13 @@ export class VerifierGatePolicyService {
 
     const structuralBlocksEnabled = input.mode === 'report_decision' || input.mode === 'final_export';
     const finalExport = input.mode === 'final_export';
-    const verifierTelemetryPresent = Boolean(input.exactnessStatus)
+    const verifierTelemetryPresent = input.exactnessStatus === 'passed' || input.exactnessStatus === 'blocked'
       || Boolean(input.citationIssueCount && input.citationIssueCount > 0)
       || Boolean(input.verdicts?.length)
       || Boolean(input.judgmentIssues?.length);
 
     if (finalExport && !verifierTelemetryPresent) {
-      push({ code: 'missing_verifier_telemetry', message: '원본 답변의 검증 텔레메트리(verdict/exactness/judgment)가 없어 최종 내보내기를 검증할 수 없습니다.' }, true);
+      push({ code: 'missing_verifier_telemetry', message: '대상 본문의 검증 텔레메트리(verdict/exactness/judgment)가 없어 최종 내보내기를 검증할 수 없습니다.' }, true);
     }
 
     if (input.exactnessStatus === 'blocked') {

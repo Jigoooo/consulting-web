@@ -579,3 +579,42 @@ gateway: http://127.0.0.1:8642/v1/health status=ok
 장기 ROI:
   높음 — topic 수·file_chunks 수가 커지고 ANN/pgvector 검색이 필요해질 때.
 ```
+
+---
+
+## 11. 2026-07-10 artifact-version verification ledger
+
+최종 PDF/DOCX 승인을 source-message telemetry가 아니라 실제 artifact bytes에 귀속하기 위해
+`artifact_version_verifications` append-only run ledger를 추가했다. 적용 migration은
+`0027_artifact_version_verification_ledger.sql`이다.
+
+키와 제약:
+
+```text
+identity: workspace_id + project_id + artifact_id + artifact_version_id
+content: SHA-256(exact UTF-8 content), lowercase hex 64 chars
+payload: exactness + verdicts + gate + verifier + evidence_count
+provenance: source_thread_id/source_message_id nullable
+status: exact PASS만 passed, PASS_WITH_WARNINGS/BLOCKED는 blocked
+ordering: sequence_no bigint identity (monotonic)
+indexes: scope, artifact+version+sequence, version+content_hash+sequence
+```
+
+안전 판정:
+
+```text
+- artifact_version_id별 sequence_no 최신 run을 먼저 읽은 뒤 identity/hash를 비교한다.
+- 최신 run이 tenant/hash mismatch, soft-delete, malformed, status↔gate 모순이면 과거 PASS를 탐색하지 않고 차단한다.
+- DB CHECK도 passed=clean PASS, blocked=BLOCKED/PASS_WITH_WARNINGS 일관성을 강제한다.
+- PASS + blockers/warnings 0건만 내보낸다.
+- source message 삭제나 부재는 승인 의미를 바꾸지 않는다.
+- 사용자·workspace·artifact 물리 삭제 cascade 외에는 application write path가 INSERT만 수행한다.
+```
+
+Pre-deploy 실측:
+
+```text
+isolated PostgreSQL migrations 0000..0027: PASS
+real ledger insert/read tenant/hash/malformed/status regression: PASS
+production table/readback: pending deploy
+```

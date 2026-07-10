@@ -26,7 +26,7 @@ import { parseBody, parseResponse } from '../http/contract-adapter.js';
 import { ChatStreamUseCase } from './chat-stream.usecase.js';
 import { HermesRunsClient } from './hermes-runs-client.js';
 import { ChatMessageStore, type FinishState } from './chat-message.store.js';
-import { EvidenceStore, type CapturedToolUse } from './evidence.store.js';
+import { captureToolEvidence, EvidenceStore, type CapturedToolUse } from './evidence.store.js';
 import { NotificationStore } from './notification.store.js';
 import { SpaceAccessService, type SpaceAccess } from '../spaces/space-access.service.js';
 import { EvidenceDecisionStore } from '../consulting/evidence-decision.store.js';
@@ -371,9 +371,7 @@ export class ChatStreamController {
         }
         if (parsed.type === 'start') runId = parsed.runId;
         if (parsed.type === 'delta') assistantText += parsed.text;
-        if (parsed.type === 'tool' && parsed.phase === 'started') {
-          toolUses.push({ tool: parsed.tool, preview: parsed.preview ?? null });
-        }
+        if (parsed.type === 'tool') captureToolEvidence(toolUses, parsed);
         if (parsed.type === 'error') finishState = 'error';
         if (res.writableEnded) break;
         res.write(`event: ${outbound.type}\n`);

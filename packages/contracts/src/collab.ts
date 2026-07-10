@@ -330,10 +330,15 @@ export const CreateArtifactResponseSchema = z
   .strict();
 export type CreateArtifactResponse = z.infer<typeof CreateArtifactResponseSchema>;
 
+export const VerifyArtifactVersionRequestSchema = z
+  .object({ versionNo: z.number().int().positive().optional() })
+  .strict();
+export type VerifyArtifactVersionRequest = z.infer<typeof VerifyArtifactVersionRequestSchema>;
+
 export const ArtifactExportPreflightResponseSchema = z
   .object({
     canExport: z.boolean(),
-    reason: z.enum(['OK', 'NO_SOURCE_MESSAGE', 'VERIFIER_GATE_BLOCKED']),
+    reason: z.enum(['OK', 'ARTIFACT_VERIFICATION_REQUIRED', 'VERIFIER_GATE_BLOCKED']),
     versionNo: z.number().int().positive(),
     gate: VerifierGateSummarySchema.nullable(),
     messages: z.array(z.string().min(1)).max(20),

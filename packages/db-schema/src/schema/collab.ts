@@ -1,4 +1,4 @@
-import { pgTable, text, uuid, integer, index, unique, timestamp, jsonb } from 'drizzle-orm/pg-core';
+import { pgTable, text, uuid, integer, bigint, index, unique, timestamp, jsonb } from 'drizzle-orm/pg-core';
 import { evidenceSource, notificationType } from './enums';
 import { workspaces } from './organization';
 import { users } from './identity';
@@ -99,6 +99,49 @@ export const artifactVersions = pgTable(
     unique('artifact_versions_no_unique').on(t.artifactId, t.versionNo),
     index('artifact_versions_artifact_idx').on(t.artifactId),
     index('artifact_versions_workspace_idx').on(t.workspaceId),
+  ],
+);
+
+/**
+ * Append-only final-export verification ledger. A run is reusable only when
+ * tenant scope, artifact/version identity, and the exact UTF-8 content hash
+ * all match the immutable artifact version being exported.
+ */
+export const artifactVersionVerifications = pgTable(
+  'artifact_version_verifications',
+  {
+    id: primaryId,
+    sequenceNo: bigint('sequence_no', { mode: 'number' }).generatedAlwaysAsIdentity().notNull(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    artifactId: uuid('artifact_id')
+      .notNull()
+      .references(() => artifacts.id, { onDelete: 'cascade' }),
+    artifactVersionId: uuid('artifact_version_id')
+      .notNull()
+      .references(() => artifactVersions.id, { onDelete: 'cascade' }),
+    contentHash: text('content_hash').notNull(),
+    sourceThreadId: uuid('source_thread_id').references(() => threads.id, { onDelete: 'set null' }),
+    sourceMessageId: uuid('source_message_id').references(() => chatMessages.id, { onDelete: 'set null' }),
+    status: text('status').notNull(),
+    exactness: jsonb('exactness').$type<Record<string, unknown>>().notNull(),
+    verdicts: jsonb('verdicts').$type<Record<string, unknown>[]>().notNull().default([]),
+    gate: jsonb('gate').$type<Record<string, unknown>>().notNull(),
+    verifier: text('verifier').notNull(),
+    evidenceCount: integer('evidence_count').notNull().default(0),
+    verifiedByUserId: uuid('verified_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    ...timestamps,
+    ...softDelete,
+  },
+  (t) => [
+    unique('artifact_verifications_sequence_unique').on(t.sequenceNo),
+    index('artifact_verifications_scope_idx').on(t.workspaceId, t.projectId, t.createdAt),
+    index('artifact_verifications_artifact_idx').on(t.artifactId, t.artifactVersionId, t.sequenceNo),
+    index('artifact_verifications_version_hash_idx').on(t.artifactVersionId, t.contentHash, t.sequenceNo),
   ],
 );
 

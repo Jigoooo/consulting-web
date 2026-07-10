@@ -4,6 +4,7 @@ import type {
   AddEvidenceRequest,
   CreateArtifactRequest,
   AddArtifactVersionRequest,
+  VerifyArtifactVersionRequest,
   ReviewQueueDecisionRequest,
   UploadAttachmentRequest,
 } from '@consulting/contracts';
@@ -107,6 +108,17 @@ export function useAddArtifactVersion(workspaceId: string | undefined) {
       void qc.invalidateQueries({ queryKey: collabKeys.artifacts(workspaceId ?? '') });
       void qc.invalidateQueries({ queryKey: collabKeys.artifact(v.id) });
       void qc.invalidateQueries({ queryKey: ['artifact-export-preflight', v.id] });
+    },
+  });
+}
+
+export function useVerifyArtifactVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { id: string; body: VerifyArtifactVersionRequest }) =>
+      api.verifyArtifactVersion(input.id, input.body),
+    onSuccess: (_data, input) => {
+      void qc.invalidateQueries({ queryKey: ['artifact-export-preflight', input.id] });
     },
   });
 }
