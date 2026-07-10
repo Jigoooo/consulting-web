@@ -182,4 +182,71 @@ d('Evidence-to-Decision API', () => {
       }),
     }));
   });
+
+  it('lists thread retrieval hits and records one-click relevance feedback without cross-workspace access', async () => {
+    const owner = await makeUser('retrieval-feedback-owner');
+    const outsider = await makeUser('retrieval-feedback-outsider');
+    const { project, channel, topic, thread } = await makeSpaces(owner.bearer, owner.personalWorkspaceId);
+    const [run] = await db
+      .insert(schema.retrievalRuns)
+      .values({
+        workspaceId: owner.personalWorkspaceId,
+        projectId: project.id,
+        channelId: channel.id,
+        topicId: topic.id,
+        threadId: thread.id,
+        traceId: `feedback-${Date.now()}`,
+        queryHash: 'feedback-query-hash',
+        queryText: '근속승진 호봉',
+        status: 'ok',
+        hitCount: 1,
+      })
+      .returning({ id: schema.retrievalRuns.id });
+    expect(run).toBeDefined();
+    const [hit] = await db
+      .insert(schema.retrievalHits)
+      .values({
+        workspaceId: owner.personalWorkspaceId,
+        retrievalRunId: run!.id,
+        threadId: thread.id,
+        rank: 1,
+        hitKind: 'dialogue_chunk',
+        sourceTopicSlug: 'changwon-org-mgmt-diagnosis',
+        docTitle: '창원 근속승진 검토',
+        textPreview: '근속승진과 호봉 관련 검색 근거',
+      })
+      .returning({ id: schema.retrievalHits.id });
+    expect(hit).toBeDefined();
+
+    const listed = (await request(app.getHttpServer())
+      .get(`/chat/threads/${thread.id}/retrieval-hits`)
+      .set('authorization', owner.bearer)
+      .expect(200)).body as { hits: Array<{ id: string; judgedRelevant: boolean | null; failureType: string | null }> };
+    expect(listed.hits).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: hit!.id, judgedRelevant: null, failureType: null }),
+    ]));
+
+    await request(app.getHttpServer())
+      .post(`/chat/threads/${thread.id}/retrieval-hits/${hit!.id}/feedback`)
+      .set('authorization', owner.bearer)
+      .send({ judgedRelevant: false, failureType: 'wrong_project' })
+      .expect(200);
+    expect((await db.select({ judgedRelevant: schema.retrievalHits.judgedRelevant, failureType: schema.retrievalHits.failureType })
+      .from(schema.retrievalHits)
+      .where(eq(schema.retrievalHits.id, hit!.id)))[0]).toEqual({ judgedRelevant: false, failureType: 'wrong_project' });
+
+    await request(app.getHttpServer())
+      .post(`/chat/threads/${thread.id}/retrieval-hits/${hit!.id}/feedback`)
+      .set('authorization', owner.bearer)
+      .send({ judgedRelevant: true })
+      .expect(200);
+    expect((await db.select({ judgedRelevant: schema.retrievalHits.judgedRelevant, failureType: schema.retrievalHits.failureType })
+      .from(schema.retrievalHits)
+      .where(eq(schema.retrievalHits.id, hit!.id)))[0]).toEqual({ judgedRelevant: true, failureType: null });
+
+    await request(app.getHttpServer())
+      .get(`/chat/threads/${thread.id}/retrieval-hits`)
+      .set('authorization', outsider.bearer)
+      .expect(403);
+  });
 });

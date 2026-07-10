@@ -5,6 +5,7 @@ import type {
   CreateArtifactRequest,
   AddArtifactVersionRequest,
   VerifyArtifactVersionRequest,
+  RecordRetrievalHitFeedbackRequest,
   ReviewQueueDecisionRequest,
   UploadAttachmentRequest,
 } from '@consulting/contracts';
@@ -12,6 +13,7 @@ import type {
 export const collabKeys = {
   evidence: (threadId: string) => ['evidence', threadId] as const,
   evidenceDecision: (threadId: string) => ['evidence-decision', threadId] as const,
+  retrievalHits: (threadId: string) => ['retrieval-hits', threadId] as const,
   reviewQueue: (threadId: string) => ['review-queue', threadId] as const,
   artifacts: (workspaceId: string) => ['artifacts', workspaceId] as const,
   artifact: (id: string) => ['artifact', id] as const,
@@ -52,6 +54,23 @@ export function useEvidenceDecisionSummary(threadId: string | undefined) {
     queryKey: collabKeys.evidenceDecision(threadId ?? ''),
     queryFn: () => api.evidenceDecisionSummary(threadId!),
     enabled: Boolean(threadId),
+  });
+}
+
+export function useRetrievalHits(threadId: string | undefined) {
+  return useQuery({
+    queryKey: collabKeys.retrievalHits(threadId ?? ''),
+    queryFn: () => api.listRetrievalHits(threadId!),
+    enabled: Boolean(threadId),
+  });
+}
+
+export function useRetrievalHitFeedback(threadId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { hitId: string; body: RecordRetrievalHitFeedbackRequest }) =>
+      api.recordRetrievalHitFeedback(threadId!, input.hitId, input.body),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: collabKeys.retrievalHits(threadId ?? '') }),
   });
 }
 

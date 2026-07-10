@@ -302,6 +302,26 @@
   border-color: var(--accent);
   color: var(--accent);
 }
+.retrievalFeedback {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.reviewRow[data-feedback='relevant'] {
+  border-color: color-mix(in srgb, var(--semantic-success) 30%, var(--border-hair));
+}
+.reviewRow[data-feedback='failure'] {
+  border-color: color-mix(in srgb, var(--semantic-warning) 34%, var(--border-hair));
+}
+.reviewPromptButton[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.reviewPromptButton:disabled {
+  cursor: progress;
+  opacity: 0.55;
+}
 .reviewDecisionButton {
   color: var(--accent);
   background: var(--accent-soft);

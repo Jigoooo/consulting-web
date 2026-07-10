@@ -11,6 +11,7 @@ import {
   ChatStreamEventSchema,
   ChatStreamRequestSchema,
   EvidenceDecisionSummaryResponseSchema,
+  ListRetrievalHitFeedbackResponseSchema,
   ListEvidenceResponseSchema,
   ListMessagesPageRequestSchema,
   ListMessagesPageResponseSchema,
@@ -18,6 +19,7 @@ import {
   OkResponseSchema,
   ReviewQueueDecisionRequestSchema,
   ReviewQueueResponseSchema,
+  RecordRetrievalHitFeedbackRequestSchema,
   SearchMessagesRequestSchema,
   SearchMessagesResponseSchema,
 } from '@consulting/contracts';
@@ -133,6 +135,40 @@ export class ChatStreamController {
   async evidenceDecisionSummary(@Param('threadId') threadId: string, @Req() req: AuthenticatedRequest) {
     await this.requireThreadRead(requireAuthUserId(req), threadId);
     return parseResponse(EvidenceDecisionSummaryResponseSchema, await this.evidenceDecision.summary(threadId));
+  }
+
+  /** Latest GraphRAG retrieval hits for one-click relevance/failure labeling. */
+  @Get('threads/:threadId/retrieval-hits')
+  @UseGuards(AccessTokenGuard)
+  async listRetrievalHits(@Param('threadId') threadId: string, @Req() req: AuthenticatedRequest) {
+    const access = await this.requireThreadRead(requireAuthUserId(req), threadId);
+    return parseResponse(ListRetrievalHitFeedbackResponseSchema, await this.evidenceDecision.listRetrievalHits({
+      workspaceId: access.workspaceId,
+      threadId,
+    }));
+  }
+
+  /** Record a human relevance judgment; a negative judgment requires one taxonomy label. */
+  @Post('threads/:threadId/retrieval-hits/:hitId/feedback')
+  @HttpCode(200)
+  @UseGuards(AccessTokenGuard)
+  async recordRetrievalHitFeedback(
+    @Param('threadId') threadId: string,
+    @Param('hitId') hitId: string,
+    @Body() body: unknown,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const cmd = parseBody(RecordRetrievalHitFeedbackRequestSchema, body);
+    const access = await this.requireThreadRead(requireAuthUserId(req), threadId);
+    const ok = await this.evidenceDecision.recordRetrievalHitFeedback({
+      workspaceId: access.workspaceId,
+      threadId,
+      hitId,
+      judgedRelevant: cmd.judgedRelevant,
+      failureType: cmd.failureType ?? null,
+    });
+    if (!ok) throw new NotFoundException({ code: 'RETRIEVAL_HIT_NOT_FOUND', message: 'Retrieval hit not found' });
+    return parseResponse(OkResponseSchema, { ok: true });
   }
 
   /** Active review queue ordered by decision impact × uncertainty × evidence gap. */

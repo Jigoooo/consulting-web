@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { useEvidence, useProjectEvidence, useAddEvidence, useEvidenceDecisionSummary, useReviewQueue, useReviewQueueDecision } from '../../../lib/collab';
+import { useEvidence, useProjectEvidence, useAddEvidence, useEvidenceDecisionSummary, useRetrievalHits, useRetrievalHitFeedback, useReviewQueue, useReviewQueueDecision } from '../../../lib/collab';
 import { composerDraftRequestStore, useHoveredMessage } from '../../../lib/threadCtx';
 import { useToast } from '../../../shared/ui/toast/Toast';
 import { Icon } from '../../../shared/icons/Icon';
-import type { EvidenceDecisionSummaryResponse, ReviewQueueResponse } from '@consulting/contracts';
+import type { EvidenceDecisionSummaryResponse, ListRetrievalHitFeedbackResponse, RecordRetrievalHitFeedbackRequest, RetrievalFailureType, ReviewQueueResponse } from '@consulting/contracts';
 import type { IconName } from '../../../shared/icons/registry';
 import { Button } from '../../../shared/ui/button/Button';
 import { Input, Textarea } from '../../../shared/ui/input/Input';
@@ -27,6 +27,14 @@ const sourceIcon: Record<string, IconName> = {
   tool: 'wrench',
   manual: 'pin',
 };
+
+const retrievalFailureActions: readonly { failureType: RetrievalFailureType; label: string }[] = [
+  { failureType: 'semantic_false_positive', label: '무관' },
+  { failureType: 'wrong_project', label: '다른 프로젝트' },
+  { failureType: 'raw_over_selected', label: '원문 과다' },
+  { failureType: 'stale_source', label: '오래된 자료' },
+  { failureType: 'duplicate_chunk', label: '중복' },
+];
 
 type EvidenceScope = 'channel' | 'project';
 type EvidenceMode = 'sources' | 'verification' | 'scorecard' | 'review';
@@ -58,6 +66,8 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
   // without flashing a cold query state.
   const projectEv = useProjectEvidence(projectId, Boolean(projectId));
   const decision = useEvidenceDecisionSummary(threadId);
+  const retrieval = useRetrievalHits(threadId);
+  const retrievalFeedback = useRetrievalHitFeedback(threadId);
   const review = useReviewQueue(threadId);
   const reviewDecision = useReviewQueueDecision(threadId);
   const data = scope === 'project' ? projectEv.data : channelEv.data;
@@ -70,6 +80,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
   const [excerpt, setExcerpt] = useState('');
   const [url, setUrl] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [pendingRetrievalHitId, setPendingRetrievalHitId] = useState<string | null>(null);
   const [pendingReviewItemId, setPendingReviewItemId] = useState<string | null>(null);
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
   const showLoading = useDelayedFlag(isLoading, 300, 260);
@@ -145,6 +156,18 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
     }
   }
 
+  async function labelRetrievalHit(hitId: string, body: RecordRetrievalHitFeedbackRequest) {
+    setPendingRetrievalHitId(hitId);
+    try {
+      await retrievalFeedback.mutateAsync({ hitId, body });
+      toast('success', body.judgedRelevant ? '유효한 검색 근거로 기록했어요.' : '검색 실패 사유를 기록했어요.');
+    } catch {
+      toast('error', '검색 근거 평가 저장에 실패했어요. 다시 시도해주세요.');
+    } finally {
+      setPendingRetrievalHitId(null);
+    }
+  }
+
   const items = data?.evidence ?? [];
   const selected = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
 
@@ -189,7 +212,15 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
 
       <div key={mode} className={s.modePanel} data-direction={modeDirection} data-mode={mode}>
         {mode === 'verification' ? (
-        <VerificationView isLoading={decision.isLoading} summary={decision.data} />
+        <div className={s.decisionStack}>
+          <VerificationView isLoading={decision.isLoading} summary={decision.data} />
+          <RetrievalFeedbackView
+            isLoading={retrieval.isLoading}
+            hits={retrieval.data?.hits ?? []}
+            pendingHitId={pendingRetrievalHitId}
+            onFeedback={(hitId, body) => void labelRetrievalHit(hitId, body)}
+          />
+        </div>
       ) : null}
 
       {mode === 'scorecard' ? (
@@ -339,6 +370,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
 }
 
 type DecisionSummary = EvidenceDecisionSummaryResponse;
+type RetrievalHit = ListRetrievalHitFeedbackResponse['hits'][number];
 type ReviewItem = ReviewQueueResponse['items'][number];
 
 function VerificationView({ isLoading, summary }: { isLoading: boolean; summary: DecisionSummary | undefined }) {
@@ -381,6 +413,62 @@ function VerificationView({ isLoading, summary }: { isLoading: boolean; summary:
           <span className={s.verdictMeta}>신뢰 {Math.round(row.confidence * 100)}%</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+function RetrievalFeedbackView({
+  isLoading,
+  hits,
+  pendingHitId,
+  onFeedback,
+}: {
+  isLoading: boolean;
+  hits: RetrievalHit[];
+  pendingHitId: string | null;
+  onFeedback: (hitId: string, body: RecordRetrievalHitFeedbackRequest) => void;
+}) {
+  return (
+    <div className={s.retrievalFeedback} data-testid="retrieval-hit-feedback-panel">
+      <div className={s.sectionLabel}>검색 근거 품질</div>
+      {isLoading ? <PanelLoading label="검색 근거 불러오는 중" /> : null}
+      {!isLoading && hits.length === 0 ? <div className={s.gateDetail}>이 채널에서 평가할 검색 근거가 아직 없어요.</div> : null}
+      {hits.slice(0, 8).map((hit) => {
+        const disabled = pendingHitId !== null;
+        return (
+          <div key={hit.id} className={s.reviewRow} data-feedback={hit.judgedRelevant === null ? 'unlabeled' : hit.judgedRelevant ? 'relevant' : 'failure'}>
+            <div className={s.reviewTop}>
+              <span>{hit.docTitle ?? hit.hitKind}</span>
+              <b>#{hit.rank}</b>
+            </div>
+            <div className={s.reviewTitle}>{hit.textPreview}</div>
+            <div className={s.reviewReasons}>질의: {hit.queryText}{hit.sourceTopicSlug ? ` · ${hit.sourceTopicSlug}` : ''}</div>
+            <div className={s.reviewPromptActions} aria-label="검색 근거 평가">
+              <button
+                type="button"
+                className={`${s.reviewPromptButton} cwTap`}
+                aria-pressed={hit.judgedRelevant === true}
+                disabled={disabled}
+                onClick={() => onFeedback(hit.id, { judgedRelevant: true })}
+              >
+                👍 유효
+              </button>
+              {retrievalFailureActions.map((action) => (
+                <button
+                  key={action.failureType}
+                  type="button"
+                  className={`${s.reviewPromptButton} cwTap`}
+                  aria-pressed={hit.failureType === action.failureType}
+                  disabled={disabled}
+                  onClick={() => onFeedback(hit.id, { judgedRelevant: false, failureType: action.failureType })}
+                >
+                  👎 {action.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -72,6 +72,7 @@ import {
   type OkResponse,
   ListEvidenceResponseSchema,
   EvidenceDecisionSummaryResponseSchema,
+  ListRetrievalHitFeedbackResponseSchema,
   ReviewQueueResponseSchema,
   ListArtifactsResponseSchema,
   ArtifactDetailResponseSchema,
@@ -81,6 +82,8 @@ import {
   type AddEvidenceRequest,
   type ListEvidenceResponse,
   type EvidenceDecisionSummaryResponse,
+  type ListRetrievalHitFeedbackResponse,
+  type RecordRetrievalHitFeedbackRequest,
   type ReviewQueueResponse,
   type ReviewQueueDecisionRequest,
   type CreateArtifactRequest,
@@ -403,6 +406,20 @@ export class ConsultingApiClient {
   evidenceDecisionSummary(threadId: string): Promise<EvidenceDecisionSummaryResponse> {
     return this.http.request(`/chat/threads/${threadId}/evidence-decision/summary`, { method: 'GET' }, (d) =>
       EvidenceDecisionSummaryResponseSchema.parse(d),
+    );
+  }
+
+  listRetrievalHits(threadId: string): Promise<ListRetrievalHitFeedbackResponse> {
+    return this.http.request(`/chat/threads/${threadId}/retrieval-hits`, { method: 'GET' }, (d) =>
+      ListRetrievalHitFeedbackResponseSchema.parse(d),
+    );
+  }
+
+  recordRetrievalHitFeedback(threadId: string, hitId: string, body: RecordRetrievalHitFeedbackRequest): Promise<OkResponse> {
+    return this.http.request(
+      `/chat/threads/${threadId}/retrieval-hits/${encodeURIComponent(hitId)}/feedback`,
+      { method: 'POST', body },
+      (d) => OkResponseSchema.parse(d),
     );
   }
 

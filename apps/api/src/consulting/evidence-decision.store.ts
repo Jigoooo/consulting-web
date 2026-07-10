@@ -2,7 +2,13 @@ import { createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { schema } from '@consulting/db-schema';
 import { and, desc, eq, isNull } from 'drizzle-orm';
-import type { EvidenceDecisionSummaryResponse, ReviewQueueResponse } from '@consulting/contracts';
+import {
+  RetrievalFailureTypeSchema,
+  type EvidenceDecisionSummaryResponse,
+  type ListRetrievalHitFeedbackResponse,
+  type RetrievalFailureType,
+  type ReviewQueueResponse,
+} from '@consulting/contracts';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 import { EvidenceToDecisionService, type ClaimInput, type ClaimVerdict, type DecisionRating, type EvidenceInput, type ProvenanceGraphEdge, type ReviewInput } from './evidence-to-decision.service.js';
 import { ClaimVerifierService } from './claim-verifier.service.js';
@@ -27,6 +33,12 @@ function toNumber(value: unknown): number {
   if (typeof value === 'number') return value;
   if (typeof value === 'string') return Number(value);
   return 0;
+}
+
+function retrievalFailureTypeForResponse(value: string | null): RetrievalFailureType | null {
+  if (value === null) return null;
+  const parsed = RetrievalFailureTypeSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 function iso(value: Date): string {
@@ -452,6 +464,78 @@ export class EvidenceDecisionStore {
       ))
       .limit(1);
     if (!thread) throw new Error('evidence decision thread/workspace mismatch');
+  }
+
+  async listRetrievalHits(input: { workspaceId: string; threadId: string; limit?: number }): Promise<ListRetrievalHitFeedbackResponse> {
+    await this.assertThreadInWorkspace(input.workspaceId, input.threadId);
+    const rows = await this.db
+      .select({
+        id: schema.retrievalHits.id,
+        retrievalRunId: schema.retrievalHits.retrievalRunId,
+        queryText: schema.retrievalRuns.queryText,
+        rank: schema.retrievalHits.rank,
+        hitKind: schema.retrievalHits.hitKind,
+        sourceTopicSlug: schema.retrievalHits.sourceTopicSlug,
+        docTitle: schema.retrievalHits.docTitle,
+        textPreview: schema.retrievalHits.textPreview,
+        score: schema.retrievalHits.adjustedScore,
+        judgedRelevant: schema.retrievalHits.judgedRelevant,
+        failureType: schema.retrievalHits.failureType,
+        createdAt: schema.retrievalHits.createdAt,
+      })
+      .from(schema.retrievalHits)
+      .innerJoin(schema.retrievalRuns, eq(schema.retrievalHits.retrievalRunId, schema.retrievalRuns.id))
+      .where(and(
+        eq(schema.retrievalHits.workspaceId, input.workspaceId),
+        eq(schema.retrievalHits.threadId, input.threadId),
+        eq(schema.retrievalRuns.workspaceId, input.workspaceId),
+        eq(schema.retrievalRuns.threadId, input.threadId),
+        isNull(schema.retrievalHits.deletedAt),
+        isNull(schema.retrievalRuns.deletedAt),
+      ))
+      .orderBy(desc(schema.retrievalHits.createdAt), schema.retrievalHits.rank)
+      .limit(Math.max(1, Math.min(50, input.limit ?? 20)));
+    return {
+      hits: rows.map((row) => ({
+        id: row.id,
+        retrievalRunId: row.retrievalRunId,
+        queryText: row.queryText,
+        rank: row.rank,
+        hitKind: row.hitKind,
+        sourceTopicSlug: row.sourceTopicSlug,
+        docTitle: row.docTitle,
+        textPreview: row.textPreview,
+        score: row.score === null ? null : toNumber(row.score),
+        judgedRelevant: row.judgedRelevant,
+        failureType: retrievalFailureTypeForResponse(row.failureType),
+        createdAt: iso(row.createdAt),
+      })),
+    };
+  }
+
+  async recordRetrievalHitFeedback(input: {
+    workspaceId: string;
+    threadId: string;
+    hitId: string;
+    judgedRelevant: boolean;
+    failureType: RetrievalFailureType | null;
+  }): Promise<boolean> {
+    await this.assertThreadInWorkspace(input.workspaceId, input.threadId);
+    const [row] = await this.db
+      .update(schema.retrievalHits)
+      .set({
+        judgedRelevant: input.judgedRelevant,
+        failureType: input.judgedRelevant ? null : input.failureType,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(schema.retrievalHits.id, input.hitId),
+        eq(schema.retrievalHits.workspaceId, input.workspaceId),
+        eq(schema.retrievalHits.threadId, input.threadId),
+        isNull(schema.retrievalHits.deletedAt),
+      ))
+      .returning({ id: schema.retrievalHits.id });
+    return Boolean(row);
   }
 
   async summary(threadId: string): Promise<EvidenceDecisionSummaryResponse> {

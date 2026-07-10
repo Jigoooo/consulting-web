@@ -1,6 +1,6 @@
 # consulting / consulting-web 전체 레이어 맵
 
-> Last measured: 2026-07-10
+> Last measured: 2026-07-11
 > Scope: `/home/jigoo/.hermes/workspace/consulting` shared brain + `/home/jigoo/.hermes/workspace/consulting-web` web/API/product layer.
 > 원칙: 이 문서는 기억이 아니라 코드/DB/컨테이너 실측값으로 갱신한다.
 
@@ -1124,6 +1124,26 @@ due <= 24h        = 1.25
 due <= 6h         = 1.50
 overdue           = 1.80
 ```
+
+### 10.4 W2-1 retrieval relevance feedback loop
+
+`retrieval_hits`와 `evidence_items`는 다른 원장이므로 UI에서도 섞지 않는다. 근거 패널의
+`근거검증` 탭이 최신 thread-scoped retrieval hit를 별도 조회하고, 사람이 한 번의 클릭으로
+정탐/실패 사유를 기록한다.
+
+```text
+GET  /chat/threads/:threadId/retrieval-hits
+POST /chat/threads/:threadId/retrieval-hits/:hitId/feedback
+  → judged_relevant=true,  failure_type=NULL
+  → judged_relevant=false, failure_type=<roadmap taxonomy>
+```
+
+불변식:
+
+- API access check와 DB `workspace_id + thread_id + hit_id` 조건을 이중 적용한다.
+- 부정 라벨은 `failure_type` 필수, 긍정 라벨은 `failure_type`을 반드시 NULL로 되돌린다.
+- 이 라벨은 검색 정밀도 학습/eval 데이터이며 기존 GraphRAG recall 순위에는 즉시 개입하지 않는다.
+- 라벨 50건 전에는 RRF/reranker weight를 변경하지 않는다.
 
 ---
 

@@ -44,6 +44,64 @@ export const AddEvidenceRequestSchema = z
   .strict();
 export type AddEvidenceRequest = z.infer<typeof AddEvidenceRequestSchema>;
 
+export const RetrievalFailureTypeSchema = z.enum([
+  'wrong_project',
+  'wrong_topic',
+  'wrong_phase',
+  'wrong_client',
+  'raw_over_selected',
+  'lexical_false_positive',
+  'semantic_false_positive',
+  'graph_over_fanout',
+  'stale_source',
+  'unsupported_claim',
+  'citation_missing',
+  'duplicate_chunk',
+  'too_generic_context',
+  'query_rewrite_error',
+  'reranker_error',
+]);
+export type RetrievalFailureType = z.infer<typeof RetrievalFailureTypeSchema>;
+
+export const RetrievalHitFeedbackItemSchema = z
+  .object({
+    id: UuidSchema,
+    retrievalRunId: UuidSchema,
+    queryText: z.string(),
+    rank: z.number().int().positive(),
+    hitKind: z.string(),
+    sourceTopicSlug: z.string().nullable(),
+    docTitle: z.string().nullable(),
+    textPreview: z.string(),
+    score: z.number().nullable(),
+    judgedRelevant: z.boolean().nullable(),
+    failureType: RetrievalFailureTypeSchema.nullable(),
+    createdAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+export type RetrievalHitFeedbackItem = z.infer<typeof RetrievalHitFeedbackItemSchema>;
+
+export const ListRetrievalHitFeedbackResponseSchema = z
+  .object({ hits: z.array(RetrievalHitFeedbackItemSchema) })
+  .strict();
+export type ListRetrievalHitFeedbackResponse = z.infer<typeof ListRetrievalHitFeedbackResponseSchema>;
+
+export const RecordRetrievalHitFeedbackRequestSchema = z
+  .object({
+    judgedRelevant: z.boolean(),
+    failureType: RetrievalFailureTypeSchema.optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (!value.judgedRelevant && !value.failureType) {
+      ctx.addIssue({ code: 'custom', path: ['failureType'], message: 'failureType is required when judgedRelevant is false' });
+    }
+    if (value.judgedRelevant && value.failureType) {
+      ctx.addIssue({ code: 'custom', path: ['failureType'], message: 'failureType must be omitted when judgedRelevant is true' });
+    }
+  });
+export type RecordRetrievalHitFeedbackRequest = z.infer<typeof RecordRetrievalHitFeedbackRequestSchema>;
+
 // ---------------------------------------------------------------------------
 // Evidence-to-Decision Intelligence — verification / scorecard / review queue
 // ---------------------------------------------------------------------------
