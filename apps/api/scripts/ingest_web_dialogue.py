@@ -118,6 +118,20 @@ def _write_scope(con: sqlite3.Connection | None, tid: int, data: dict[str, Any],
     )
 
 
+def _topic_title_seed(data: dict[str, Any], topic_slug: str) -> str:
+    """Human-readable creation title for auto-provisioned brain topics.
+
+    scopePath comes from ConsultingTopicResolver as `프로젝트 / 채널 / 토픽 [/ 스레드]`;
+    the first segment (project display name) is the best creation-time title.
+    """
+    scope_path = _optional_str(data, 'scopePath')
+    if scope_path:
+        first = scope_path.split('/')[0].strip()
+        if first:
+            return first
+    return topic_slug
+
+
 def ingest_turn(data: dict[str, Any], *, no_embed: bool = False) -> dict[str, Any]:
     topic_slug = _require_str(data, 'consultingTopicSlug')
     session_id = _require_str(data, 'sessionId')
@@ -134,7 +148,15 @@ def ingest_turn(data: dict[str, Any], *, no_embed: bool = False) -> dict[str, An
         main = sqlite3.connect(S.DB)
         main.row_factory = sqlite3.Row
     try:
-        tid = S.topic_id(con, topic_slug)
+        # P1: a new web project has a consulting_topic_links row but no brain topic
+        # yet — auto-provision it here so the first turn ingests instead of dying
+        # with `unknown topic` (idempotent; existing topics are returned as-is).
+        tid = S.ensure_topic(
+            con,
+            topic_slug,
+            title=_topic_title_seed(data, topic_slug),
+            description=f'consulting-web auto-provisioned ({scope_path})',
+        )
         _write_scope(con, tid, data, session_id)
         S.bind_session(con, tid, session_id)
         if S.chunk_exists(con, content_hash):

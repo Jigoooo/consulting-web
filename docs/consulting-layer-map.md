@@ -190,6 +190,11 @@ docker-compose.prod.yml
 - 따라서 shared brain library/CLI 변경은 대체로 API 컨테이너 재빌드 없이 반영된다.
 - 단, `apps/api/scripts/ingest_web_dialogue.py`는 API 이미지 내부 `/app/scripts`에 복사되므로 이 파일을 바꾸면 API 이미지 재빌드/재생성이 필요하다.
 - 완료선언 전에는 컨테이너 내부 env/import/CLI 실행과 web-turn ingest smoke로 확인한다.
+- P1 (2026-07-10): web-turn ingest는 `S.topic_id()` 대신 `S.ensure_topic()`을 호출한다.
+  신규 웹 프로젝트의 첫 턴이 shared brain에 topic 행(brain_raw.topics)을 idempotent하게
+  자동 생성한다 — title은 scopePath 첫 세그먼트(프로젝트 표시명), status='active'.
+  기존 topic(창원 등)은 절대 갱신하지 않는다(creation-only). 이전 동작은
+  `unknown topic` SystemExit → 비창원 프로젝트 웹 턴이 뇌에 전혀 적재되지 않는 결함이었다.
 ```
 
 ---
