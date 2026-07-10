@@ -5,7 +5,7 @@ import type { ExactnessRunStatus } from '../consulting/exactness-gate.service.js
 export interface ArtifactExportPreflightAuditVerdictRow {
   claimId: string;
   claimText: string;
-  verdict: ClaimVerdictKind | string;
+  verdict: ClaimVerdictKind;
   confidence: number | string | null;
   rationale: string;
 }
@@ -16,6 +16,7 @@ export interface ArtifactExportPreflightAuditInputRow {
   versionNo: number;
   sourceThreadId: string | null;
   sourceMessageId: string | null;
+  sourceValid: boolean | null;
   exactnessStatus: ExactnessRunStatus | null;
   verdicts: ArtifactExportPreflightAuditVerdictRow[];
 }
@@ -33,7 +34,7 @@ export interface ArtifactExportPreflightAuditRowResult {
   sourceThreadId: string | null;
   sourceMessageId: string | null;
   canExport: boolean;
-  reason: 'OK' | 'NO_SOURCE_MESSAGE' | 'VERIFIER_GATE_BLOCKED';
+  reason: 'OK' | 'NO_SOURCE_MESSAGE' | 'INVALID_SOURCE_MESSAGE' | 'VERIFIER_GATE_BLOCKED';
   gate: VerifierGateResult | null;
   messages: string[];
 }
@@ -43,7 +44,7 @@ export interface ArtifactExportPreflightAuditResult {
   status: 'ok' | 'blocked';
   projectId: string;
   projectName: string;
-  summary: { total: number; exportable: number; blocked: number; noSourceMessage: number };
+  summary: { total: number; exportable: number; blocked: number; noSourceMessage: number; invalidSourceMessage: number };
   rows: ArtifactExportPreflightAuditRowResult[];
 }
 
@@ -53,6 +54,7 @@ export function auditArtifactExportPreflight(input: ArtifactExportPreflightAudit
   const rows = input.rows.map(auditRow);
   const blocked = rows.filter((row) => !row.canExport).length;
   const noSourceMessage = rows.filter((row) => row.reason === 'NO_SOURCE_MESSAGE').length;
+  const invalidSourceMessage = rows.filter((row) => row.reason === 'INVALID_SOURCE_MESSAGE').length;
   return {
     readOnly: true,
     status: blocked > 0 ? 'blocked' : 'ok',
@@ -63,6 +65,7 @@ export function auditArtifactExportPreflight(input: ArtifactExportPreflightAudit
       exportable: rows.length - blocked,
       blocked,
       noSourceMessage,
+      invalidSourceMessage,
     },
     rows,
   };
@@ -80,6 +83,20 @@ function auditRow(row: ArtifactExportPreflightAuditInputRow): ArtifactExportPref
       reason: 'NO_SOURCE_MESSAGE',
       gate: null,
       messages: ['이 버전은 원본 답변(sourceMessageId)과 연결되지 않아 문장별 검증 게이트를 확인할 수 없습니다.'],
+    };
+  }
+
+  if (row.sourceValid === false) {
+    return {
+      artifactId: row.artifactId,
+      title: row.title,
+      versionNo: row.versionNo,
+      sourceThreadId: row.sourceThreadId,
+      sourceMessageId: row.sourceMessageId,
+      canExport: false,
+      reason: 'INVALID_SOURCE_MESSAGE',
+      gate: null,
+      messages: ['산출물 원본 답변(sourceMessageId)이 현재 프로젝트의 활성 thread/topic/channel에 속하지 않습니다.'],
     };
   }
 

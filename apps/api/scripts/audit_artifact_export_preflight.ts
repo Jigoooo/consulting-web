@@ -6,6 +6,7 @@ import {
   type ArtifactExportPreflightAuditResult,
   type ArtifactExportPreflightAuditVerdictRow,
 } from '../src/artifacts/artifact-export-preflight-audit.js';
+import type { ClaimVerdictKind } from '../src/consulting/evidence-to-decision.service.js';
 
 interface Args {
   projectId: string | null;
@@ -25,6 +26,7 @@ interface ArtifactRow {
   versionNo: number;
   sourceThreadId: string | null;
   sourceMessageId: string | null;
+  sourceValid: boolean | null;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -50,6 +52,11 @@ function parseArgs(argv: string[]): Args {
   return args;
 }
 
+function normalizeVerdictKind(value: string): ClaimVerdictKind {
+  if (value === 'supports' || value === 'refutes' || value === 'not_enough_info' || value === 'mixed') return value;
+  return 'supports';
+}
+
 async function loadProject(client: PoolClient, projectId: string): Promise<ProjectRow> {
   const result = await client.query<{ id: string; workspace_id: string; name: string }>(
     `select id::text, workspace_id::text, name
@@ -70,17 +77,37 @@ async function loadHeadArtifacts(client: PoolClient, projectId: string): Promise
     versionNo: number;
     sourceThreadId: string | null;
     sourceMessageId: string | null;
+    sourceValid: boolean | null;
   }>(
     `select
        a.id::text as "artifactId",
        a.title as "title",
        v.version_no as "versionNo",
        v.source_thread_id::text as "sourceThreadId",
-       v.source_message_id::text as "sourceMessageId"
+       v.source_message_id::text as "sourceMessageId",
+       case
+         when v.source_message_id is null then null
+         when cm.id is null then false
+         when ch.project_id is distinct from a.project_id then false
+         when v.source_thread_id is not null and v.source_thread_id is distinct from cm.thread_id then false
+         else true
+       end as "sourceValid"
      from artifacts a
      join artifact_versions v
        on v.artifact_id = a.id
       and v.version_no = a.head_version
+     left join chat_messages cm
+       on cm.id = v.source_message_id
+      and cm.deleted_at is null
+     left join threads th
+       on th.id = cm.thread_id
+      and th.deleted_at is null
+     left join topics tp
+       on tp.id = th.topic_id
+      and tp.deleted_at is null
+     left join channels ch
+       on ch.id = tp.channel_id
+      and ch.deleted_at is null
      where a.project_id = $1
        and a.deleted_at is null
      order by a.created_at, a.id`,
@@ -139,7 +166,7 @@ async function loadVerdictsByMessage(client: PoolClient, messageIds: string[]): 
     rows.push({
       claimId: row.claimId,
       claimText: row.claimText,
-      verdict: row.verdict,
+      verdict: normalizeVerdictKind(row.verdict),
       confidence: row.confidence,
       rationale: row.rationale,
     });
@@ -159,6 +186,7 @@ async function buildSnapshot(client: PoolClient, project: ProjectRow): Promise<A
     versionNo: row.versionNo,
     sourceThreadId: row.sourceThreadId,
     sourceMessageId: row.sourceMessageId,
+    sourceValid: row.sourceValid,
     exactnessStatus: row.sourceMessageId ? exactness.get(row.sourceMessageId) ?? null : null,
     verdicts: row.sourceMessageId ? verdicts.get(row.sourceMessageId) ?? [] : [],
   }));
@@ -167,7 +195,7 @@ async function buildSnapshot(client: PoolClient, project: ProjectRow): Promise<A
 function printText(result: ArtifactExportPreflightAuditResult): void {
   console.log(`artifact export preflight audit: ${result.status}`);
   console.log(`project: ${result.projectName} (${result.projectId})`);
-  console.log(`summary: total=${result.summary.total} exportable=${result.summary.exportable} blocked=${result.summary.blocked} noSourceMessage=${result.summary.noSourceMessage}`);
+  console.log(`summary: total=${result.summary.total} exportable=${result.summary.exportable} blocked=${result.summary.blocked} noSourceMessage=${result.summary.noSourceMessage} invalidSourceMessage=${result.summary.invalidSourceMessage}`);
   for (const row of result.rows) {
     const blockers = row.gate?.blockers.map((issue) => `${issue.code}${issue.claimId ? `:${issue.claimId}` : ''}`).join(', ') ?? '';
     console.log(`- ${row.canExport ? 'PASS' : 'BLOCK'} v${row.versionNo} ${row.title} reason=${row.reason}${blockers ? ` blockers=[${blockers}]` : ''}`);

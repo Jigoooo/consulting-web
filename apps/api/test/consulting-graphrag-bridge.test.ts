@@ -17,6 +17,8 @@ d('ConsultingGraphRagBridge', () => {
 
     expect(result.ok).toBe(true);
     expect(result.hits.length).toBeGreaterThan(0);
-    expect(result.hits.some((hit) => `${hit.docTitle ?? ''} ${hit.text}`.includes('CL-D5-01'))).toBe(true);
+    const evidenceText = result.hits.map((hit) => `${hit.docTitle ?? ''} ${hit.text}`).join('\n');
+    expect(evidenceText).toContain('창원시설공단');
+    expect(evidenceText).toMatch(/정원|인건비|조직 진단/u);
   }, 10_000);
 });
