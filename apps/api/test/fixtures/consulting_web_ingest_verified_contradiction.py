@@ -39,10 +39,19 @@ with tempfile.TemporaryDirectory() as tmp:
         'userText': '정원 검토해줘',
         'allowedSegments': [{'kind': 'user', 'text': '정원 검토해줘'}],
         'assistantCandidate': {
+            'id': 'assistant:message-1',
             'kind': 'assistant',
             'text': '기본급은 2,100,000원이다.',
+            'sourceMessageId': 'message-1',
             'status': 'quarantined',
+            'reason': 'assistant_output_requires_review',
         },
+        'blockedSegments': [{
+            'id': 'assistant:message-1',
+            'kind': 'assistant',
+            'text': '기본급은 2,100,000원이다.',
+            'reason': 'assistant_output_requires_review',
+        }],
         'verifiedContradictions': [{
             'verdictRef': 'assistant:message-1:MSG-1',
             'claimId': 'MSG-1',
@@ -63,6 +72,50 @@ with tempfile.TemporaryDirectory() as tmp:
         'assistantMessageId': 'message-1',
         'timestamp': 1770000000,
     }
+
+    bad_candidate = dict(payload)
+    bad_candidate['assistantCandidate'] = {
+        **payload['assistantCandidate'],
+        'sourceMessageId': 'other-message',
+    }
+    try:
+        web.ingest_turn(bad_candidate, no_embed=True)
+    except ValueError as exc:
+        assert 'assistant provenance' in str(exc), exc
+    else:
+        raise AssertionError('malformed explicit assistantCandidate must fail closed')
+
+    bad_provenance = dict(payload)
+    bad_provenance['verifiedContradictions'] = [
+        {**payload['verifiedContradictions'][0], 'verdictRef': 'assistant:other-message:MSG-1'}
+    ]
+    try:
+        web._verified_contradictions(bad_provenance)
+    except ValueError as exc:
+        assert 'provenance' in str(exc), exc
+    else:
+        raise AssertionError('mismatched contradiction provenance must fail closed')
+
+    bad_segments = dict(payload)
+    bad_segments['allowedSegments'] = [{'kind': 'user', 'text': ''}]
+    try:
+        web.ingest_turn(bad_segments, no_embed=True)
+    except ValueError as exc:
+        assert 'allowed segment' in str(exc), exc
+    else:
+        raise AssertionError('malformed explicit allowedSegments must fail closed')
+
+    assistant_leak = dict(payload)
+    assistant_leak['allowedSegments'] = [{
+        'kind': 'document',
+        'text': f"  {payload['assistantCandidate']['text']}  ",
+    }]
+    try:
+        web.ingest_turn(assistant_leak, no_embed=True)
+    except ValueError as exc:
+        assert 'assistant' in str(exc) and 'allowed' in str(exc), exc
+    else:
+        raise AssertionError('assistant candidate text must not enter allowedSegments')
 
     out = web.ingest_turn(dict(payload), no_embed=True)
     assert out['ok'] is True, out

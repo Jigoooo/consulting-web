@@ -14,6 +14,7 @@ import os
 import sqlite3
 import sys
 import time
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -68,18 +69,93 @@ def _allowed_segments(data: dict[str, Any]) -> list[tuple[str, str]]:
     """
     out: list[tuple[str, str]] = []
     raw_segments = data.get('allowedSegments')
-    if isinstance(raw_segments, list):
+    if raw_segments is not None:
+        if not isinstance(raw_segments, list):
+            raise ValueError('allowedSegments must be a list')
         for item in raw_segments:
             if not isinstance(item, dict):
-                continue
+                raise ValueError('allowed segment must be an object')
             kind = item.get('kind')
             text = item.get('text')
-            if kind in {'user', 'document', 'tool'} and isinstance(text, str) and text.strip():
-                out.append((str(kind), text.strip()))
-    if out:
+            if kind not in {'user', 'document', 'tool'} or not isinstance(text, str) or not text.strip():
+                raise ValueError('malformed allowed segment')
+            out.append((str(kind), text.strip()))
+        if not out:
+            raise ValueError('allowedSegments must not be empty')
         return out
     user_text = _require_str(data, 'userText')
     return [('user', user_text)]
+
+
+def _normalize_memory_text(value: str) -> str:
+    return ' '.join(unicodedata.normalize('NFKC', value).split())
+
+
+def _validate_assistant_quarantine(data: dict[str, Any], allowed_segments: list[tuple[str, str]]) -> bool:
+    candidate = data.get('assistantCandidate')
+    blocked = data.get('blockedSegments')
+    if candidate is None:
+        if blocked is not None:
+            if not isinstance(blocked, list) or not blocked:
+                raise ValueError('blockedSegments must be a non-empty list when provided')
+            for segment in blocked:
+                if not isinstance(segment, dict):
+                    raise ValueError('blocked segment must be an object')
+                if (
+                    not isinstance(segment.get('id'), str) or not segment['id'].strip()
+                    or segment.get('kind') not in {'assistant', 'system', 'unknown'}
+                    or not isinstance(segment.get('text'), str) or not segment['text'].strip()
+                ):
+                    raise ValueError('malformed blocked segment')
+        return False
+    if not isinstance(candidate, dict):
+        raise ValueError('assistantCandidate must be an object')
+
+    assistant_message_id = _optional_str(data, 'assistantMessageId')
+    candidate_id = candidate.get('id')
+    candidate_text = candidate.get('text')
+    source_message_id = candidate.get('sourceMessageId')
+    status = candidate.get('status')
+    if not isinstance(candidate_text, str) or not candidate_text.strip() or status != 'quarantined':
+        raise ValueError('malformed assistantCandidate quarantine')
+    candidate_identity = _normalize_memory_text(candidate_text)
+    if any(_normalize_memory_text(text) == candidate_identity for _, text in allowed_segments):
+        raise ValueError('assistant text is present in allowed segments')
+
+    normalized_source = source_message_id.strip() if isinstance(source_message_id, str) and source_message_id.strip() else None
+    if assistant_message_id is None and normalized_source is None:
+        # Legacy direct-ingest payloads predate message provenance fields. Their
+        # assistant text remains quarantined and is never part of allowedSegments.
+        return True
+    if assistant_message_id is None or normalized_source is None or normalized_source != assistant_message_id:
+        raise ValueError('assistant provenance mismatch')
+    if not isinstance(candidate_id, str) or not candidate_id.strip():
+        raise ValueError('malformed assistantCandidate quarantine')
+    if not isinstance(blocked, list) or not blocked:
+        raise ValueError('assistantCandidate requires blockedSegments quarantine')
+
+    matched = False
+    for segment in blocked:
+        if not isinstance(segment, dict):
+            raise ValueError('blocked segment must be an object')
+        segment_id = segment.get('id')
+        segment_kind = segment.get('kind')
+        segment_text = segment.get('text')
+        if (
+            not isinstance(segment_id, str) or not segment_id.strip()
+            or segment_kind not in {'assistant', 'system', 'unknown'}
+            or not isinstance(segment_text, str) or not segment_text.strip()
+        ):
+            raise ValueError('malformed blocked segment')
+        if (
+            segment_kind == 'assistant'
+            and segment_id.strip() == candidate_id.strip()
+            and segment_text.strip() == candidate_text.strip()
+        ):
+            matched = True
+    if not matched:
+        raise ValueError('assistantCandidate is not quarantined by blockedSegments')
+    return True
 
 
 def _segment_label(kind: str) -> str:
@@ -139,6 +215,7 @@ def _verified_contradictions(data: dict[str, Any]) -> list[dict[str, Any]]:
         return []
     if not isinstance(raw, list):
         raise ValueError('verifiedContradictions must be a list')
+    assistant_message_id = _require_str(data, 'assistantMessageId')
     out: list[dict[str, Any]] = []
     string_fields = (
         'verdictRef', 'claimId', 'claimText', 'rationale',
@@ -159,6 +236,9 @@ def _verified_contradictions(data: dict[str, Any]) -> list[dict[str, Any]]:
             raise ValueError('verified contradiction verdict must be refutes or mixed')
         if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= float(confidence) <= 1:
             raise ValueError('verified contradiction confidence must be between 0 and 1')
+        expected_ref = f"assistant:{assistant_message_id}:{normalized['claimId']}"
+        if normalized['verdictRef'] != expected_ref:
+            raise ValueError('verified contradiction provenance mismatch')
         normalized['verdict'] = verdict
         normalized['confidence'] = float(confidence)
         out.append(normalized)
@@ -222,7 +302,7 @@ def ingest_turn(data: dict[str, Any], *, no_embed: bool = False) -> dict[str, An
     ts = float(data.get('timestamp') or time.time())
     raw = "\n".join(f"{_segment_label(kind)}: {text}" for kind, text in segments)
     content_hash = hashlib.sha256((topic_slug + '|consulting-web|' + session_id + '|' + raw).encode('utf-8')).hexdigest()[:24]
-    assistant_quarantined = isinstance(data.get('assistantCandidate'), dict)
+    assistant_quarantined = _validate_assistant_quarantine(data, segments)
 
     con = S.connect_optional()
     main = None

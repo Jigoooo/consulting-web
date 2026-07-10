@@ -85,6 +85,14 @@ describe('ConsultingWebIngestWorker', () => {
       workspaceId: 'ws',
       payload: { ...payload, allowedSegments: [] },
     })).rejects.toThrow(/invalid consulting web ingest payload/i);
+    await expect(worker.processOutboxJob({
+      eventId: 'evt-empty-blocked-segments',
+      eventType: 'ConsultingWebTurnCompleted',
+      aggregateType: 'thread',
+      aggregateId: 'thread-1',
+      workspaceId: 'ws',
+      payload: { ...payload, blockedSegments: [] },
+    })).rejects.toThrow(/not quarantined/i);
     expect(runner).not.toHaveBeenCalled();
   });
 
@@ -106,6 +114,93 @@ describe('ConsultingWebIngestWorker', () => {
         verifiedContradictions: [{ ...payload.verifiedContradictions[0], verdict: 'supports', confidence: 2 }],
       },
     })).rejects.toThrow(/verified contradiction/i);
+    expect(runner).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'assistant:other-message:MSG-1',
+    'assistant:message-1:OTHER-CLAIM',
+  ])('rejects contradiction provenance that does not match its message and claim (%s)', async (verdictRef) => {
+    const runner = vi.fn(async () => undefined);
+    const worker = new ConsultingWebIngestWorker(
+      { REDIS_URL: 'redis://127.0.0.1:6379' } as never,
+      runner,
+    );
+
+    await expect(worker.processOutboxJob({
+      eventId: 'evt-invalid-provenance',
+      eventType: 'ConsultingWebTurnCompleted',
+      aggregateType: 'thread',
+      aggregateId: 'thread-1',
+      workspaceId: 'ws',
+      payload: {
+        ...payload,
+        verifiedContradictions: [{ ...payload.verifiedContradictions[0], verdictRef }],
+      },
+    })).rejects.toThrow(/verified contradiction provenance/i);
+    expect(runner).not.toHaveBeenCalled();
+  });
+
+  it('rejects a job envelope that does not match the parsed tenant and thread', async () => {
+    const runner = vi.fn(async () => undefined);
+    const worker = new ConsultingWebIngestWorker(
+      { REDIS_URL: 'redis://127.0.0.1:6379' } as never,
+      runner,
+    );
+
+    await expect(worker.processOutboxJob({
+      eventId: 'evt-wrong-envelope',
+      eventType: 'ConsultingWebTurnCompleted',
+      aggregateType: 'thread',
+      aggregateId: 'other-thread',
+      workspaceId: 'other-workspace',
+      payload,
+    })).rejects.toThrow(/outbox envelope/i);
+    expect(runner).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed explicit memory segments and assistant provenance instead of falling back', async () => {
+    const runner = vi.fn(async () => undefined);
+    const worker = new ConsultingWebIngestWorker(
+      { REDIS_URL: 'redis://127.0.0.1:6379' } as never,
+      runner,
+    );
+
+    await expect(worker.processOutboxJob({
+      eventId: 'evt-malformed-segment',
+      eventType: 'ConsultingWebTurnCompleted',
+      aggregateType: 'thread',
+      aggregateId: 'thread-1',
+      workspaceId: 'ws',
+      payload: { ...payload, allowedSegments: [{ kind: 'user', text: '' }] },
+    })).rejects.toThrow(/allowed segment/i);
+    await expect(worker.processOutboxJob({
+      eventId: 'evt-assistant-text-in-allowed',
+      eventType: 'ConsultingWebTurnCompleted',
+      aggregateType: 'thread',
+      aggregateId: 'thread-1',
+      workspaceId: 'ws',
+      payload: {
+        ...payload,
+        allowedSegments: [{
+          id: 'document:smuggled-assistant',
+          kind: 'document',
+          text: `  ${payload.assistantCandidate.text}  `,
+          reason: 'document_context_allowed',
+        }],
+      },
+    })).rejects.toThrow(/assistant.*allowed|allowed.*assistant/i);
+    await expect(worker.processOutboxJob({
+      eventId: 'evt-wrong-assistant-source',
+      eventType: 'ConsultingWebTurnCompleted',
+      aggregateType: 'thread',
+      aggregateId: 'thread-1',
+      workspaceId: 'ws',
+      payload: {
+        ...payload,
+        assistantCandidate: { ...payload.assistantCandidate, sourceMessageId: 'other-message' },
+      },
+    })).rejects.toThrow(/assistant provenance/i);
     expect(runner).not.toHaveBeenCalled();
   });
 

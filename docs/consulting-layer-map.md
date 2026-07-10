@@ -1335,7 +1335,8 @@ LLM strict JSON은 다음 schema만 허용한다.
 
 ## 14. 완성 답변 저장 후 재학습/재인덱싱 흐름
 
-웹 채팅이 끝나면 assistant 답변이 다시 `consulting` 두뇌로 들어간다.
+웹 채팅이 끝나면 memory-write guard가 허용한 user/document/tool segment만 `consulting` 두뇌로 들어간다.
+assistant 답변은 review 전까지 quarantine candidate/blocked segment로만 전달되며 dialogue memory에는 쓰지 않는다.
 
 ```text
 assistant complete
@@ -1390,16 +1391,28 @@ topicId
 threadId
 scopePath
 userText
-assistantText
+allowedSegments = user | document | tool only
+assistantCandidate.status = quarantined
+blockedSegments includes the same assistant candidate
+policyDecisionId
+traceId
 runId
 assistantMessageId
+verifiedContradictions[].verdictRef = assistant:{assistantMessageId}:{claimId}
 timestamp
 ```
+
+전용 worker는 payload의 workspace/thread와 outbox envelope가 일치하는지, contradiction provenance가
+message/claim과 정확히 결박됐는지, 명시된 segment/candidate가 malformed인지 fail-closed로 검사한다.
+assistant candidate와 NFKC+공백 정규화 결과가 같은 텍스트가 `allowedSegments`에 있으면 kind와 무관하게
+거부한다. Python stdin 경계도 같은 provenance/quarantine/비중첩 검사를 반복한다. top-level
+`assistantText`는 기존 pending outbox 호환 입력으로만 허용하고 worker가 quarantine 구조로 변환한다.
 
 Python script:
 
 ```text
 apps/api/scripts/ingest_web_dialogue.py
+  ├─ validate allowed/quarantined memory boundary and provenance
   ├─ resolve consulting topic
   ├─ write dialogue_session_scopes
   ├─ bind_session

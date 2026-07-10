@@ -50,6 +50,10 @@ function asNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function normalizeMemoryText(value: string): string {
+  return value.normalize('NFKC').replace(/\s+/gu, ' ').trim();
+}
+
 function parseAllowedSegment(value: unknown): ConsultingMemoryAllowedSegment | null {
   if (!isRecord(value)) return null;
   const id = asNonEmptyString(value.id);
@@ -116,26 +120,55 @@ export function parseConsultingWebTurnPayload(value: unknown): ConsultingWebTurn
   const legacyAssistantText = asNonEmptyString(value.assistantText);
   if (!assistantMessageId) throw new Error('invalid consulting web ingest payload: missing assistantMessageId');
 
-  const allowedSegments = Array.isArray(value.allowedSegments)
-    ? value.allowedSegments.map(parseAllowedSegment).filter((item): item is ConsultingMemoryAllowedSegment => item !== null)
-    : userText
-      ? [{ id: `legacy-user:${assistantMessageId}`, kind: 'user' as const, text: userText, reason: 'legacy_user_text_allowed' }]
+  let allowedSegments: ConsultingMemoryAllowedSegment[];
+  if (value.allowedSegments !== undefined) {
+    if (!Array.isArray(value.allowedSegments)) {
+      throw new Error('invalid consulting web ingest payload: malformed allowed segment list');
+    }
+    const parsed = value.allowedSegments.map(parseAllowedSegment);
+    if (parsed.some((item) => item === null)) {
+      throw new Error('invalid consulting web ingest payload: malformed allowed segment');
+    }
+    allowedSegments = parsed as ConsultingMemoryAllowedSegment[];
+  } else {
+    allowedSegments = userText
+      ? [{ id: `legacy-user:${assistantMessageId}`, kind: 'user', text: userText, reason: 'legacy_user_text_allowed' }]
       : [];
-  const assistantCandidate = parseAssistantCandidate(value.assistantCandidate)
-    ?? (legacyAssistantText
+  }
+
+  let assistantCandidate: ConsultingAssistantMemoryCandidate | null;
+  if (value.assistantCandidate !== undefined) {
+    assistantCandidate = parseAssistantCandidate(value.assistantCandidate);
+    if (!assistantCandidate) {
+      throw new Error('invalid consulting web ingest payload: malformed assistant candidate');
+    }
+  } else {
+    assistantCandidate = legacyAssistantText
       ? {
           id: `legacy-assistant:${assistantMessageId}`,
           text: legacyAssistantText,
           sourceMessageId: assistantMessageId,
-          status: 'quarantined' as const,
+          status: 'quarantined',
           reason: 'legacy_assistant_text_quarantined',
         }
-      : null);
-  const blockedSegments = Array.isArray(value.blockedSegments)
-    ? value.blockedSegments.map(parseBlockedSegment).filter((item): item is ConsultingMemoryBlockedSegment => item !== null)
-    : assistantCandidate
-      ? [{ id: assistantCandidate.id, kind: 'assistant' as const, text: assistantCandidate.text, reason: assistantCandidate.reason }]
+      : null;
+  }
+
+  let blockedSegments: ConsultingMemoryBlockedSegment[];
+  if (value.blockedSegments !== undefined) {
+    if (!Array.isArray(value.blockedSegments)) {
+      throw new Error('invalid consulting web ingest payload: malformed blocked segment list');
+    }
+    const parsed = value.blockedSegments.map(parseBlockedSegment);
+    if (parsed.some((item) => item === null)) {
+      throw new Error('invalid consulting web ingest payload: malformed blocked segment');
+    }
+    blockedSegments = parsed as ConsultingMemoryBlockedSegment[];
+  } else {
+    blockedSegments = assistantCandidate
+      ? [{ id: assistantCandidate.id, kind: 'assistant', text: assistantCandidate.text, reason: assistantCandidate.reason }]
       : [];
+  }
 
   if (value.verifiedContradictions !== undefined && !Array.isArray(value.verifiedContradictions)) {
     throw new Error('invalid consulting web ingest payload: malformed verified contradiction list');
@@ -147,6 +180,26 @@ export function parseConsultingWebTurnPayload(value: unknown): ConsultingWebTurn
     throw new Error('invalid consulting web ingest payload: malformed verified contradiction');
   }
   const verifiedContradictions = parsedContradictions as ConsultingVerifiedContradiction[];
+  for (const item of verifiedContradictions) {
+    if (item.verdictRef !== `assistant:${assistantMessageId}:${item.claimId}`) {
+      throw new Error('invalid consulting web ingest payload: verified contradiction provenance mismatch');
+    }
+  }
+  if (assistantCandidate?.sourceMessageId !== assistantMessageId) {
+    throw new Error('invalid consulting web ingest payload: assistant provenance mismatch');
+  }
+  if (assistantCandidate && allowedSegments.some((segment) => (
+    normalizeMemoryText(segment.text) === normalizeMemoryText(assistantCandidate.text)
+  ))) {
+    throw new Error('invalid consulting web ingest payload: assistant text is present in allowed segments');
+  }
+  if (assistantCandidate && !blockedSegments.some((segment) => (
+    segment.kind === 'assistant'
+    && segment.id === assistantCandidate.id
+    && segment.text === assistantCandidate.text
+  ))) {
+    throw new Error('invalid consulting web ingest payload: assistant candidate is not quarantined');
+  }
 
   const payload = {
     consultingTopicSlug: asNonEmptyString(value.consultingTopicSlug),
@@ -256,6 +309,13 @@ export class ConsultingWebIngestWorker implements OnModuleInit, OnModuleDestroy 
       throw new Error(`unsupported outbox event for consulting web ingest worker: ${job.eventType}`);
     }
     const payload = parseConsultingWebTurnPayload(job.payload);
+    if (
+      job.aggregateType !== 'thread'
+      || job.aggregateId !== payload.threadId
+      || job.workspaceId !== payload.workspaceId
+    ) {
+      throw new Error('invalid consulting web ingest outbox envelope');
+    }
     await this.runner(payload);
   }
 }
