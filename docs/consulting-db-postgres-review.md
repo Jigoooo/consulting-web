@@ -666,3 +666,37 @@ directions 11행 전부 신규 컬럼 NULL / community_summaries 0행
 웹 라이브 채팅: retrieval_run graphrag_fanout/ok/hit_count=1, retrieval_hit 신규 컬럼 NULL 정상 기록
 독립 리뷰: passed=true, 0 blockers/highs (5개 공격벡터 additive-safe)
 ```
+
+---
+
+## W2-2 source freshness 활성화 (2026-07-11)
+
+신규 웹 테이블을 만들지 않는다. shared brain에 이미 있던 `source_freshness_items`
+(SQLite/PG18 각 116행)을 단일 원장으로 재사용한다.
+
+```text
+기존 필드 매핑:
+  object_table/object_id/object_code ~= source_id
+  publication_date                 ~= published_at
+  retrieved_at                     ~= collected_at
+
+007 additive columns:
+  effective_date, expires_at, superseded_by, freshness_policy
+
+008 backfill:
+  effective_date <- publication_date
+  freshness_policy <- source_candidate_1095d 또는 legacy_requirement_<days>d
+```
+
+실측 결과:
+
+```text
+SQLite: 116 total / effective=116 / policy=116 / expires=0
+PG18:   116 total / effective=116 / policy=116 / expires=0
+```
+
+`expires_at=0`은 누락이 아니라 의도적이다. 기존 publication_date가 연도 단위인 경우가 많아
+정확한 만료일을 발명하지 않았다. 향후 intake가 정확 일자를 제공할 때만 채운다.
+웹 Judgment Guard는 GraphRAG hit의 호봉표·법령·조직도 등 시간민감 수치 자료에
+기준일/시행일이 없으면 `stale_source_warning`을 내고, pre-answer warning row를
+`judgment_guard_runs`에 `assistant_message_id=NULL`로 영속화한다.

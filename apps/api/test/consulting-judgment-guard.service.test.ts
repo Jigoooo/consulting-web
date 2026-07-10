@@ -59,4 +59,22 @@ describe('ConsultingJudgmentGuardService', () => {
     expect(prompt).toContain('사용자가 “이거 아니야”라고 지적한 패턴');
     expect(prompt).toContain('불가/금지/확정');
   });
+
+  it('warns when time-sensitive numeric evidence has no effective date and clears when a date is present', () => {
+    const undated = service.evaluate({
+      query: '현재 1호봉 기본급을 비교해줘',
+      hits: [hit({ docTitle: '직원 보수규정 호봉표.pdf', text: '직원 보수규정의 호봉표에 따르면 1호봉 기본급은 2,100,000원이며 이후 호봉은 정기승급 기준에 따라 순차적으로 적용된다고 기재되어 있다.' })],
+      now: new Date('2026-07-11T00:00:00.000Z'),
+    });
+    expect(undated.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'stale_source_warning', severity: 'warning' }),
+    ]));
+
+    const dated = service.evaluate({
+      query: '현재 1호봉 기본급을 비교해줘',
+      hits: [hit({ docTitle: '2026년 직원 보수규정 호봉표.pdf', text: '2026년 1월 1일 기준 직원 보수규정의 호봉표에 따르면 1호봉 기본급은 2,100,000원이며 이후 호봉은 정기승급 기준에 따라 순차적으로 적용된다고 기재되어 있다.' })],
+      now: new Date('2026-07-11T00:00:00.000Z'),
+    });
+    expect(dated.issues.some((issue) => issue.code === 'stale_source_warning')).toBe(false);
+  });
 });

@@ -82,6 +82,20 @@ describe('ConsultingMemoryContextBuilder', () => {
           sourceTopicSlug: 'other-consulting-topic',
           sourceLabel: '다른 프로젝트: 예산 컨설팅',
           sourceRelation: 'cross_project' as const,
+        }, {
+          kind: 'file',
+          score: 0.018,
+          fusedScore: 0.017,
+          rerankScore: 0.69,
+          docTitle: '직원 보수규정 호봉표.pdf',
+          utilityTier: 'qualified_usable',
+          text: '직원 보수규정의 호봉표에 따르면 1호봉 기본급은 2,100,000원이며 이후 호봉은 정기승급 순서에 따라 적용된다고 기재되어 있으나 해당 금액의 적용 시점 정보는 없다.',
+          linked: [],
+          graphPath: [],
+          signalBreakdown: null,
+          sourceTopicSlug: 'changwon-org-mgmt-diagnosis',
+          sourceLabel: '현재 프로젝트: 창원시 컨설팅',
+          sourceRelation: 'current' as const,
         }],
       }),
     };
@@ -144,7 +158,7 @@ describe('ConsultingMemoryContextBuilder', () => {
       topK: 6,
       status: 'ok',
       evidenceSufficiencyStatus: 'ambiguous',
-      hitCount: 2,
+      hitCount: 3,
     });
     expect(traceSpans[0]).toMatchObject({
       workspaceId: 'ws',
@@ -153,7 +167,7 @@ describe('ConsultingMemoryContextBuilder', () => {
       name: 'consulting.graphrag.recall_many',
       status: 'ok',
       input: expect.objectContaining({ queryType: 'general', topK: 6, scopeCount: 2 }),
-      output: expect.objectContaining({ retrievalRunId: 'retrieval-run-1', hitCount: 2, evidenceSufficiencyStatus: 'ambiguous' }),
+      output: expect.objectContaining({ retrievalRunId: 'retrieval-run-1', hitCount: 3, evidenceSufficiencyStatus: 'ambiguous' }),
     });
     expect(inserted[1]?.value).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -165,6 +179,15 @@ describe('ConsultingMemoryContextBuilder', () => {
         sourceTopicSlug: 'other-consulting-topic',
       }),
     ]));
+    expect(inserted[2]?.value).toMatchObject({
+      workspaceId: 'ws',
+      threadId: 'thread',
+      assistantMessageId: null,
+      runKind: 'judgment_guard_pre_answer_v1',
+      status: 'warnings',
+      issueSummary: expect.stringContaining('stale_source_warning'),
+      issues: expect.arrayContaining([expect.objectContaining({ code: 'stale_source_warning', severity: 'warning' })]),
+    });
   });
 
   it('returns an explicit insufficient-evidence instruction instead of silently omitting recall context', async () => {

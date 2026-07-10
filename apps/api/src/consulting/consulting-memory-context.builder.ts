@@ -6,7 +6,7 @@ import { ConsultingGraphRagBridge, type ConsultingGraphRagHit, type ConsultingGr
 import { ConsultingTopicResolver, type ConsultingResolvedScope } from './consulting-topic-resolver.service.js';
 import { EvidenceSufficiencyEvaluator, type EvidenceSufficiencyDecision } from './evidence-sufficiency-evaluator.service.js';
 import { EvidenceToDecisionService, type ClaimInput, type EvidenceInput, type GraphEdgeInput } from './evidence-to-decision.service.js';
-import { ConsultingJudgmentGuardService } from './consulting-judgment-guard.service.js';
+import { ConsultingJudgmentGuardService, type ConsultingJudgmentGuardResult } from './consulting-judgment-guard.service.js';
 import { ConsultingRunTraceService } from './consulting-run-trace.service.js';
 
 export interface ConsultingMemoryContextInput {
@@ -57,6 +57,8 @@ export class ConsultingMemoryContextBuilder {
       const recallStartedAt = Date.now();
       const recall = await this.bridge.recallMany({ scopes: diffusionWeighted.scopes, query: input.query, topK });
       const decision = this.evaluator.evaluate({ query: input.query, hits: recall.hits });
+      const hits = this.diffusionRankHits(recall.hits, diffusionWeighted.scores).slice(0, 5);
+      const guard = this.judgmentGuard.evaluate({ query: input.query, hits, now: new Date() });
       await this.persistRetrievalLedger({
         scope: fanout.scope,
         query: input.query,
@@ -65,10 +67,9 @@ export class ConsultingMemoryContextBuilder {
         recallScopes: diffusionWeighted.scopes,
         recall,
         decision,
+        guard,
         latencyMs: Date.now() - recallStartedAt,
       });
-      const hits = this.diffusionRankHits(recall.hits, diffusionWeighted.scores).slice(0, 5);
-      const guard = this.judgmentGuard.evaluate({ query: input.query, hits, now: new Date() });
       return this.render(fanout.scope, hits, decision, this.evidenceDecisionLines(input.query, hits, decision), this.judgmentGuard.renderPromptContract(guard));
     } catch {
       // GraphRAG context is a best-effort side channel. Never break chat streaming.
@@ -84,6 +85,7 @@ export class ConsultingMemoryContextBuilder {
     recallScopes: ConsultingGraphRagRecallScope[];
     recall: Awaited<ReturnType<ConsultingGraphRagBridge['recallMany']>>;
     decision: EvidenceSufficiencyDecision;
+    guard: ConsultingJudgmentGuardResult;
     latencyMs: number;
   }): Promise<void> {
     if (!this.db) return;
@@ -139,27 +141,48 @@ export class ConsultingMemoryContextBuilder {
           signals: input.recall.signals ?? null,
         },
       });
-      if (!run || input.recall.hits.length === 0) return;
-      await this.db.insert(schema.retrievalHits).values(input.recall.hits.slice(0, 50).map((hit, index) => ({
-        workspaceId: input.scope.workspaceId,
-        retrievalRunId: run.id,
-        threadId: input.scope.threadId,
-        rank: index + 1,
-        rankAfterRerank: index + 1,
-        hitKind: hit.kind,
-        sourceTopicSlug: hit.sourceTopicSlug,
-        sourceRelation: hit.sourceRelation,
-        sourceWeight: numericString(hit.sourceWeight),
-        score: numericString(hit.score),
-        fusedScore: numericString(hit.fusedScore),
-        rerankScore: numericString(hit.rerankScore),
-        adjustedScore: numericString(hit.adjustedScore),
-        docTitle: hit.docTitle,
-        utilityTier: hit.utilityTier,
-        textPreview: this.compact(hit.text),
-        linked: [...hit.linked],
-        signalBreakdown: hit.signalBreakdown ? { ...hit.signalBreakdown } : null,
-      })));
+      if (run && input.recall.hits.length > 0) {
+        await this.db.insert(schema.retrievalHits).values(input.recall.hits.slice(0, 50).map((hit, index) => ({
+          workspaceId: input.scope.workspaceId,
+          retrievalRunId: run.id,
+          threadId: input.scope.threadId,
+          rank: index + 1,
+          rankAfterRerank: index + 1,
+          hitKind: hit.kind,
+          sourceTopicSlug: hit.sourceTopicSlug,
+          sourceRelation: hit.sourceRelation,
+          sourceWeight: numericString(hit.sourceWeight),
+          score: numericString(hit.score),
+          fusedScore: numericString(hit.fusedScore),
+          rerankScore: numericString(hit.rerankScore),
+          adjustedScore: numericString(hit.adjustedScore),
+          docTitle: hit.docTitle,
+          utilityTier: hit.utilityTier,
+          textPreview: this.compact(hit.text),
+          linked: [...hit.linked],
+          signalBreakdown: hit.signalBreakdown ? { ...hit.signalBreakdown } : null,
+        })));
+      }
+      if (input.guard.required) {
+        await this.db.insert(schema.judgmentGuardRuns).values({
+          workspaceId: input.scope.workspaceId,
+          threadId: input.scope.threadId,
+          assistantMessageId: null,
+          runKind: 'judgment_guard_pre_answer_v1',
+          required: true,
+          status: input.guard.issues.some((issue) => issue.severity === 'blocker') ? 'blocked' : 'warnings',
+          queryHash: queryHash(input.query),
+          issueSummary: input.guard.issueSummary,
+          issues: input.guard.issues.map((issue) => ({
+            ...issue,
+            message: this.compact(issue.message),
+            requiredAction: this.compact(issue.requiredAction),
+          })),
+          promptRules: [...input.guard.promptRules],
+          currentTimeIso: input.guard.currentTimeIso,
+          userCorrectionDetected: input.guard.issues.some((issue) => issue.code === 'user_correction_pattern'),
+        });
+      }
     } catch {
       // Retrieval ledger is an audit side channel. It must not break chat context generation.
     }

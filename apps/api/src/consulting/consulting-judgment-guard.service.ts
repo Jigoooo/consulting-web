@@ -3,6 +3,7 @@ import type { ConsultingGraphRagHit } from './consulting-graphrag-bridge.service
 
 export type ConsultingJudgmentGuardIssueCode =
   | 'source_intake_parse_failure'
+  | 'stale_source_warning'
   | 'applicability_map_required'
   | 'decision_gate_order_required'
   | 'latest_authority_required'
@@ -33,6 +34,9 @@ const GATE_ORDER_RE = /(게이트|선행|후행|통상임금|총인건비|AND|OR
 const LATEST_AUTHORITY_RE = /(최신|고용노동부|판례|지침|예규|고시|법령|노사지도|202[4-9])/iu;
 const COMPARATOR_RE = /(유사기관|벤치마킹|비교기관|타\s*기관|사례|다수|소수|전무)/iu;
 const OVERCLAIM_RE = /(불가|금지|확정|반드시|무조건|직접\s*금지|할\s*수\s*없|해야\s*한다)/iu;
+const TIME_SENSITIVE_SOURCE_RE = /(호봉표|봉급표|보수표|급여표|임금표|법령|조례|규정|지침|고시|예규|판례|조직도|정원표|인력현황)/iu;
+const NUMERIC_EVIDENCE_RE = /\d[\d,.]*\s*(?:원|명|%|퍼센트|호봉|급|년|개월|일|건|개)/iu;
+const SOURCE_DATE_RE = /(?:^|[^\d])(?:19|20)\d{2}(?:\s*년|[./-]\d{1,2}|(?=\s|_|-))|기준일|시행일|개정일|공포일|기준\s*[:：]|as\s+of|effective[_\s-]?date/iu;
 const LOW_TEXT_THRESHOLD = 80;
 
 function uniqueIssues(issues: ConsultingJudgmentGuardIssue[]): ConsultingJudgmentGuardIssue[] {
@@ -62,6 +66,21 @@ export class ConsultingJudgmentGuardService {
         severity: 'blocker',
         message: `문서 ${lowTextHit.docTitle ?? lowTextHit.kind}의 추출 텍스트가 너무 짧아 OCR/원문 재확인이 필요합니다.`,
         requiredAction: '빈/저품질 추출은 근거 부재가 아니라 파싱 실패로 표시하고 OCR 또는 multimodal extraction을 요구한다.',
+      });
+    }
+
+    const undatedTimeSensitiveHit = input.hits.find((hit) => {
+      const sourceText = `${hit.docTitle ?? ''}\n${hit.text ?? ''}`;
+      return TIME_SENSITIVE_SOURCE_RE.test(sourceText)
+        && NUMERIC_EVIDENCE_RE.test(sourceText)
+        && !SOURCE_DATE_RE.test(sourceText);
+    });
+    if (undatedTimeSensitiveHit) {
+      issues.push({
+        code: 'stale_source_warning',
+        severity: 'warning',
+        message: `시간민감 자료 ${undatedTimeSensitiveHit.docTitle ?? undatedTimeSensitiveHit.kind}에 기준일/effective date가 없습니다.`,
+        requiredAction: '호봉표·법령·조직도 등 수치 근거는 기준일/시행일을 확인하고, 확인 전에는 현재값으로 단정하지 않는다.',
       });
     }
 
@@ -145,6 +164,7 @@ export class ConsultingJudgmentGuardService {
       '- 최신/현재 판단은 모델 기억 날짜가 아니라 위 runtime_current_time을 기준으로 한다.',
       '- RAG 검색 hit는 “자료 후보”일 뿐이며, 결론 전에 적용성·게이트 순서·결론 강도를 별도 판단한다.',
       '- Source intake: 빈/저품질 PDF 추출은 근거 부재가 아니라 파싱 실패로 보고 OCR/원문 확인을 요구한다.',
+      '- Source freshness: 호봉표·법령·조직도 등 시간민감 수치 근거는 기준일/시행일이 없으면 현재값으로 단정하지 않는다.',
       '- Applicability map: 모든 결정적 근거를 directly_applicable / analogical / background_only 중 하나로 라벨링한다.',
       '- Decision graph: AND/OR/short-circuit 순서를 먼저 세우고, 선행 게이트 실패 시 후행 계산/비교는 보조로만 둔다.',
       '- Latest authority: 법·노무·재정·정책 사안은 최신 공식 지침/법령/판례를 우선한다.',
@@ -164,6 +184,7 @@ export class ConsultingJudgmentGuardService {
   private promptRules(): string[] {
     return [
       'source_intake_parse_gate',
+      'source_freshness_gate',
       'applicability_map_gate',
       'decision_logic_graph_gate',
       'latest_authority_gate',

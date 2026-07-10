@@ -225,6 +225,7 @@ export const VerifierGateIssueSchema = z
       'semantic_unsupported',
       'judgment_guard_blocker',
       'source_intake_parse_failure',
+      'stale_source_warning',
       'applicability_map_required',
       'decision_gate_order_required',
       'latest_authority_required',
