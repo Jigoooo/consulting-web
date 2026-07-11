@@ -1,113 +1,118 @@
 # Consulting Web
 
-컨설팅 업무 운영 웹앱. 설계·결정은 아래 문서가 단일 원천이다.
+컨설팅 프로젝트의 대화, 근거, 문서, 판단 과정을 하나의 작업공간에서 연결하는 AI 협업 웹 애플리케이션입니다. 단순 채팅 UI를 넘어 **프로젝트 맥락을 유지하고, 답변의 근거를 검토하며, 결과물을 추적 가능한 형태로 관리하는 것**을 목표로 합니다.
 
-- 상위 계획: `~/.hermes/plans/consulting-webapp-plan.md`
-- 백엔드 상세 설계: `~/.hermes/plans/consulting-web-backend-design.md`
-- 결정 잠금(ADR): `~/.hermes/plans/consulting-web-adr/` (ADR-0001~0021)
-- Phase 0 구현계획: `~/.hermes/plans/consulting-web-phase0-plan.md`
-- Phase 1 구현계획: `~/.hermes/plans/consulting-web-phase1-plan.md`
+## 주요 기능
 
-## 스택
+- **계층형 프로젝트 공간** — workspace → project → channel → topic → thread 구조로 업무 맥락을 분리합니다.
+- **실시간 AI 대화** — NestJS가 AI 런타임을 서버 측에서 호출하고, 타입이 검증된 SSE 이벤트로 브라우저에 전달합니다.
+- **근거 중심 검토** — 대화·파일·evidence를 연결하고, 주장 검증·인용 확인·정확성 게이트를 위한 백엔드 서비스를 제공합니다.
+- **문서 및 산출물 관리** — 업로드, 문서 추출, 라이브러리, 버전형 산출물 흐름을 지원합니다.
+- **컨텍스트 그래프** — 트리 구조 위에 태그와 관계 edge를 더해 연관 범위를 탐색하고 검색 컨텍스트를 조립합니다.
+- **협업과 접근 제어** — 회원가입, 로그인, 초대 링크, workspace membership과 역할 기반 권한을 제공합니다.
+- **복구 가능한 상태 전이** — 보관·복원, soft-delete, audit/outbox를 통해 사용자 작업과 비동기 처리를 추적합니다.
+- **웹 사용성** — 가상화된 메시지 목록, 검색, Markdown·수식·Mermaid 렌더링, 오프라인 상태 표시와 Web Push 기반을 포함합니다.
 
-- 모노레포: pnpm workspace + turbo
-- API: NestJS (CommonJS, TypeScript strict)
-- DB: PostgreSQL (전용 포트 5434) + Drizzle ORM
-- Queue/cache: Redis (전용 포트 6380; 6379는 Honcho) + BullMQ
-- 계약: Zod (packages/contracts)
-- 테스트: Vitest + 실 DB/Redis 통합
+## 아키텍처
 
-## 구조
+```mermaid
+flowchart LR
+    U[브라우저 사용자] --> W[React SPA\nVite · TanStack]
+    W -->|HTTP · SSE| A[NestJS API]
 
+    A --> C[Zod 계약 계층]
+    A --> P[(PostgreSQL\n업무·권한·근거·이벤트)]
+    A --> R[(Redis · BullMQ\n큐·비동기 처리)]
+    A --> H[AI Runtime API\n서버 측 연동]
+    A --> B[Consulting Brain Adapter\n검색·대화 인제스트]
+
+    C --> S[공유 패키지\ncontracts · api-client · shared]
+    P --> O[Outbox Relay]
+    O --> R
 ```
-apps/api            NestJS 백엔드 (config/infra/health/permissions/auth/organization/spaces/chat/queues)
-apps/web            React SPA (TanStack Router 파일기반 + Vite + CSS 토큰 + GSAP) — 4분할 셸 + 인증/초대 UI
-packages/shared     Result 타입, 스코프 어휘, 위험등급 (ADR-0002/0004)
-packages/contracts  Zod API 계약 (health/error/auth/invitation/chat/spaces) — strict response/event + secret 미노출 강제
-packages/api-client 브라우저/서버 공용 타입안전 클라이언트 (fetch + SSE 파서 + ApiClientError)
-packages/db-schema  Drizzle 스키마 (23 tables) + 마이그레이션 러너
-tooling/*           공용 tsconfig, eslint(boundary) 설정
-```
 
-## 로컬 실행 (Phase 0)
+브라우저는 애플리케이션 API만 호출하며 AI 런타임 자격 증명과 데이터베이스 자격 증명을 받지 않습니다. API 계약, DB 스키마, 클라이언트 타입을 workspace package로 분리해 변경 경계를 명확히 했습니다.
+
+## Engineering highlights
+
+- **Contract-first 경계** — `packages/contracts`의 strict Zod schema를 API 응답, 오류, SSE 이벤트의 공통 계약으로 사용합니다.
+- **Workspace-first 멀티테넌시** — 주요 도메인 데이터에 workspace 경계를 두고 membership과 ancestor chain을 함께 확인합니다.
+- **트리 + 그래프 모델** — 업무 계층은 명확한 부모-자식 구조로 유지하면서, `context_edges`와 `scope_tags`로 횡단 참조를 표현합니다.
+- **트랜잭션과 비동기 전달 분리** — 도메인 변경과 outbox 기록을 묶고 BullMQ relay가 후속 작업을 전달합니다.
+- **타입 안전 스트리밍** — AI 런 이벤트를 애플리케이션 SSE 계약으로 변환하고, 브라우저 클라이언트가 동일 schema를 기준으로 소비합니다.
+- **근거에서 결정까지의 파이프라인** — evidence 수집, 충분성 평가, claim verifier, citation post-check, exactness gate를 독립 서비스로 구성합니다.
+- **수명주기 보존** — archive, soft-delete, restore를 구분하고 관련 그래프 데이터와 상태 전이를 함께 다룹니다.
+- **모노레포 경계 검사** — pnpm workspace와 Turborepo로 앱·계약·DB·클라이언트 패키지의 build/typecheck 순서를 관리합니다.
+
+## 기술 스택
+
+| 영역 | 기술 |
+|---|---|
+| Frontend | React 19, TypeScript, Vite, TanStack Router/Query/Virtual, Tailwind CSS, Radix UI |
+| Backend | NestJS 11, Zod, RxJS, Server-Sent Events |
+| Data | PostgreSQL 16, Drizzle ORM |
+| Async | Redis 7, BullMQ, transactional outbox |
+| Document/UI | PDF.js, React Markdown, KaTeX, Mermaid, Shiki |
+| Tooling | pnpm 11, Turborepo, ESLint, Vitest, TypeScript |
+| Deployment | Docker Compose, nginx |
+
+## 검증 가능한 빠른 시작
+
+아래 절차는 저장소의 `package.json`, `.env.example`, `docker-compose.local.yml`, DB package script에 존재하는 명령만 사용합니다.
+
+### 준비물
+
+- Node.js 20 이상
+- pnpm 11.10.0
+- Docker와 Docker Compose
+- 로컬에서 접근 가능한 호환 AI Runtime API
 
 ```bash
-# 1) 시크릿 준비 (한 번만)
+# 1. 환경변수 준비
 cp .env.example .env.local
-# .env.local 의 CONSULTING_POSTGRES_PASSWORD / JWT_* / HERMES_API_KEY 를 실제 값으로 채움
-#   (openssl rand -hex 로 강한 랜덤 생성 권장; 이 파일은 gitignore)
+# .env.local의 placeholder를 로컬 값으로 교체합니다.
 
-# 2) 인프라 기동 (전용 PG 5434 + Redis 6380)
-set -a; . ./.env.local; set +a
+# 2. 의존성 설치
+pnpm install --frozen-lockfile
+
+# 3. 환경변수를 현재 shell에 로드하고 PostgreSQL/Redis 시작
+set -a
+. ./.env.local
+set +a
 docker compose -f docker-compose.local.yml up -d
 
-# 3) 의존성 + 라이브러리 빌드
-pnpm install
-pnpm --filter @consulting/shared --filter @consulting/contracts --filter @consulting/db-schema build
-
-# 4) DB 마이그레이션 적용
-pnpm --filter @consulting/db-schema drizzle:generate   # 스키마 변경 시에만
+# 4. workspace 빌드와 DB migration
+pnpm build
 pnpm --filter @consulting/db-schema drizzle:migrate
 
-# 5) 게이트 검증
-pnpm -r typecheck
-pnpm -r test          # 62 tests (실 DB/Redis 통합 포함)
-
-# 6) API 부팅 + health
-pnpm --filter @consulting/api build
-node apps/api/dist/main.js          # env 필요: set -a; . ./.env.local; set +a
-curl -s localhost:3000/health/ready
+# 5. API와 Web 개발 서버 시작
+pnpm dev
 ```
 
-## Phase 0 Foundation Gate — 완료 기준 (달성)
+개발 서버 주소는 실행 시 출력되는 Vite/Nest 로그를 기준으로 확인합니다. 실제 자격 증명이나 운영 데이터는 예제 파일에 넣지 마세요.
 
-- [x] pnpm typecheck / test / (lint 설정) 그린
-- [x] packages/contracts = API 계약 단일 원천, strict response shape + secret 미노출 테스트
-- [x] config 검증 실패 시 부팅 차단 (Zod env)
-- [x] workspace-first 스키마 (모든 주요 테이블 workspace_id)
-- [x] Redis/BullMQ health 분리 표시
-- [x] permission engine: role/상속/deny 우선/explain — 9 유닛 테스트
-- [x] context graph: 직접 생성 시 태그/edge 자동 상속 — 통합 테스트
-- [x] outbox: 트랜잭션 내 기록 + relay + idempotency + workspace_id NOT NULL + relay index
-- [x] audit: 주요 변경 기록
-- [x] invitation share-link preview/accept → membership (email optional, 재사용/만료 차단)
-- [x] 개인 workspace 자동 생성
-- [x] Hermes key 브라우저/계약 미노출
-- [x] Foundation Gate E2E + negative security 테스트
+## 품질 관리
 
-## Phase 1-B/C/D/G + Thread API + Hermes SSE Proxy — 부분 완료
-
-- [x] `POST /auth/signup` — signup use-case를 strict bootstrap 응답으로 노출
-- [x] `POST /auth/login` — password verify → public user + JWT access/refresh envelope 반환, refresh token hash는 sessions에만 저장
-- [x] `POST /invitations` — owner/admin 공유링크 초대 생성(raw token은 생성 시 1회만 반환, tokenHash 미노출)
-- [x] `POST /invitations/preview` — 초대 landing용 비소모성 preview(token/tokenHash 미노출)
-- [x] `POST /invitations/accept` — Bearer access token 필수, body userId 금지, 인증 사용자 기준 token 수락 → membership 생성
-- [x] HTTP contract adapter: Zod strict parse, domain error→HTTP status 매핑, response contract violation fail-fast
-- [x] `POST /chat/stream` — Bearer access token 필수, thread workspace membership 검증, 권한 없는 사용자 403, 실제 Hermes API Server(`/v1/runs`+`/v1/runs/{id}/events`)로 proxy하여 strict SSE(start/delta/done/error)로 변환 (Hermes key/JWT secret 미노출, 서버측만 호출)
-- [x] `POST /spaces/projects|channels|topics|threads` — Bearer access token 필수, workspace membership 검증, Project→Channel→Topic→Thread 생성 후 stream 연결 가능
-- [x] `POST /invitations` — Bearer access token 필수, inviter는 토큰에서 파생(body invitedByUserId 금지=스푸핑 차단), workspace owner/admin만 발행
-- [x] `ApiError` 계약({code,message}) — 브라우저가 실패를 타입 안전하게 파싱, shared DomainErrorCode와 정합
-- [x] `@consulting/api-client` — signup/login/invite preview·accept/space·thread 생성/chat SSE 구독을 타입 안전 함수로 노출, `ApiClientError.code`로 분기, 실제 API+Hermes E2E smoke 통과
-
-## 보안 원칙 (요약)
-
-- Hermes api_server는 백엔드만 접근 (브라우저 노출 금지, ADR-0007)
-- secret 은 .env.local + 환경변수만 (DB 평문 저장 금지, ADR-0014)
-- 접근권은 membership/invitation 으로만 발생 (ADR-0009)
-- 봇 invoke ≠ capability (ADR-0004)
-
-Hermes SSE proxy 연결 + 타입안전 api-client + 초대 발행 하드닝이 완료됐다. Phase 1-K~M 완료: apps/web(TanStack Router 파일기반 + Vite + React 19 + CSS 토큰 + GSAP + TanStack Query), 인증/초대 UI, read API 3종(workspaces/tree/threads), 사이드바 실데이터 + 인라인 생성, 실시간 채팅(ChatThread SSE — 실제 Hermes 응답 스트리밍 E2E 검증). 다음은 Phase 1-N 메시지 영속화다. 전체 로드맵 = plans/consulting-web-roadmap.md, UI 방침 = plans/consulting-web-phase1j-ui-direction.md §8.
-
-### apps/web 로컬 실행
+루트 manifest가 제공하는 표준 게이트는 다음과 같습니다.
 
 ```bash
-pnpm --filter @consulting/web dev     # http://127.0.0.1:5273 (Vite, /api → NestJS 프록시)
-pnpm --filter @consulting/web build   # vite build (routeTree.gen.ts 자동 생성)
-pnpm --filter @consulting/web typecheck
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
 ```
 
-### Hermes API Server 연동 (운영 메모)
+DB/Redis 환경변수가 없는 경우 해당 의존성이 필요한 통합 테스트는 테스트 코드의 조건에 따라 skip될 수 있으므로, 전체 통합 검증은 로컬 인프라를 기동한 뒤 실행해야 합니다.
 
-- `/chat/stream`은 서버측에서만 Hermes를 호출한다: `HERMES_API_BASE_URL`(예 `http://127.0.0.1:8642`) + `HERMES_API_KEY`.
-- Hermes gateway 쪽은 `~/.hermes/.env`에 `API_SERVER_ENABLED=true` / `API_SERVER_KEY`(웹앱 `HERMES_API_KEY`와 동일) / `API_SERVER_HOST` / `API_SERVER_PORT` 필요. 변경 후 `hermes gateway restart`.
-- 실제 E2E smoke 확인: signup→login→project/channel/topic/thread 생성→`/chat/stream`에서 실제 `run_*` id로 start/delta/done 수신, secret 미노출.
+## 보안 및 데이터 경계
+
+- 브라우저는 AI Runtime, PostgreSQL, Redis의 자격 증명에 직접 접근하지 않습니다.
+- secret은 커밋하지 않고 환경변수 또는 로컬 `.env.*` 파일로 주입합니다.
+- workspace membership과 scope ancestor 검증을 서버 측 접근 경계로 사용합니다.
+- 업로드 문서, 대화, 근거, 산출물은 애플리케이션 데이터로 취급하며 공개 저장소의 fixture나 문서에 실제 고객 데이터를 포함하면 안 됩니다.
+- 외부 AI·embedding 공급자를 연결할 때는 전송 데이터, 보존 정책, 지역 규정을 별도로 검토해야 합니다.
+
+
+## 현재 상태
+
+이 저장소는 이력서·포트폴리오 검토를 위한 source snapshot이며, 핵심 애플리케이션 구조와 기능은 구현되어 있습니다. 외부 AI Runtime, 실제 embedding 공급자, 운영 배포 환경이 필요한 end-to-end 검증은 별도 환경 구성 없이는 재현되지 않습니다.
