@@ -10,6 +10,8 @@ import type {
   WorkspaceSummary,
 } from '@consulting/contracts';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
+import { MatrixPolicyEngine } from '../permissions/matrix-policy-engine.js';
+import { PERMISSIONS, type MembershipRecord, type OverrideRecord, type Permission, type ScopeChainNode } from '../permissions/permission.types.js';
 
 const ROLE_ORDER: Record<string, number> = { owner: 0, admin: 1, editor: 2, commenter: 3, viewer: 4 };
 
@@ -20,6 +22,8 @@ const ROLE_ORDER: Record<string, number> = { owner: 0, admin: 1, editor: 2, comm
  */
 @Injectable()
 export class SpaceReadService {
+  private readonly policy = new MatrixPolicyEngine();
+
   constructor(@Inject(DRIZZLE) private readonly db: Db) {}
 
   /** Workspaces where the user holds ANY membership, with their highest role. */
@@ -57,25 +61,25 @@ export class SpaceReadService {
   }
 
   /** Full nested tree (projects → channels → topics) for one workspace. */
-  async workspaceTree(workspaceId: string): Promise<WorkspaceTreeResponse> {
+  async workspaceTree(workspaceId: string, userId?: string, includePermissions = false): Promise<WorkspaceTreeResponse> {
     const projects = await this.db
       .select({ id: schema.projects.id, name: schema.projects.name, slug: schema.projects.slug })
       .from(schema.projects)
       .where(and(eq(schema.projects.workspaceId, workspaceId), eq(schema.projects.status, 'active'), isNull(schema.projects.deletedAt)))
       .orderBy(asc(schema.projects.createdAt));
-    if (projects.length === 0) return { workspaceId, projects: [] };
-
     const projectIds = projects.map((p) => p.id);
-    const channels = await this.db
-      .select({
-        id: schema.channels.id,
-        projectId: schema.channels.projectId,
-        name: schema.channels.name,
-        slug: schema.channels.slug,
-      })
-      .from(schema.channels)
-      .where(and(inArray(schema.channels.projectId, projectIds), eq(schema.channels.status, 'active'), isNull(schema.channels.deletedAt)))
-      .orderBy(asc(schema.channels.createdAt));
+    const channels = projectIds.length
+      ? await this.db
+          .select({
+            id: schema.channels.id,
+            projectId: schema.channels.projectId,
+            name: schema.channels.name,
+            slug: schema.channels.slug,
+          })
+          .from(schema.channels)
+          .where(and(eq(schema.channels.workspaceId, workspaceId), inArray(schema.channels.projectId, projectIds), eq(schema.channels.status, 'active'), isNull(schema.channels.deletedAt)))
+          .orderBy(asc(schema.channels.createdAt))
+      : [];
 
     const channelIds = channels.map((c) => c.id);
     const topics = channelIds.length
@@ -87,24 +91,117 @@ export class SpaceReadService {
             slug: schema.topics.slug,
           })
           .from(schema.topics)
-          .where(and(inArray(schema.topics.channelId, channelIds), eq(schema.topics.status, 'active'), isNull(schema.topics.deletedAt)))
+          .where(and(eq(schema.topics.workspaceId, workspaceId), inArray(schema.topics.channelId, channelIds), eq(schema.topics.status, 'active'), isNull(schema.topics.deletedAt)))
           .orderBy(asc(schema.topics.createdAt))
       : [];
 
-    const topicIds = topics.map((t) => t.id);
-    const threadRows = topicIds.length
+    const allTopicIds = topics.map((topic) => topic.id);
+    const threadRows = allTopicIds.length
       ? await this.db
           .select({
             id: schema.threads.id,
             topicId: schema.threads.topicId,
           })
           .from(schema.threads)
-          .where(and(inArray(schema.threads.topicId, topicIds), eq(schema.threads.status, 'active'), isNull(schema.threads.deletedAt)))
+          .where(and(
+            eq(schema.threads.workspaceId, workspaceId),
+            inArray(schema.threads.topicId, allTopicIds),
+            eq(schema.threads.status, 'active'),
+            isNull(schema.threads.deletedAt),
+          ))
           .orderBy(asc(schema.threads.createdAt))
       : [];
 
+    let visibleProjects = projects;
+    let visibleChannels = channels;
+    let visibleTopics = topics;
+    let visibleThreads = threadRows;
+    let workspacePermissions: Permission[] | undefined;
+    const projectPermissions = new Map<string, Permission[]>();
+    const channelPermissions = new Map<string, Permission[]>();
+    const topicPermissions = new Map<string, Permission[]>();
+    if (userId) {
+      const [membershipRows, overrideRows, userRows] = await Promise.all([
+        this.db
+          .select({ scopeType: schema.memberships.scopeType, scopeId: schema.memberships.scopeId, role: schema.memberships.role })
+          .from(schema.memberships)
+          .where(and(eq(schema.memberships.userId, userId), eq(schema.memberships.workspaceId, workspaceId))),
+        this.db
+          .select({ scopeType: schema.permissionOverrides.scopeType, scopeId: schema.permissionOverrides.scopeId, permission: schema.permissionOverrides.permission, allow: schema.permissionOverrides.allow })
+          .from(schema.permissionOverrides)
+          .where(and(eq(schema.permissionOverrides.userId, userId), eq(schema.permissionOverrides.workspaceId, workspaceId))),
+        this.db
+          .select({ systemRole: schema.users.systemRole })
+          .from(schema.users)
+          .where(and(eq(schema.users.id, userId), eq(schema.users.status, 'active'), isNull(schema.users.deletedAt)))
+          .limit(1),
+      ]);
+      const memberships: MembershipRecord[] = membershipRows.map((row) => ({ scopeType: row.scopeType, scopeId: row.scopeId, role: row.role }));
+      const overrides: OverrideRecord[] = overrideRows
+        .filter((row): row is typeof row & { permission: Permission } => PERMISSIONS.includes(row.permission as Permission))
+        .map((row) => ({ scopeType: row.scopeType, scopeId: row.scopeId, permission: row.permission, allow: row.allow }));
+      const can = (permission: Permission, scopeChain: ScopeChainNode[]) => this.policy.evaluate({
+        permission,
+        scopeChain,
+        memberships,
+        overrides,
+        systemRole: userRows[0]?.systemRole ?? 'user',
+      }).allowed;
+      const projectById = new Map(projects.map((project) => [project.id, project]));
+      const channelById = new Map(channels.map((channel) => [channel.id, channel]));
+      const topicById = new Map(topics.map((topic) => [topic.id, topic]));
+      const projectChain = (projectId: string): ScopeChainNode[] => [
+        { scopeType: 'workspace', scopeId: workspaceId },
+        { scopeType: 'project', scopeId: projectId },
+      ];
+      const channelChain = (channel: typeof channels[number]): ScopeChainNode[] => [
+        ...projectChain(channel.projectId),
+        { scopeType: 'channel', scopeId: channel.id },
+      ];
+      const topicChain = (topic: typeof topics[number]): ScopeChainNode[] => {
+        const channel = channelById.get(topic.channelId);
+        return channel ? [...channelChain(channel), { scopeType: 'topic', scopeId: topic.id }] : [];
+      };
+
+      const allowedPermissions = (scopeChain: ScopeChainNode[]): Permission[] =>
+        PERMISSIONS.filter((permission) => can(permission, scopeChain));
+      if (includePermissions) {
+        workspacePermissions = allowedPermissions([{ scopeType: 'workspace', scopeId: workspaceId }]);
+        for (const project of projects) projectPermissions.set(project.id, allowedPermissions(projectChain(project.id)));
+        for (const channel of channels) channelPermissions.set(channel.id, allowedPermissions(channelChain(channel)));
+      }
+
+      visibleThreads = threadRows.filter((thread) => {
+        const topic = topicById.get(thread.topicId);
+        const chain = topic ? topicChain(topic) : [];
+        return chain.length > 0 && can('message.read', [...chain, { scopeType: 'thread', scopeId: thread.id }]);
+      });
+      if (includePermissions) {
+        for (const topic of topics) {
+          const chain = topicChain(topic);
+          if (chain.length === 0) continue;
+          const defaultThread = visibleThreads.find((thread) => thread.topicId === topic.id);
+          topicPermissions.set(topic.id, allowedPermissions(defaultThread
+            ? [...chain, { scopeType: 'thread', scopeId: defaultThread.id }]
+            : chain));
+        }
+      }
+      const visibleThreadTopics = new Set(visibleThreads.map((thread) => thread.topicId));
+      visibleTopics = topics.filter((topic) => {
+        const chain = topicChain(topic);
+        return visibleThreadTopics.has(topic.id) || (chain.length > 0 && can('message.read', chain));
+      });
+      const visibleTopicChannels = new Set(visibleTopics.map((topic) => topic.channelId));
+      visibleChannels = channels.filter((channel) => visibleTopicChannels.has(channel.id) || can('channel.read', channelChain(channel)));
+      const visibleChannelProjects = new Set(visibleChannels.map((channel) => channel.projectId));
+      visibleProjects = projects.filter((project) => projectById.has(project.id) && (visibleChannelProjects.has(project.id) || can('project.read', projectChain(project.id))));
+    }
+
+    const visibleTopicIds = new Set(visibleTopics.map((topic) => topic.id));
+    visibleThreads = visibleThreads.filter((thread) => visibleTopicIds.has(thread.topicId));
+
     const defaultThreadByTopic = new Map<string, string>();
-    for (const thread of threadRows) {
+    for (const thread of visibleThreads) {
       if (!defaultThreadByTopic.has(thread.topicId)) defaultThreadByTopic.set(thread.topicId, thread.id);
     }
 
@@ -137,8 +234,8 @@ export class SpaceReadService {
       });
     }
 
-    const topicsByChannel = new Map<string, { id: string; name: string; slug: string; defaultThreadId: string | null; messageStats: { messageCount: number; recentMessageCount: number; recentAvgChars: number; lastMessageAt: string | null } }[]>();
-    for (const t of topics) {
+    const topicsByChannel = new Map<string, { id: string; name: string; slug: string; defaultThreadId: string | null; messageStats: { messageCount: number; recentMessageCount: number; recentAvgChars: number; lastMessageAt: string | null }; permissions?: Permission[] }[]>();
+    for (const t of visibleTopics) {
       const defaultThreadId = defaultThreadByTopic.get(t.id) ?? null;
       const list = topicsByChannel.get(t.channelId) ?? [];
       list.push({
@@ -149,23 +246,32 @@ export class SpaceReadService {
         messageStats: defaultThreadId
           ? statsByThread.get(defaultThreadId) ?? { messageCount: 0, recentMessageCount: 0, recentAvgChars: 0, lastMessageAt: null }
           : { messageCount: 0, recentMessageCount: 0, recentAvgChars: 0, lastMessageAt: null },
+        ...(includePermissions ? { permissions: topicPermissions.get(t.id) ?? [] } : {}),
       });
       topicsByChannel.set(t.channelId, list);
     }
-    const channelsByProject = new Map<string, { id: string; name: string; slug: string; topics: { id: string; name: string; slug: string; defaultThreadId: string | null; messageStats: { messageCount: number; recentMessageCount: number; recentAvgChars: number; lastMessageAt: string | null } }[] }[]>();
-    for (const c of channels) {
+    const channelsByProject = new Map<string, { id: string; name: string; slug: string; topics: { id: string; name: string; slug: string; defaultThreadId: string | null; messageStats: { messageCount: number; recentMessageCount: number; recentAvgChars: number; lastMessageAt: string | null }; permissions?: Permission[] }[]; permissions?: Permission[] }[]>();
+    for (const c of visibleChannels) {
       const list = channelsByProject.get(c.projectId) ?? [];
-      list.push({ id: c.id, name: c.name, slug: c.slug, topics: topicsByChannel.get(c.id) ?? [] });
+      list.push({
+        id: c.id,
+        name: c.name,
+        slug: c.slug,
+        topics: topicsByChannel.get(c.id) ?? [],
+        ...(includePermissions ? { permissions: channelPermissions.get(c.id) ?? [] } : {}),
+      });
       channelsByProject.set(c.projectId, list);
     }
 
     return {
       workspaceId,
-      projects: projects.map((p) => ({
+      ...(includePermissions ? { permissions: workspacePermissions ?? [] } : {}),
+      projects: visibleProjects.map((p) => ({
         id: p.id,
         name: p.name,
         slug: p.slug,
         channels: channelsByProject.get(p.id) ?? [],
+        ...(includePermissions ? { permissions: projectPermissions.get(p.id) ?? [] } : {}),
       })),
     };
   }
@@ -212,7 +318,13 @@ export class SpaceReadService {
         })
         .from(schema.channels)
         .innerJoin(schema.projects, eq(schema.channels.projectId, schema.projects.id))
-        .where(and(eq(schema.channels.workspaceId, workspaceId), eq(schema.channels.status, 'archived'), isNull(schema.channels.deletedAt)))
+        .where(and(
+          eq(schema.channels.workspaceId, workspaceId),
+          eq(schema.channels.status, 'archived'),
+          isNull(schema.channels.deletedAt),
+          eq(schema.projects.status, 'active'),
+          isNull(schema.projects.deletedAt),
+        ))
         .orderBy(asc(schema.channels.updatedAt)),
       this.db
         .select({
@@ -225,7 +337,15 @@ export class SpaceReadService {
         .from(schema.topics)
         .innerJoin(schema.channels, eq(schema.topics.channelId, schema.channels.id))
         .innerJoin(schema.projects, eq(schema.channels.projectId, schema.projects.id))
-        .where(and(eq(schema.topics.workspaceId, workspaceId), eq(schema.topics.status, 'archived'), isNull(schema.topics.deletedAt)))
+        .where(and(
+          eq(schema.topics.workspaceId, workspaceId),
+          eq(schema.topics.status, 'archived'),
+          isNull(schema.topics.deletedAt),
+          eq(schema.channels.status, 'active'),
+          isNull(schema.channels.deletedAt),
+          eq(schema.projects.status, 'active'),
+          isNull(schema.projects.deletedAt),
+        ))
         .orderBy(asc(schema.topics.updatedAt)),
       this.db
         .select({
@@ -240,7 +360,17 @@ export class SpaceReadService {
         .innerJoin(schema.topics, eq(schema.threads.topicId, schema.topics.id))
         .innerJoin(schema.channels, eq(schema.topics.channelId, schema.channels.id))
         .innerJoin(schema.projects, eq(schema.channels.projectId, schema.projects.id))
-        .where(and(eq(schema.threads.workspaceId, workspaceId), eq(schema.threads.status, 'archived'), isNull(schema.threads.deletedAt)))
+        .where(and(
+          eq(schema.threads.workspaceId, workspaceId),
+          eq(schema.threads.status, 'archived'),
+          isNull(schema.threads.deletedAt),
+          eq(schema.topics.status, 'active'),
+          isNull(schema.topics.deletedAt),
+          eq(schema.channels.status, 'active'),
+          isNull(schema.channels.deletedAt),
+          eq(schema.projects.status, 'active'),
+          isNull(schema.projects.deletedAt),
+        ))
         .orderBy(asc(schema.threads.updatedAt)),
     ]);
 

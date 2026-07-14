@@ -21,6 +21,80 @@ describe('env validation (ADR-0014, acceptance #3)', () => {
     expect(r.env?.VOYAGE_MULTIMODAL_MODEL).toBe('voyage-multimodal-3.5');
     expect(r.env?.VERIFIER_LLM_ENABLED).toBe(false);
     expect(r.env?.VERIFIER_LLM_TIMEOUT_MS).toBe(30_000);
+    expect(r.env?.ARTIFACT_RED_TEAM_MODE).toBe('off');
+    expect(r.env?.ARTIFACT_RED_TEAM_TIMEOUT_MS).toBe(45_000);
+  });
+
+  it('accepts the red-team shadow rollout and rejects unknown modes', () => {
+    const active = parseEnv({
+      ...VALID,
+      ARTIFACT_RED_TEAM_MODE: 'shadow',
+      ARTIFACT_RED_TEAM_API_BASE_URL: 'http://127.0.0.1:8643',
+      ARTIFACT_RED_TEAM_API_KEY: 'reviewer-key',
+    } as NodeJS.ProcessEnv);
+    expect(active.env?.ARTIFACT_RED_TEAM_MODE).toBe('shadow');
+    expect(parseEnv({
+      ...VALID,
+      ARTIFACT_RED_TEAM_MODE: 'shadow',
+      ARTIFACT_RED_TEAM_API_BASE_URL: VALID.HERMES_API_BASE_URL,
+      ARTIFACT_RED_TEAM_API_KEY: 'reviewer-key',
+    } as NodeJS.ProcessEnv).ok).toBe(false);
+    expect(parseEnv({
+      ...VALID,
+      ARTIFACT_RED_TEAM_MODE: 'shadow',
+      ARTIFACT_RED_TEAM_API_BASE_URL: 'http://127.0.0.1:8643',
+      ARTIFACT_RED_TEAM_API_KEY: VALID.HERMES_API_KEY,
+    } as NodeJS.ProcessEnv).ok).toBe(false);
+    expect(parseEnv({ ...VALID, ARTIFACT_RED_TEAM_MODE: 'shadow' } as NodeJS.ProcessEnv).ok).toBe(false);
+    expect(parseEnv({ ...VALID, ARTIFACT_RED_TEAM_MODE: 'off' } as NodeJS.ProcessEnv).env?.ARTIFACT_RED_TEAM_MODE).toBe('off');
+    expect(parseEnv({ ...VALID, ARTIFACT_RED_TEAM_MODE: 'blocking' } as NodeJS.ProcessEnv).ok).toBe(false);
+  });
+
+  it('fails closed unless Web insight shadow has exact threads, policy hash, and an isolated endpoint', () => {
+    const active = parseEnv({
+      ...VALID,
+      CONSULTING_INSIGHT_WEB_SHADOW_MODE: 'shadow',
+      CONSULTING_INSIGHT_WEB_SHADOW_THREAD_IDS: '11111111-1111-4111-8111-111111111111',
+      CONSULTING_INSIGHT_POLICY_HASH: 'a'.repeat(64),
+      ARTIFACT_RED_TEAM_API_BASE_URL: 'http://127.0.0.1:8643',
+      ARTIFACT_RED_TEAM_API_KEY: 'reviewer-key',
+    } as NodeJS.ProcessEnv);
+    expect(active.ok).toBe(true);
+    expect(active.env?.CONSULTING_INSIGHT_WEB_SHADOW_MODE).toBe('shadow');
+    expect(parseEnv({ ...VALID, CONSULTING_INSIGHT_WEB_SHADOW_MODE: 'shadow' } as NodeJS.ProcessEnv).ok).toBe(false);
+    expect(parseEnv({
+      ...VALID,
+      CONSULTING_INSIGHT_WEB_SHADOW_MODE: 'shadow',
+      CONSULTING_INSIGHT_WEB_SHADOW_THREAD_IDS: 'not-a-uuid',
+      CONSULTING_INSIGHT_POLICY_HASH: 'a'.repeat(64),
+      ARTIFACT_RED_TEAM_API_BASE_URL: 'http://127.0.0.1:8643',
+      ARTIFACT_RED_TEAM_API_KEY: 'reviewer-key',
+    } as NodeJS.ProcessEnv).ok).toBe(false);
+  });
+
+  it('uses TEST_DATABASE_URL only for the test runtime', () => {
+    const { DATABASE_URL, ...withoutDatabaseUrl } = VALID;
+    const testDatabaseUrl = 'postgres://test:test@127.0.0.1:5435/consulting_test';
+    const r = parseEnv({
+      ...withoutDatabaseUrl,
+      TEST_DATABASE_URL: testDatabaseUrl,
+    } as NodeJS.ProcessEnv);
+
+    expect(DATABASE_URL).toBeTruthy();
+    expect(r.ok).toBe(true);
+    expect(r.env?.DATABASE_URL).toBe(testDatabaseUrl);
+  });
+
+  it('does not use TEST_DATABASE_URL outside the test runtime', () => {
+    const { DATABASE_URL, ...withoutDatabaseUrl } = VALID;
+    const r = parseEnv({
+      ...withoutDatabaseUrl,
+      APP_ENV: 'production',
+      TEST_DATABASE_URL: DATABASE_URL,
+    } as NodeJS.ProcessEnv);
+
+    expect(r.ok).toBe(false);
+    expect(r.errors?.some((error) => error.includes('DATABASE_URL'))).toBe(true);
   });
 
   it('accepts Hermes tool policy allowlist settings', () => {

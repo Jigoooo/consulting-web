@@ -23,14 +23,21 @@ type PdfEngine = 'typst' | 'weasyprint' | 'chromium';
  */
 @Injectable()
 export class ArtifactExportService {
-  async export(input: { title: string; versionNo: number; content: string; format: ArtifactExportFormat }): Promise<ArtifactExportResult> {
+  async export(input: {
+    title: string;
+    versionNo: number;
+    content: string;
+    governingMessage: string;
+    soWhat: string;
+    format: ArtifactExportFormat;
+  }): Promise<ArtifactExportResult> {
     const dir = await mkdtemp(join(tmpdir(), 'artifact-export-'));
     try {
       const downloadStem = `${safeFileName(input.title)}-v${input.versionNo}`;
       // Internal temp paths stay ASCII-only: some engines sanitize or drop non-ASCII output paths.
       const tempStem = `artifact-v${input.versionNo}`;
       const mdPath = join(dir, `${tempStem}.md`);
-      await writeFile(mdPath, normalizeMarkdown(input.title, input.versionNo, input.content), 'utf8');
+      await writeFile(mdPath, normalizeArtifactMarkdown(input), 'utf8');
 
       if (input.format === 'docx') {
         const out = join(dir, `${tempStem}.docx`);
@@ -132,11 +139,26 @@ async function exportPdfWithChromium(input: { dir: string; tempStem: string; mdP
   return await readVerifiedPdf(pdfPath);
 }
 
-function normalizeMarkdown(title: string, versionNo: number, content: string): string {
-  const trimmed = content.trim();
+export function normalizeArtifactMarkdown(input: {
+  title: string;
+  versionNo: number;
+  content: string;
+  governingMessage: string;
+  soWhat: string;
+}): string {
+  const trimmed = input.content.trim();
   const hasTitle = /^#\s+/m.test(trimmed.slice(0, 300));
-  const header = hasTitle ? '' : `# ${title}\n\n`;
-  return `${header}> 산출물 버전: v${versionNo}\n\n${trimmed}\n`;
+  const header = hasTitle ? '' : `# ${input.title}\n\n`;
+  return [
+    `${header}> 산출물 버전: v${input.versionNo}`,
+    `## 핵심 결론\n\n${markdownQuote(input.governingMessage)}`,
+    `## 의사결정 의미\n\n${markdownQuote(input.soWhat)}`,
+    trimmed,
+  ].join('\n\n') + '\n';
+}
+
+function markdownQuote(value: string): string {
+  return value.trim().split(/\r?\n/u).map((line) => `> ${line}`).join('\n');
 }
 
 function safeFileName(input: string): string {

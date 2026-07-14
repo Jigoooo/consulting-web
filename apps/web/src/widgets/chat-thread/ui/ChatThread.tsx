@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useRef, useState } from 'react';
 import type { ChatApprovalChoice, ChatMessageAttachment, ChatRuntimeModel } from '@consulting/contracts';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../lib/api';
@@ -19,7 +19,15 @@ import { findThreadLoadPreview, planInitialChannelLoad } from '../model/channelL
 import { shouldRevealTailDuringSettle } from '../model/scrollPaging';
 import { searchStore, useSearchState } from '../model/searchStore';
 import { appendDraftAttachment, canSubmitDraft, createDraftAttachment, draftAttachmentsForSend } from '../model/draftAttachments';
-import { RUNTIME_COMMANDS, describeRuntimeCommand, parseRuntimeCommand, resolveModelCommand, type RuntimeCommandItem } from '../model/runtimeCommands';
+import {
+  createChatSendAttempt,
+  isCurrentChatSendExecution,
+  retryChatSendAttempt,
+  type ChatSendAttempt,
+} from '../model/chat-send-attempt';
+import { reconcileOptimisticTurns } from '../model/liveTurnReconciliation';
+import { readComposerDraft, writeComposerDraft } from '../model/composerDraftStore';
+import { RUNTIME_COMMANDS, describeRuntimeCommand, parseRuntimeCommand, resolveModelCommand, resolveRuntimeModelLabel, type RuntimeCommandItem } from '../model/runtimeCommands';
 import { VirtualMessageStream, type HighlightState } from './VirtualMessageStream';
 import { RunStatusBar, type RunStatusUi } from './RunStatusBar';
 import { JumpToLatest } from './JumpToLatest';
@@ -27,20 +35,28 @@ import { ModelPickerSheet } from './ModelPickerSheet';
 import { Icon } from '../../../shared/icons/Icon';
 import { Button } from '../../../shared/ui/button/Button';
 import { Textarea } from '../../../shared/ui/input/Input';
+import { useTextPrompt } from '../../../shared/ui/menu/Menu';
 import { EmptyState, Spinner } from '../../../shared/ui/feedback/EmptyState';
 import { SkeletonMessage } from '../../../shared/ui/skeleton/Skeleton';
 import { useDelayedFlag } from '../../../shared/lib/useDelayedFlag';
+import { resolveAsyncCollectionState } from '../../../shared/lib/asyncCollectionState';
 import { FileViewer, type FileViewerTarget } from '../../file-viewer/ui/FileViewer';
 import s from '../../thread-view/ui/ThreadView.module.css';
 
 interface LiveTurn {
   id: number;
+  attemptId: string;
   role: 'user' | 'ai';
   text: string;
   attachments?: ChatMessageAttachment[];
   runId?: string;
   streaming?: boolean;
   error?: string;
+}
+
+interface RetriableChatSendAttempt extends ChatSendAttempt {
+  displayAttachments: ChatMessageAttachment[];
+  aiTurnId: number;
 }
 
 type RuntimeFlowMode = 'idle' | 'queueing' | 'steering' | 'answering' | 'approval' | 'stopping' | 'queued';
@@ -163,12 +179,19 @@ function ApprovalCard({
  * evidence (E-4), and answers can be saved as artifacts (2-B) with file
  * attachments (2-D G-3).
  */
-export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageId }: { threadId: string; topicId?: string | undefined; title: string; breadcrumb?: ThreadBreadcrumb; focusMessageId?: string }) {
+export function ChatThread({ threadId, projectId, topicId, title, breadcrumb, focusMessageId }: { threadId: string; projectId: string; topicId?: string | undefined; title: string; breadcrumb?: ThreadBreadcrumb; focusMessageId?: string }) {
   const { user } = useAuth();
   const toast = useToast();
+  const artifactTitlePrompt = useTextPrompt();
   const qc = useQueryClient();
   const workspaceId = useSelectedWorkspace();
   const { data: tree } = useWorkspaceTree(workspaceId ?? undefined);
+  const activeProject = tree?.projects.find((project) => project.id === projectId);
+  const activeTopic = activeProject?.channels
+    .flatMap((channel) => channel.topics)
+    .find((topic) => topic.id === topicId || topic.defaultThreadId === threadId);
+  const canSend = activeTopic?.permissions?.includes('message.send') ?? false;
+  const canEdit = activeProject?.permissions?.includes('artifact.create') ?? false;
   const history = useMessageWindow(threadId);
   const tailScrollRequest = useTailScrollRequest();
   const composerDraftRequest = useComposerDraftRequest();
@@ -178,7 +201,14 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
   const search = useSearchState();
 
   const [live, setLive] = useState<LiveTurn[]>([]);
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState(() => readComposerDraft(threadId));
+  const updateInput = useCallback((next: string | ((current: string) => string)) => {
+    setInput((current) => {
+      const value = typeof next === 'function' ? next(current) : next;
+      writeComposerDraft(threadId, value);
+      return value;
+    });
+  }, [threadId]);
   const [slashCursor, setSlashCursor] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [searching, setSearching] = useState(false);
@@ -195,6 +225,7 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
   const [modelSheetOpen, setModelSheetOpen] = useState(false);
   const [runtimeModels, setRuntimeModels] = useState<ChatRuntimeModel[]>([]);
   const [runtimeModelsLoading, setRuntimeModelsLoading] = useState(false);
+  const [runtimeModelsLoaded, setRuntimeModelsLoaded] = useState(false);
   const [defaultModel, setDefaultModel] = useState<string | undefined>(undefined);
   const [selectedModel, setSelectedModel] = useState(() => {
     if (typeof window === 'undefined') return '';
@@ -203,11 +234,14 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
   const [atBottom, setAtBottom] = useState(true);
   const [unseen, setUnseen] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+  const activeThreadRef = useRef(threadId);
+  activeThreadRef.current = threadId;
+  const sendGenerationRef = useRef(0);
   const queuedMessageRef = useRef<string | null>(null);
   const nextId = useRef(1);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<HTMLDivElement | null>(null);
-  const lastPromptRef = useRef<string>('');
+  const lastAttemptRef = useRef<RetriableChatSendAttempt | null>(null);
   const atBottomRef = useRef(true);
   const deltaBuf = useRef('');
   const rafId = useRef(0);
@@ -218,13 +252,17 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
+    setInput(readComposerDraft(threadId));
+  }, [threadId]);
+
+  useEffect(() => {
     if (!composerDraftRequest || composerDraftRequest.threadId !== threadId) return;
-    setInput((current) => {
+    updateInput((current) => {
       const existing = current.trimEnd();
       return existing ? `${existing}\n\n${composerDraftRequest.prompt}` : composerDraftRequest.prompt;
     });
     requestAnimationFrame(() => textareaRef.current?.focus());
-  }, [composerDraftRequest?.seq, threadId]);
+  }, [composerDraftRequest?.seq, threadId, updateInput]);
 
   // G9: paste/newline auto-grow. Height changes are batched in rAF so typing
   // does one layout read/write pair, capped at 10 readable rows.
@@ -256,8 +294,13 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
   }, [live]);
 
   useEffect(() => {
+    sendGenerationRef.current += 1;
     setLive([]);
     abortRef.current?.abort();
+    if (rafId.current) cancelAnimationFrame(rafId.current);
+    rafId.current = 0;
+    deltaBuf.current = '';
+    lastAttemptRef.current = null;
     setBusy(false);
     setRuntimeFlow('idle');
     setActiveTool(null);
@@ -294,6 +337,7 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
     } catch {
       toast('error', '모델 목록을 불러오지 못했어요.');
     } finally {
+      setRuntimeModelsLoaded(true);
       setRuntimeModelsLoading(false);
     }
   }
@@ -362,8 +406,15 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
       if (showToast) toast('info', '아직 조회할 실행이 없어요.');
       return;
     }
+    const execution = { threadId, generation: sendGenerationRef.current };
+    const isCurrentRefresh = () => isCurrentChatSendExecution(
+      execution,
+      activeThreadRef.current,
+      sendGenerationRef.current,
+    );
     try {
       const status = await api.runStatus(runId, threadId);
+      if (!isCurrentRefresh()) return;
       setRunStatus((prev) => ({
         ...(prev ?? { startedAt: Date.now(), state: 'running' as const }),
         runId: status.runId,
@@ -374,20 +425,27 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
       }));
       if (showToast) toast('info', `상태: ${status.status}${status.model ? ` · ${status.model}` : ''}`);
     } catch {
-      if (showToast) toast('error', '실행 상태를 조회하지 못했어요.');
+      if (showToast && isCurrentRefresh()) toast('error', '실행 상태를 조회하지 못했어요.');
     }
   }
 
   async function stopCurrentRun() {
     const runId = runStatus?.runId;
+    const controller = abortRef.current;
+    const execution = { threadId, generation: sendGenerationRef.current };
+    const isCurrentStop = () => isCurrentChatSendExecution(
+      execution,
+      activeThreadRef.current,
+      sendGenerationRef.current,
+    );
     setRuntimeFlow('stopping');
     try {
       if (runId) await api.stopRun(runId, threadId);
-      abortRef.current?.abort();
-      toast('info', '중단 요청을 보냈어요.');
+      controller?.abort();
+      if (isCurrentStop()) toast('info', '중단 요청을 보냈어요.');
     } catch {
-      abortRef.current?.abort();
-      toast('error', '상류 중단 요청은 실패했지만 로컬 스트림은 끊었어요.');
+      controller?.abort();
+      if (isCurrentStop()) toast('error', '상류 중단 요청은 실패했지만 로컬 스트림은 끊었어요.');
     }
   }
 
@@ -397,16 +455,24 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
       toast('error', '승인 원장 ID가 없어 실행을 계속할 수 없어요. 새 응답으로 다시 시도해주세요.');
       return;
     }
+    const approval = pendingApproval;
+    const execution = { threadId, generation: sendGenerationRef.current };
+    const isCurrentApproval = () => isCurrentChatSendExecution(
+      execution,
+      activeThreadRef.current,
+      sendGenerationRef.current,
+    );
     setApprovalBusyChoice(choice);
     try {
-      await api.respondRunApproval(pendingApproval.runId, { threadId, approvalId: pendingApproval.approvalId, choice });
+      await api.respondRunApproval(approval.runId, { threadId, approvalId: approval.approvalId, choice });
+      if (!isCurrentApproval()) return;
       setPendingApproval(null);
       setRuntimeFlow('steering');
       toast(choice === 'deny' ? 'info' : 'success', choice === 'deny' ? '거절했습니다.' : '승인했습니다.');
     } catch {
-      toast('error', '승인 응답 전송에 실패했어요.');
+      if (isCurrentApproval()) toast('error', '승인 응답 전송에 실패했어요.');
     } finally {
-      setApprovalBusyChoice(null);
+      if (isCurrentApproval()) setApprovalBusyChoice(null);
     }
   }
 
@@ -414,7 +480,7 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
     const parsed = parseRuntimeCommand(raw);
     if (!parsed) return false;
     if (parsed.command === '/model') {
-      setInput('');
+      updateInput('');
       const resolved = resolveModelCommand(raw, runtimeModels);
       if (resolved.action === 'select') {
         setSelectedModel(resolved.route);
@@ -427,18 +493,18 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
       return true;
     }
     if (parsed.command === '/status' || parsed.command === '/usage') {
-      setInput('');
+      updateInput('');
       void refreshRunStatus(true);
       return true;
     }
     if (parsed.command === '/stop') {
-      setInput('');
+      updateInput('');
       if (busy) void stopCurrentRun();
       else toast('info', '진행 중인 실행이 없어요.');
       return true;
     }
     if (parsed.command === '/help' || parsed.command === '/commands') {
-      setInput('');
+      updateInput('');
       toast('info', parsed.command === '/help' ? describeRuntimeCommand(parsed.arg) : describeRuntimeCommand());
       return true;
     }
@@ -446,15 +512,20 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
   }
 
   function pickSlashItem(item: RuntimeCommandItem) {
-    setInput(`${item.command}${item.args ? ' ' : ''}`);
+    updateInput(`${item.command}${item.args ? ' ' : ''}`);
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
-  async function send(messageOverride?: string) {
-    const message = (messageOverride ?? input).trim();
-    const draftAttachments = draftAttachmentsForSend(draftFiles, messageOverride);
+  async function send(messageOverride?: string, retrySource?: RetriableChatSendAttempt) {
+    if (!canSend) return;
+    if (retrySource && retrySource.threadId !== threadId) {
+      if (lastAttemptRef.current === retrySource) lastAttemptRef.current = null;
+      return;
+    }
+    const message = (retrySource?.message ?? messageOverride ?? input).trim();
+    const draftAttachments = retrySource?.displayAttachments ?? draftAttachmentsForSend(draftFiles, messageOverride);
     if (!canSubmitDraft(message, draftAttachments)) return;
-    if (!messageOverride && executeRuntimeCommand(message)) return;
+    if (!retrySource && !messageOverride && executeRuntimeCommand(message)) return;
     if (busy) {
       if (draftAttachments.length > 0) {
         toast('info', '파일 첨부 메시지는 현재 응답이 끝난 뒤 전송해주세요.');
@@ -463,17 +534,28 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
       queuedMessageRef.current = message;
       setQueuedMessage(message);
       setRuntimeFlow('queued');
-      if (!messageOverride) setInput('');
+      if (!messageOverride) updateInput('');
       return;
     }
-    if (!messageOverride) {
-      setInput('');
+    if (!retrySource && !messageOverride) {
+      updateInput('');
       setDraftFiles([]);
     }
-    lastPromptRef.current = message;
+    const attachmentIds = retrySource?.attachmentIds ?? draftAttachments.map((file) => file.id);
+    const attempt = retrySource
+      ? retryChatSendAttempt(retrySource, threadId)
+      : createChatSendAttempt({ threadId, message, attachmentIds, model: selectedModel });
+    if (!attempt) return;
+    const execution = { threadId, generation: sendGenerationRef.current + 1 };
+    sendGenerationRef.current = execution.generation;
+    const isCurrentSend = () => isCurrentChatSendExecution(
+      execution,
+      activeThreadRef.current,
+      sendGenerationRef.current,
+    );
     setBusy(true);
     setRuntimeFlow('queueing');
-    setRunStatus({ startedAt: Date.now(), state: 'running', ...(selectedModel ? { model: selectedModel } : {}) });
+    setRunStatus({ startedAt: Date.now(), state: 'running', ...(attempt.model ? { model: attempt.model } : {}) });
     setActiveTool(null);
     setPendingApproval(null);
     // sending pins us to the tail
@@ -481,9 +563,18 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
     setAtBottom(true);
     setUnseen(0);
 
-    const userTurn: LiveTurn = { id: nextId.current++, role: 'user', text: message, ...(draftAttachments.length > 0 ? { attachments: draftAttachments } : {}) };
-    const aiTurn: LiveTurn = { id: nextId.current++, role: 'ai', text: '', streaming: true };
-    setLive((prev) => [...prev, userTurn, aiTurn]);
+    const aiTurn: LiveTurn = { id: nextId.current++, attemptId: attempt.clientMessageId, role: 'ai', text: '', streaming: true };
+    if (retrySource) {
+      setLive((prev) => [...prev.filter((turn) => turn.id !== retrySource.aiTurnId), aiTurn]);
+    } else {
+      const userTurn: LiveTurn = { id: nextId.current++, attemptId: attempt.clientMessageId, role: 'user', text: message, ...(draftAttachments.length > 0 ? { attachments: draftAttachments } : {}) };
+      setLive((prev) => [...prev, userTurn, aiTurn]);
+    }
+    lastAttemptRef.current = {
+      ...attempt,
+      displayAttachments: [...draftAttachments],
+      aiTurnId: aiTurn.id,
+    };
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -508,13 +599,17 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
       flush();
     };
     try {
-      const attachmentIds = draftAttachments.map((file) => file.id);
       for await (const event of api.streamChat({
         threadId,
-        message,
-        ...(selectedModel ? { model: selectedModel } : {}),
-        ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+        message: attempt.message,
+        clientMessageId: attempt.clientMessageId,
+        ...(attempt.model ? { model: attempt.model } : {}),
+        ...(attempt.attachmentIds.length > 0 ? { attachmentIds: attempt.attachmentIds } : {}),
       }, controller.signal)) {
+        if (!isCurrentSend()) {
+          controller.abort();
+          break;
+        }
         if (event.type === 'start') {
           setRuntimeFlow('steering');
           patchTurn(aiTurn.id, { runId: event.runId });
@@ -582,6 +677,7 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
           toast('error', '응답 생성 실패');
         }
       }
+      if (!isCurrentSend()) return;
       cancelFlush();
       patchTurn(aiTurn.id, { streaming: false });
       setRunStatus((prev) => prev?.state === 'running' ? { ...prev, finishedAt: Date.now(), state: 'done' } : prev);
@@ -590,6 +686,7 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
       // A2: if the user scrolled away during the answer, surface an unseen count.
       if (!atBottomRef.current) setUnseen((n) => n + 1);
     } catch {
+      if (!isCurrentSend()) return;
       cancelFlush();
       setRuntimeFlow(queuedMessageRef.current ? 'queued' : 'idle');
       if (controller.signal.aborted) {
@@ -599,9 +696,11 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
         toast('error', '연결에 문제가 있어요. 잠시 후 다시 시도해주세요.');
       }
     } finally {
-      setBusy(false);
-      setActiveTool(null);
-      abortRef.current = null;
+      if (isCurrentSend()) {
+        setBusy(false);
+        setActiveTool(null);
+        if (abortRef.current === controller) abortRef.current = null;
+      }
       void qc.invalidateQueries({ queryKey: messageWindowKeys.latest(threadId), refetchType: 'none' });
       void qc.invalidateQueries({ queryKey: collabKeys.attachments(threadId) });
       // Evidence rows settle with the assistant message — refresh the panel.
@@ -624,14 +723,10 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
     }
   }
 
-  /** 2-B: save an assistant answer as a v1 artifact in the first project. */
+  /** 2-B: save an assistant answer in the active thread's owning project. */
   async function saveAsArtifact(content: string, messageId?: string) {
-    const projectId = tree?.projects[0]?.id;
-    if (!projectId) {
-      toast('error', '산출물을 담을 프로젝트가 없어요. 먼저 프로젝트를 만들어주세요.');
-      return;
-    }
-    const artifactTitle = window.prompt('산출물 제목을 입력하세요', `${title} — 지구 답변`);
+    if (!canEdit) return;
+    const artifactTitle = await artifactTitlePrompt.prompt('산출물 제목을 입력하세요', `${title} — 지구 답변`);
     if (!artifactTitle?.trim()) return;
     try {
       const res = await api.createArtifact({
@@ -653,7 +748,7 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
 
   /** 2-D G-3: attach a file to this thread. */
   async function onPickFile(file: File | null) {
-    if (!file) return;
+    if (!file || !canSend) return;
     if (file.size > 10 * 1024 * 1024) {
       toast('error', '파일은 10MB 이하만 첨부할 수 있어요.');
       return;
@@ -683,7 +778,7 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
   }
 
   async function removeAttachment(attachment: ChatMessageAttachment) {
-    if (deletingAttachmentId) return;
+    if (!canSend || deletingAttachmentId) return;
     setDeletingAttachmentId(attachment.id);
     try {
       await deleteAttachment.mutateAsync(attachment.id);
@@ -794,6 +889,7 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
 
   const userName = user?.displayName ?? '나';
   const persisted = history.messages;
+  const visibleLive = reconcileOptimisticTurns(live, persisted);
   const threadLoadPreview = findThreadLoadPreview(tree, threadId, topicId);
   const initialHistoryPending = history.isLoading || (history.isFetchingLatest && persisted.length === 0);
   const knownEmptyThread = threadLoadPreview?.messageCount === 0;
@@ -805,7 +901,12 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
     viewportHeight: streamRef.current?.clientHeight ?? 720,
   });
   const activeModelRoute = selectedModel || defaultModel || '';
-  const activeModelLabel = runtimeModels.find((model) => model.route === activeModelRoute)?.label ?? (activeModelRoute || '모델 확인 중');
+  const activeModelLabel = resolveRuntimeModelLabel({
+    loaded: runtimeModelsLoaded,
+    loading: runtimeModelsLoading,
+    activeRoute: activeModelRoute,
+    models: runtimeModels,
+  });
 
   const slashQuery = input.startsWith('/') && !input.includes('\n') ? input.slice(1).trim().toLocaleLowerCase() : '';
   const showSlashMenu = input.startsWith('/') && !input.includes('\n');
@@ -842,7 +943,13 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
   // empty channels stay quiet, cached windows stay visible, and slow populated
   // channels get a correctly sized skeleton immediately instead of blank flicker.
   const showHistorySkeleton = initialLoadPlan.kind === 'skeleton';
-  const showEmptyPrompt = persisted.length === 0 && live.length === 0 && !showHistorySkeleton && (!initialHistoryPending || knownEmptyThread);
+  const historyCollectionState = resolveAsyncCollectionState({
+    isLoading: initialHistoryPending && !knownEmptyThread,
+    isError: history.isError,
+    itemCount: persisted.length + visibleLive.length,
+  });
+  const showHistoryError = historyCollectionState === 'error';
+  const showEmptyPrompt = historyCollectionState === 'empty' && !showHistorySkeleton;
   const hasResults = search.results.length > 0 && search.threadId === threadId;
 
 
@@ -935,12 +1042,21 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
 
       <div style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div className={s.stream} ref={streamRef} style={{ flex: 1 }}>
-          {showHistorySkeleton && persisted.length === 0 && live.length === 0 ? (
+          {showHistorySkeleton && persisted.length === 0 && visibleLive.length === 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
               {Array.from({ length: initialLoadPlan.skeletonRows }).map((_, i) => (
                 <SkeletonMessage key={i} />
               ))}
             </div>
+          ) : null}
+
+          {showHistoryError ? (
+            <EmptyState
+              icon="info"
+              title="대화 기록을 불러오지 못했어요"
+              description="연결 상태를 확인한 뒤 다시 시도해주세요."
+              action={<Button type="button" variant="outline" size="sm" onClick={() => void history.refetchLatest()}>다시 시도</Button>}
+            />
           ) : null}
 
           {showEmptyPrompt ? (
@@ -951,7 +1067,7 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
             key={threadId}
             threadId={threadId}
             messages={persisted}
-            live={live}
+            live={visibleLive}
             userName={userName}
             busy={busy}
             activeTool={activeTool}
@@ -973,7 +1089,10 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
             onCopy={copyText}
             onSaveArtifact={saveAsArtifact}
             onRetry={send}
-            onRetryLast={() => send(lastPromptRef.current)}
+            onRetryLast={() => {
+              const lastAttempt = lastAttemptRef.current;
+              if (lastAttempt) void send(undefined, lastAttempt);
+            }}
             onChoice={(choice) => void send(choice)}
             onOpenAttachment={(attachment) => setFileViewer({ id: attachment.id, fileName: attachment.fileName, mimeType: attachment.mimeType })}
             onDeleteAttachment={removeAttachment}
@@ -1003,7 +1122,7 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
               상태
             </Button>
           ) : null}
-          {busy ? (
+          {busy && canSend ? (
             <Button variant="outline" size="sm" type="button" leadingIcon="stop" onClick={() => void stopCurrentRun()}>
               중단
             </Button>
@@ -1028,7 +1147,7 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
                   type="button"
                   className={s.fileChipRemove}
                   aria-label={`${f.fileName} 첨부 삭제`}
-                  disabled={deletingAttachmentId === f.id}
+                  disabled={!canSend || deletingAttachmentId === f.id}
                   onClick={() => void removeAttachment(f)}
                 >
                   <Icon name="x" size="xs" decorative />
@@ -1065,8 +1184,9 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
               className={s.textarea}
               rows={1}
               value={input}
-              placeholder="메시지를 입력하세요…"
-              onChange={(e) => setInput(e.target.value)}
+              disabled={!canSend}
+              placeholder={canSend ? '메시지를 입력하세요…' : '읽기 전용 권한입니다'}
+              onChange={(e) => updateInput(e.target.value)}
               onKeyDown={(e) => {
                 if (showSlashMenu && slashItems.length > 0) {
                   if (e.key === 'ArrowDown') {
@@ -1102,6 +1222,7 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
             <input
               ref={fileRef}
               type="file"
+              disabled={!canSend}
               accept="image/*,.pdf,.txt,.md,.csv"
               style={{ display: 'none' }}
               onChange={(e) => void onPickFile(e.target.files?.[0] ?? null)}
@@ -1110,14 +1231,14 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
               type="button"
               className={s.attachBtn}
               title="파일 첨부 (이미지/PDF/텍스트, 10MB 이하)"
-              disabled={uploadAttachment.isPending}
+              disabled={!canSend || uploadAttachment.isPending}
               onClick={() => fileRef.current?.click()}
             >
               {uploadAttachment.isPending ? <Spinner label="첨부 중" /> : <Icon name="paperclip" size="sm" decorative />}
             </button>
             <span className={s.hint}>Enter 전송 · Shift+Enter 줄바꿈 · ⌘K 이동</span>
             <div className={s.sendWrap}>
-              {busy ? (
+              {busy && canSend ? (
                 <Button className={`${s.btn} ${s.btnGhost}`} variant="ghost" type="button" leadingIcon="stop" onClick={cancel}>
                   중단
                 </Button>
@@ -1127,7 +1248,7 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
                 variant="primary"
                 type="button"
                 trailingIcon="send"
-                disabled={busy || !canSubmitDraft(input, draftFiles)}
+                disabled={!canSend || busy || !canSubmitDraft(input, draftFiles)}
                 onClick={() => void send()}
               >
                 전송
@@ -1146,6 +1267,7 @@ export function ChatThread({ threadId, topicId, title, breadcrumb, focusMessageI
         loading={runtimeModelsLoading}
         onSelect={setSelectedModel}
       />
+      {artifactTitlePrompt.dialog}
     </>
   );
 }

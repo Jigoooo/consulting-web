@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useRouter } from '@tanstack/react-router';
-import type { TraceSpanItem, TraceSummary } from '@consulting/contracts';
+import type { RagEvalMetricsSummary, TraceSpanItem, TraceSummary } from '@consulting/contracts';
 import { useLastThread } from '../../lib/threadCtx';
 import { useSelectedWorkspace } from '../../lib/wsStore';
 import { useObservabilityTraces } from '../../lib/collab';
@@ -10,18 +10,20 @@ import { EmptyState, Spinner } from '../../shared/ui/feedback/EmptyState';
 import { Icon } from '../../shared/icons/Icon';
 import { formatFullDateTime } from '../../shared/lib/formatDate';
 import { useDelayedFlag } from '../../shared/lib/useDelayedFlag';
+import { describeEvalScope } from './traceEvalScope';
+import { buildRagMetricPresentation } from './ragEvalPresentation';
 import s from './TraceViewerSurface.module.css';
 
 /** P4 Trace Viewer v1 — trace/eval ledger read-only surface.
  * Raw tool I/O is intentionally not rendered; the API contract keeps preview
  * fields null to avoid prompt/tool/PII leakage in the browser.
  */
-export function TraceViewerSurface() {
+export function TraceViewerSurface({ initialThreadId }: { initialThreadId?: string | undefined }) {
   const workspaceId = useSelectedWorkspace();
   const lastThreadId = useLastThread();
   const router = useRouter();
   const [traceFilter, setTraceFilter] = useState('');
-  const [threadFilter, setThreadFilter] = useState('');
+  const [threadFilter, setThreadFilter] = useState(initialThreadId ?? '');
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const query = useObservabilityTraces(workspaceId ?? undefined, {
     ...(traceFilter.trim() ? { traceId: traceFilter.trim() } : {}),
@@ -33,8 +35,17 @@ export function TraceViewerSurface() {
   const spans = query.data?.spans ?? [];
   const evalCases = query.data?.evalCases ?? [];
   const evalRuns = query.data?.evalRuns ?? [];
+  const ragMetrics = query.data?.ragMetrics ?? null;
+  const evalPresentation = describeEvalScope({
+    ...(traceFilter.trim() ? { traceFilter: traceFilter.trim() } : {}),
+    ...(threadFilter.trim() ? { threadFilter: threadFilter.trim() } : {}),
+  });
   const selectedTrace = traces.find((trace) => trace.traceId === selectedTraceId) ?? traces[0] ?? null;
   const selectedSpans = selectedTrace ? spans.filter((span) => span.traceId === selectedTrace.traceId) : [];
+
+  useEffect(() => {
+    setThreadFilter(initialThreadId ?? '');
+  }, [initialThreadId]);
 
   useEffect(() => {
     if (!selectedTraceId && traces[0]) setSelectedTraceId(traces[0].traceId);
@@ -90,7 +101,7 @@ export function TraceViewerSurface() {
         {query.isError ? (
           <div className={s.errorBox}>Trace ledger를 불러오지 못했어요. 권한 또는 배포 상태를 확인해주세요.</div>
         ) : null}
-        {!query.isLoading && traces.length === 0 ? (
+        {query.isSuccess && traces.length === 0 ? (
           <div className={s.emptyRail}>아직 trace가 없어요. 새 대화를 실행하면 span ledger가 여기에 쌓입니다.</div>
         ) : null}
         <div className={s.traceList}>
@@ -108,6 +119,10 @@ export function TraceViewerSurface() {
       <main className={s.viewer}>
         {!workspaceId ? (
           <EmptyState icon="database" title="워크스페이스를 선택하세요" description="Trace ledger는 워크스페이스 단위로 격리됩니다." />
+        ) : query.isLoading ? (
+          <div className={s.loadingRow}><Spinner label="trace 상세 불러오는 중" /> 불러오는 중…</div>
+        ) : query.isError ? (
+          <div className={s.errorBox}>Trace ledger를 불러오지 못했어요. 잠시 후 다시 시도해주세요.</div>
         ) : !selectedTrace ? (
           <EmptyState icon="monitor" title="조회할 trace가 없어요" description="Trace span/eval case가 생성되면 실행 흐름과 실패 지점을 여기에서 볼 수 있습니다." />
         ) : (
@@ -122,28 +137,39 @@ export function TraceViewerSurface() {
                 {selectedSpans.map((span) => <SpanRow key={span.id} span={span} />)}
               </div>
             </div>
-            <div className={s.gridSections}>
-              <LedgerPanel title="Eval cases" count={evalCases.length}>
-                {evalCases.length === 0 ? <p className={s.muted}>아직 eval case가 없습니다.</p> : evalCases.map((item) => (
-                  <div key={item.id} className={s.ledgerItem}>
-                    <div className={s.ledgerTitle}>{item.caseKind}</div>
-                    <div className={s.ledgerMeta}>{item.status} · {item.sourceRef}</div>
-                    <p className={s.muted}>프롬프트 원문은 보안상 비공개입니다.</p>
-                  </div>
-                ))}
-              </LedgerPanel>
-              <LedgerPanel title="Eval runs" count={evalRuns.length}>
-                {evalRuns.length === 0 ? <p className={s.muted}>아직 eval run이 없습니다.</p> : evalRuns.map((run) => (
-                  <div key={run.id} className={s.ledgerItem}>
-                    <div className={s.ledgerTitle}>{run.runKind}</div>
-                    <div className={s.ledgerMeta}>{run.status} · {formatFullDateTime(run.startedAt)}</div>
-                    <pre className={s.preview}>{formatRecord(run.metrics)}</pre>
-                  </div>
-                ))}
-              </LedgerPanel>
-            </div>
           </>
         )}
+        {workspaceId && query.isSuccess && query.data ? (
+          <section className={s.evalScopeSection} data-eval-scope={evalPresentation.kind} aria-labelledby="trace-eval-scope-heading">
+            <div className={s.evalScopeIntro}>
+              <h2 id="trace-eval-scope-heading">{evalPresentation.title}</h2>
+              <p>{evalPresentation.description}</p>
+            </div>
+            {evalPresentation.showLedger && ragMetrics ? <RagEvalCard summary={ragMetrics} /> : null}
+            {evalPresentation.showLedger ? (
+              <div className={s.gridSections}>
+                <LedgerPanel title="평가 사례" count={evalCases.length}>
+                  {evalCases.length === 0 ? <p className={s.muted}>이 범위에 평가 사례가 없습니다.</p> : evalCases.map((item) => (
+                    <div key={item.id} className={s.ledgerItem}>
+                      <div className={s.ledgerTitle}>{item.caseKind}</div>
+                      <div className={s.ledgerMeta}>{item.status} · {item.sourceRef}</div>
+                      <p className={s.muted}>프롬프트 원문은 보안상 비공개입니다.</p>
+                    </div>
+                  ))}
+                </LedgerPanel>
+                <LedgerPanel title="평가 실행" count={evalRuns.length}>
+                  {evalRuns.length === 0 ? <p className={s.muted}>이 범위에 평가 실행이 없습니다.</p> : evalRuns.map((run) => (
+                    <div key={run.id} className={s.ledgerItem}>
+                      <div className={s.ledgerTitle}>{run.runKind}</div>
+                      <div className={s.ledgerMeta}>{run.status} · {formatFullDateTime(run.startedAt)}</div>
+                      <pre className={s.preview}>{formatRecord(run.metrics)}</pre>
+                    </div>
+                  ))}
+                </LedgerPanel>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
       </main>
     </div>
   );
@@ -151,7 +177,7 @@ export function TraceViewerSurface() {
 
 function TraceCard({ trace, active, onClick }: { trace: TraceSummary; active: boolean; onClick: () => void }) {
   return (
-    <button type="button" className={`${s.traceCard} ${active ? s.traceCardOn : ''}`} onClick={onClick}>
+    <button type="button" aria-pressed={active} className={`${s.traceCard} ${active ? s.traceCardOn : ''}`} onClick={onClick}>
       <span className={s.traceId}>{shortTrace(trace.traceId)}</span>
       <span className={s.traceMeta} title={formatFullDateTime(trace.lastAt)}>
         {trace.spanCount} spans · {trace.errorCount} warnings · {trace.totalDurationMs}ms
@@ -203,6 +229,33 @@ function SpanRow({ span }: { span: TraceSpanItem }) {
       </div>
       {Object.keys(span.metadata).length > 0 ? <pre className={s.preview}>metadata {formatRecord(span.metadata)}</pre> : null}
     </article>
+  );
+}
+
+function RagEvalCard({ summary }: { summary: RagEvalMetricsSummary }) {
+  const view = buildRagMetricPresentation(summary, 3);
+  return (
+    <section className={s.ragCard} aria-labelledby="rag-eval-heading">
+      <div className={s.sectionHead}>
+        <h2 id="rag-eval-heading">RAG 검색 품질</h2>
+        <span>{summary.scope === 'thread' ? '현재 대화' : '워크스페이스'} · 실패 fixture {summary.failureFixtureCount}개</span>
+      </div>
+      <div className={s.ragMetricGrid}>
+        {view.cards.map((card) => (
+          <div key={card.label} className={s.ragMetric}>
+            <span>{card.label}</span>
+            <strong>{card.value}</strong>
+            <small>{card.detail}</small>
+          </div>
+        ))}
+      </div>
+      {view.notice ? <p className={s.ragNotice}>{view.notice}</p> : null}
+      {view.failures.length > 0 ? (
+        <div className={s.failureList} aria-label="검색 실패 분류">
+          {view.failures.map((failure) => <span key={failure.label}>{failure.label} {failure.count}</span>)}
+        </div>
+      ) : <p className={s.muted}>라벨된 검색 실패가 없습니다.</p>}
+    </section>
   );
 }
 

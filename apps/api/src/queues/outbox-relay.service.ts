@@ -6,11 +6,15 @@ import { Queue, type JobsOptions } from 'bullmq';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 import { redactLogText, redactSensitiveText } from '../security/redact-sensitive-text.js';
 import {
+  ARTIFACT_RED_TEAM_REVIEW_REQUESTED_EVENT,
+  CHAT_TURN_SETTLEMENT_REQUESTED_EVENT,
+  CONSULTING_INSIGHT_SHADOW_REQUESTED_EVENT,
   CONSULTING_WEB_TURN_COMPLETED_EVENT,
+  NOTIFICATION_PUSH_REQUESTED_EVENT,
   routeOutboxEvent,
   UnsupportedOutboxEventError,
 } from './outbox-routing.js';
-import { CONSULTING_WEB_INGEST_QUEUE, OUTBOX_RELAY_QUEUE } from './queue.tokens.js';
+import { ARTIFACT_RED_TEAM_QUEUE, CHAT_TURN_SETTLEMENT_QUEUE, CONSULTING_INSIGHT_SHADOW_QUEUE, CONSULTING_WEB_INGEST_QUEUE, NOTIFICATION_PUSH_QUEUE, OUTBOX_RELAY_QUEUE } from './queue.tokens.js';
 
 const OUTBOX_LEASE_SECONDS = 30;
 const OUTBOX_HEARTBEAT_MS = 10_000;
@@ -49,7 +53,13 @@ export function outboxJobOptions(eventType: string, idempotencyKey: string): Job
     removeOnComplete: 1000,
     removeOnFail: 5000,
   };
-  if (eventType === CONSULTING_WEB_TURN_COMPLETED_EVENT) {
+  if (
+    eventType === CONSULTING_WEB_TURN_COMPLETED_EVENT
+    || eventType === CHAT_TURN_SETTLEMENT_REQUESTED_EVENT
+    || eventType === NOTIFICATION_PUSH_REQUESTED_EVENT
+    || eventType === ARTIFACT_RED_TEAM_REVIEW_REQUESTED_EVENT
+    || eventType === CONSULTING_INSIGHT_SHADOW_REQUESTED_EVENT
+  ) {
     return {
       ...base,
       attempts: 5,
@@ -61,7 +71,8 @@ export function outboxJobOptions(eventType: string, idempotencyKey: string): Job
 
 /**
  * Outbox relay (ADR-0005): reads pending outbox_events, enqueues each to BullMQ
- * with the event's idempotencyKey as the job id (dedup, ADR-0020), then marks
+ * with a deterministic hash of the event idempotency key as the job id (dedup,
+ * without exposing payload-derived identifiers), then marks
  * the row published. At-least-once; consumers must be idempotent.
  */
 @Injectable()
@@ -75,12 +86,30 @@ export class OutboxRelayService implements OnModuleInit, OnModuleDestroy {
     @Inject(DRIZZLE) private readonly db: Db,
     @Inject(OUTBOX_RELAY_QUEUE) private readonly genericQueue: Queue,
     @Inject(CONSULTING_WEB_INGEST_QUEUE) private readonly consultingWebQueue: Queue,
+    @Inject(CHAT_TURN_SETTLEMENT_QUEUE) private readonly chatSettlementQueue?: Queue,
+    @Inject(NOTIFICATION_PUSH_QUEUE) private readonly notificationPushQueue?: Queue,
+    @Inject(ARTIFACT_RED_TEAM_QUEUE) private readonly artifactRedTeamQueue?: Queue,
+    @Inject(CONSULTING_INSIGHT_SHADOW_QUEUE) private readonly consultingInsightShadowQueue?: Queue,
   ) {}
 
   private queueFor(eventType: string): Queue {
-    return routeOutboxEvent(eventType) === 'consulting-web-ingest'
-      ? this.consultingWebQueue
-      : this.genericQueue;
+    const route = routeOutboxEvent(eventType);
+    if (route === 'consulting-web-ingest') return this.consultingWebQueue;
+    if (route === 'generic-audit') return this.genericQueue;
+    if (route === 'chat-turn-settlement') {
+      if (!this.chatSettlementQueue) throw new Error('chat settlement queue is not configured');
+      return this.chatSettlementQueue;
+    }
+    if (route === 'artifact-red-team') {
+      if (!this.artifactRedTeamQueue) throw new Error('artifact red-team queue is not configured');
+      return this.artifactRedTeamQueue;
+    }
+    if (route === 'consulting-insight-shadow') {
+      if (!this.consultingInsightShadowQueue) throw new Error('consulting insight shadow queue is not configured');
+      return this.consultingInsightShadowQueue;
+    }
+    if (!this.notificationPushQueue) throw new Error('notification push queue is not configured');
+    return this.notificationPushQueue;
   }
 
   onModuleInit(): void {
@@ -138,12 +167,13 @@ export class OutboxRelayService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Relay up to `limit` pending events. Returns how many were published. */
-  async relayOnce(limit = 100): Promise<number> {
+  /** Relay up to `limit` pending events, optionally scoped to one event for recovery/testing. */
+  async relayOnce(limit = 100, onlyEventId?: string): Promise<number> {
+    const reclaimable = reclaimableOutboxEvent();
     const pending = await this.db
       .select()
       .from(schema.outboxEvents)
-      .where(reclaimableOutboxEvent())
+      .where(onlyEventId ? and(eq(schema.outboxEvents.id, onlyEventId), reclaimable) : reclaimable)
       .orderBy(schema.outboxEvents.createdAt)
       .limit(limit);
 

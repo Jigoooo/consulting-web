@@ -39,6 +39,9 @@ export const consultingTopicLinks = pgTable(
     uniqueIndex('consulting_topic_links_project_unique')
       .on(t.projectId)
       .where(sql`link_level = 'project' AND status = 'active'`),
+    uniqueIndex('consulting_topic_links_topic_active_unique')
+      .on(t.webTopicId)
+      .where(sql`link_level = 'topic' AND status = 'active'`),
     index('consulting_topic_links_workspace_idx').on(t.workspaceId),
     index('consulting_topic_links_slug_idx').on(t.consultingTopicSlug),
     index('consulting_topic_links_scope_idx').on(t.projectId, t.channelId, t.webTopicId, t.threadId),

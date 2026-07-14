@@ -19,7 +19,7 @@ import { ExactnessGateService } from '../src/consulting/exactness-gate.service.j
 import { VerifierGatePolicyService } from '../src/consulting/verifier-gate-policy.service.js';
 import { ConsultingJudgmentGuardService } from '../src/consulting/consulting-judgment-guard.service.js';
 
-const url = process.env.DATABASE_URL;
+const url = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const d = url ? describe : describe.skip;
 
 let pool: Pool;

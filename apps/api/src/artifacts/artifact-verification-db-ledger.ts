@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { schema } from '@consulting/db-schema';
 import { VerifierGateSummarySchema } from '@consulting/contracts';
-import { and, asc, desc, eq, isNull } from 'drizzle-orm';
+import { and, asc, count, desc, eq, isNull } from 'drizzle-orm';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 import type { EvidenceInput } from '../consulting/evidence-to-decision.service.js';
 import type { VerifierGateIssue, VerifierGateResult } from '../consulting/verifier-gate-policy.service.js';
@@ -19,6 +19,8 @@ const MAX_ARTIFACT_EVIDENCE_CHARS = 2_000;
 export interface ArtifactVerificationProjectTargets {
   projectId: string;
   projectName: string;
+  totalCandidates: number;
+  offset: number;
   targets: ArtifactVerificationTarget[];
 }
 
@@ -55,6 +57,43 @@ export class ArtifactVerificationDbLedger implements ArtifactVerificationLedger 
       contentHash: row.contentHash,
       gate: row.deletedAt === null && statusMatchesGate(row.status, gate) ? gate : malformedVerificationGate(),
     };
+  }
+
+  async loadCurrentPassVerdicts(
+    target: ArtifactVerificationTarget,
+    expectedContentHash: string,
+  ): Promise<unknown> {
+    const [row] = await this.db
+      .select({
+        artifactId: schema.artifactVersionVerifications.artifactId,
+        artifactVersionId: schema.artifactVersionVerifications.artifactVersionId,
+        workspaceId: schema.artifactVersionVerifications.workspaceId,
+        projectId: schema.artifactVersionVerifications.projectId,
+        contentHash: schema.artifactVersionVerifications.contentHash,
+        status: schema.artifactVersionVerifications.status,
+        gate: schema.artifactVersionVerifications.gate,
+        verdicts: schema.artifactVersionVerifications.verdicts,
+        verifier: schema.artifactVersionVerifications.verifier,
+        deletedAt: schema.artifactVersionVerifications.deletedAt,
+      })
+      .from(schema.artifactVersionVerifications)
+      .where(eq(schema.artifactVersionVerifications.artifactVersionId, target.artifactVersionId))
+      .orderBy(desc(schema.artifactVersionVerifications.sequenceNo))
+      .limit(1);
+    if (
+      !row
+      || row.artifactId !== target.artifactId
+      || row.artifactVersionId !== target.artifactVersionId
+      || row.workspaceId !== target.workspaceId
+      || row.projectId !== target.projectId
+      || row.contentHash !== expectedContentHash
+      || row.deletedAt !== null
+      || row.status !== 'passed'
+      || !row.verifier.startsWith(`${artifactVerificationPolicyPrefix(target)}:`)
+    ) return null;
+    const gate = normalizeGate(row.gate);
+    if (!gate || !statusMatchesGate(row.status, gate)) return null;
+    return row.verdicts;
   }
 
   async loadEvidence(target: ArtifactVerificationTarget): Promise<EvidenceInput[]> {
@@ -117,7 +156,9 @@ export class ArtifactVerificationDbLedger implements ArtifactVerificationLedger 
     };
   }
 
-  async loadProjectHeadTargets(projectId: string): Promise<ArtifactVerificationProjectTargets> {
+  async loadProjectHeadTargets(projectId: string, requestedLimit = 500, requestedOffset = 0): Promise<ArtifactVerificationProjectTargets> {
+    const limit = Math.max(1, Math.min(500, requestedLimit));
+    const offset = Math.max(0, requestedOffset);
     const [project] = await this.db
       .select({
         projectId: schema.projects.id,
@@ -133,33 +174,46 @@ export class ArtifactVerificationDbLedger implements ArtifactVerificationLedger 
       .limit(1);
     if (!project) throw new Error(`project not found or inactive: ${projectId}`);
 
-    const rows = await this.db
-      .select({
-        artifactId: schema.artifacts.id,
-        artifactVersionId: schema.artifactVersions.id,
-        title: schema.artifacts.title,
-        versionNo: schema.artifactVersions.versionNo,
-        content: schema.artifactVersions.content,
-        sourceThreadId: schema.artifactVersions.sourceThreadId,
-        sourceMessageId: schema.artifactVersions.sourceMessageId,
-      })
-      .from(schema.artifacts)
-      .innerJoin(
-        schema.artifactVersions,
-        and(
-          eq(schema.artifactVersions.artifactId, schema.artifacts.id),
-          eq(schema.artifactVersions.versionNo, schema.artifacts.headVersion),
-        ),
-      )
-      .where(and(
+    const [rows, [totalRow]] = await Promise.all([
+      this.db
+        .select({
+          artifactId: schema.artifacts.id,
+          artifactVersionId: schema.artifactVersions.id,
+          title: schema.artifacts.title,
+          versionNo: schema.artifactVersions.versionNo,
+          content: schema.artifactVersions.content,
+          governingMessage: schema.artifactVersions.governingMessage,
+          soWhat: schema.artifactVersions.soWhat,
+          sourceThreadId: schema.artifactVersions.sourceThreadId,
+          sourceMessageId: schema.artifactVersions.sourceMessageId,
+        })
+        .from(schema.artifacts)
+        .innerJoin(
+          schema.artifactVersions,
+          and(
+            eq(schema.artifactVersions.artifactId, schema.artifacts.id),
+            eq(schema.artifactVersions.versionNo, schema.artifacts.headVersion),
+          ),
+        )
+        .where(and(
+          eq(schema.artifacts.workspaceId, project.workspaceId),
+          eq(schema.artifacts.projectId, project.projectId),
+          isNull(schema.artifacts.deletedAt),
+        ))
+        .orderBy(asc(schema.artifacts.createdAt), asc(schema.artifacts.id))
+        .limit(limit)
+        .offset(offset),
+      this.db.select({ value: count() }).from(schema.artifacts).where(and(
         eq(schema.artifacts.workspaceId, project.workspaceId),
         eq(schema.artifacts.projectId, project.projectId),
         isNull(schema.artifacts.deletedAt),
-      ))
-      .orderBy(asc(schema.artifacts.createdAt), asc(schema.artifacts.id));
+      )),
+    ]);
     return {
       projectId: project.projectId,
       projectName: project.projectName,
+      totalCandidates: Number(totalRow?.value ?? 0),
+      offset,
       targets: rows.map((row) => ({
         ...row,
         workspaceId: project.workspaceId,

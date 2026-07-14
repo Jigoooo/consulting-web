@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { randomUUID } from 'node:crypto';
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
@@ -19,12 +20,11 @@ import {
   SearchMessagesResponseSchema,
   ThreadDetailResponseSchema,
   ListMembersResponseSchema,
-  ListThreadsResponseSchema,
   WorkspaceTreeResponseSchema,
 } from '@consulting/contracts';
 import { AppModule } from '../src/app.module.js';
 
-const url = process.env.DATABASE_URL;
+const url = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const d = url ? describe : describe.skip;
 
 let app: INestApplication;
@@ -42,10 +42,20 @@ function installHermesRunsFetchMock() {
     'data: {"event":"run.completed","run_id":"run_persist","output":"영속 확인"}',
     '',
   ].join('\n');
-  const fetchMock = vi.fn(async (input: string | URL | Request) => {
+  const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const u = input instanceof Request ? input.url : String(input);
+    if (u.endsWith('/v1/toolsets')) {
+      return new Response(JSON.stringify({ object: 'list', platform: 'api_server', inventory_complete: true, inventory_hash: 'a'.repeat(64), effective_toolsets: ['file', 'web'], effective_tools: ['read_file', 'web_search'], data: [{ name: 'web', enabled: true }, { name: 'file', enabled: true }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (u.endsWith('/v1/capabilities')) {
+      return new Response(JSON.stringify({ features: { run_client_idempotency: true, run_tool_inventory_binding: true } }), { status: 200 });
+    }
     if (u.endsWith('/v1/runs')) {
-      return new Response(JSON.stringify({ run_id: 'run_persist', status: 'started' }), {
+      const payload = JSON.parse(String(init?.body ?? '{}')) as { client_run_id?: string; tool_inventory_hash?: string };
+      return new Response(JSON.stringify({ run_id: payload.client_run_id, status: 'started', tool_inventory_hash: payload.tool_inventory_hash }), {
         status: 202,
         headers: { 'content-type': 'application/json' },
       });
@@ -56,6 +66,7 @@ function installHermesRunsFetchMock() {
     return new Response('not found', { status: 404 });
   });
   vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
 }
 
 async function makeUser(label: string) {
@@ -139,11 +150,13 @@ d('chat persistence + space mutations (Phase 1.5)', () => {
         .send({ topicId: topic.id, title: '영속 스레드' }).expect(201)).body,
     );
 
-    await request(app.getHttpServer())
+    const streamResponse = await request(app.getHttpServer())
       .post('/chat/stream')
       .set('authorization', owner.bearer)
-      .send({ threadId: thread.id, message: '영속화 테스트 질문' })
+      .send({ threadId: thread.id, message: '영속화 테스트 질문', clientMessageId: randomUUID() })
       .expect(200);
+    expect(streamResponse.text).toContain('영속 ');
+    expect(streamResponse.text).toContain('확인');
 
     // transcript comes back in order with roles + run id
     const listed = ListMessagesResponseSchema.parse(
@@ -155,7 +168,7 @@ d('chat persistence + space mutations (Phase 1.5)', () => {
     expect(listed.messages[0]!.authorName).toBeTruthy();
     expect(listed.messages[1]!.role).toBe('assistant');
     expect(listed.messages[1]!.content).toBe('영속 확인');
-    expect(listed.messages[1]!.runId).toBe('run_persist');
+    expect(listed.messages[1]!.runId).toMatch(/^run_[0-9a-f]{32}$/);
     expect(listed.messages[1]!.finishState).toBe('complete');
 
     // outsider cannot read the transcript
@@ -171,6 +184,115 @@ d('chat persistence + space mutations (Phase 1.5)', () => {
     );
     expect(detail.title).toBe('영속 스레드');
     expect(detail.topicId).toBe(topic.id);
+  });
+
+  it('replays one logical turn without duplicating the user, assistant, or Hermes run', async () => {
+    const fetchMock = installHermesRunsFetchMock();
+    const owner = await makeUser('idempotent-owner');
+    const { thread } = await makeThread(owner, 'idempotent');
+    const clientMessageId = randomUUID();
+    const payload = {
+      threadId: thread.id,
+      message: '같은 요청은 한 번만 실행',
+      clientMessageId,
+    };
+
+    const first = await request(app.getHttpServer())
+      .post('/chat/stream')
+      .set('authorization', owner.bearer)
+      .send(payload)
+      .expect(200);
+    const replay = await request(app.getHttpServer())
+      .post('/chat/stream')
+      .set('authorization', owner.bearer)
+      .send(payload)
+      .expect(200);
+
+    const assistantText = (body: string) => body
+      .split('\n')
+      .filter((line) => line.startsWith('data: '))
+      .map((line) => JSON.parse(line.slice(6)) as { type?: string; text?: string })
+      .filter((event) => event.type === 'delta')
+      .map((event) => event.text ?? '')
+      .join('');
+    expect(assistantText(first.text)).toBe('영속 확인');
+    expect(assistantText(replay.text)).toBe('영속 확인');
+    const runStarts = fetchMock.mock.calls.filter(([input, init]) => {
+      const requestUrl = input instanceof Request ? input.url : String(input);
+      return requestUrl.endsWith('/v1/runs') && init?.method === 'POST';
+    });
+    expect(runStarts).toHaveLength(1);
+
+    const listed = ListMessagesResponseSchema.parse(
+      (await request(app.getHttpServer())
+        .get(`/chat/threads/${thread.id}/messages`)
+        .set('authorization', owner.bearer)
+        .expect(200)).body,
+    );
+    expect(listed.messages.map((message) => message.role)).toEqual(['user', 'assistant']);
+    expect(listed.messages[0]!.content).toBe(payload.message);
+    expect(listed.messages[1]!.content).toBe('영속 확인');
+  });
+
+  it('rejects client message id reuse with different request provenance', async () => {
+    const fetchMock = installHermesRunsFetchMock();
+    const owner = await makeUser('idempotent-conflict-owner');
+    const { thread } = await makeThread(owner, 'idempotent-conflict');
+    const clientMessageId = randomUUID();
+
+    await request(app.getHttpServer())
+      .post('/chat/stream')
+      .set('authorization', owner.bearer)
+      .send({ threadId: thread.id, message: '원본 요청', clientMessageId })
+      .expect(200);
+    await request(app.getHttpServer())
+      .post('/chat/stream')
+      .set('authorization', owner.bearer)
+      .send({ threadId: thread.id, message: '변조된 요청', clientMessageId })
+      .expect(409);
+
+    const runStarts = fetchMock.mock.calls.filter(([input, init]) => {
+      const requestUrl = input instanceof Request ? input.url : String(input);
+      return requestUrl.endsWith('/v1/runs') && init?.method === 'POST';
+    });
+    expect(runStarts).toHaveLength(1);
+    const listed = ListMessagesResponseSchema.parse(
+      (await request(app.getHttpServer())
+        .get(`/chat/threads/${thread.id}/messages`)
+        .set('authorization', owner.bearer)
+        .expect(200)).body,
+    );
+    expect(listed.messages.map((message) => message.content)).toEqual(['원본 요청', '영속 확인']);
+  });
+
+  it('serializes concurrent duplicate requests into one Hermes run', async () => {
+    const fetchMock = installHermesRunsFetchMock();
+    const owner = await makeUser('idempotent-race-owner');
+    const { thread } = await makeThread(owner, 'idempotent-race');
+    const payload = {
+      threadId: thread.id,
+      message: '동시 요청도 한 번만 실행',
+      clientMessageId: randomUUID(),
+    };
+
+    const [first, second] = await Promise.all([
+      request(app.getHttpServer()).post('/chat/stream').set('authorization', owner.bearer).send(payload),
+      request(app.getHttpServer()).post('/chat/stream').set('authorization', owner.bearer).send(payload),
+    ]);
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    const runStarts = fetchMock.mock.calls.filter(([input, init]) => {
+      const requestUrl = input instanceof Request ? input.url : String(input);
+      return requestUrl.endsWith('/v1/runs') && init?.method === 'POST';
+    });
+    expect(runStarts).toHaveLength(1);
+    const listed = ListMessagesResponseSchema.parse(
+      (await request(app.getHttpServer())
+        .get(`/chat/threads/${thread.id}/messages`)
+        .set('authorization', owner.bearer)
+        .expect(200)).body,
+    );
+    expect(listed.messages.map((message) => message.role)).toEqual(['user', 'assistant']);
   });
 
   it('pages messages by newest window, older cursor, and around anchor', async () => {
@@ -362,13 +484,12 @@ d('chat persistence + space mutations (Phase 1.5)', () => {
     const projNode = tree.projects.find((p) => p.id === project.id);
     expect(projNode?.channels.some((c) => c.id === channel.id)).toBe(false);
 
-    // Archived descendants stay restorable/referenceable, but normal active
-    // thread lists must not expose them.
-    const archivedThreads = ListThreadsResponseSchema.parse((await request(app.getHttpServer())
+    // Archived descendants stay restorable/referenceable through the archive
+    // endpoint, but active routes hide the archived ancestor chain.
+    await request(app.getHttpServer())
       .get(`/spaces/topics/${topic.id}/threads`)
       .set('authorization', owner.bearer)
-      .expect(200)).body);
-    expect(archivedThreads.threads).toEqual([]);
+      .expect(404);
   });
 
   it('lists workspace members with the strongest role', async () => {

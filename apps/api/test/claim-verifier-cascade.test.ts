@@ -177,6 +177,141 @@ describe('ClaimVerifierService cascade', () => {
     expect(JSON.parse(requests[0]?.body ?? '{}')).toMatchObject({ session_id: 'cw-verifier-strict-json', model: 'gpt-5.5' });
   });
 
+  it('runs isolated strict JSON tasks and stops any reviewer that attempts tool use', async () => {
+    const requests: Array<{ url: string; body: string | null }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      requests.push({ url, body: typeof init?.body === 'string' ? init.body : null });
+      if (url.endsWith('/v1/runs')) return new Response(JSON.stringify({ run_id: 'red_team_tool_run' }), { status: 202 });
+      if (url.endsWith('/v1/runs/red_team_tool_run/events')) {
+        return new Response([
+          'event: tool.started',
+          `data: ${JSON.stringify({ tool: 'web_search' })}`,
+          '',
+          `data: ${JSON.stringify({ event: 'run.completed', output: '{"verdict":"PASS"}' })}`,
+          '',
+        ].join('\n'), { status: 200, headers: { 'content-type': 'text/event-stream' } });
+      }
+      if (url.endsWith('/v1/runs/red_team_tool_run/stop')) return new Response('{}', { status: 200 });
+      return new Response('not found', { status: 404 });
+    }));
+    const adapter = new HermesStrictJsonVerifier(env(), secrets);
+
+    await expect(adapter.runStrictJsonTask({
+      prompt: '{"artifact":"untrusted"}',
+      instructions: 'Return JSON only. Never use tools.',
+      sessionId: 'cw-red-team-unique-session',
+      timeoutMs: 1_000,
+    })).rejects.toThrow(/tool use/iu);
+
+    expect(JSON.parse(requests[0]?.body ?? '{}')).toMatchObject({
+      session_id: 'cw-red-team-unique-session',
+      instructions: 'Return JSON only. Never use tools.',
+    });
+    expect(requests.at(-1)?.url).toContain('/v1/runs/red_team_tool_run/stop');
+  });
+
+  it('refuses an artifact reviewer profile with any enabled toolset before starting a run', async () => {
+    const requests: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = input instanceof Request ? input.url : String(input);
+      requests.push(url);
+      if (url.endsWith('/v1/toolsets')) {
+        return new Response(JSON.stringify({
+          data: [{ name: 'web', enabled: true }],
+          inventory_complete: true,
+          effective_toolsets: ['web'],
+          effective_tools: ['web_search'],
+        }), { status: 200 });
+      }
+      return new Response('unexpected run', { status: 500 });
+    }));
+    const adapter = new HermesStrictJsonVerifier(env({
+      ARTIFACT_RED_TEAM_MODE: 'shadow',
+      ARTIFACT_RED_TEAM_API_BASE_URL: 'http://reviewer.local:8643',
+      ARTIFACT_RED_TEAM_API_KEY: 'reviewer-key',
+    }), secrets);
+
+    await expect(adapter.runStrictJsonTask({
+      prompt: '{"artifact":"untrusted"}',
+      instructions: 'Return JSON only.',
+      sessionId: 'cw-red-team-tool-free',
+      timeoutMs: 1_000,
+      profile: 'artifact-red-team',
+    })).rejects.toThrow(/tool-free.*web/iu);
+    expect(requests).toEqual(['http://reviewer.local:8643/v1/toolsets']);
+  });
+
+  it('rejects a legacy toolset response that omits the effective inventory attestation', async () => {
+    const requests: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = input instanceof Request ? input.url : String(input);
+      requests.push(url);
+      return new Response(JSON.stringify({ data: [{ name: 'web', enabled: false }] }), { status: 200 });
+    }));
+    const adapter = new HermesStrictJsonVerifier(env({
+      ARTIFACT_RED_TEAM_MODE: 'shadow',
+      ARTIFACT_RED_TEAM_API_BASE_URL: 'http://reviewer.local:8643',
+      ARTIFACT_RED_TEAM_API_KEY: 'reviewer-key',
+    }), secrets);
+
+    await expect(adapter.runStrictJsonTask({
+      prompt: '{"artifact":"untrusted"}',
+      instructions: 'Return JSON only.',
+      sessionId: 'cw-red-team-incomplete-inventory',
+      timeoutMs: 1_000,
+      profile: 'artifact-red-team',
+    })).rejects.toThrow(/inventory attestation/iu);
+    expect(requests).toEqual(['http://reviewer.local:8643/v1/toolsets']);
+  });
+
+  it('starts an artifact reviewer only after a tool-free preflight on the dedicated endpoint', async () => {
+    const requests: Array<{ url: string; authorization: string | null }> = [];
+    const reviewerSecrets: SecretProviderPort = {
+      get: (name) => name === 'ARTIFACT_RED_TEAM_API_KEY' ? 'reviewer-key' : 'test-key',
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      const headers = new Headers(init?.headers);
+      requests.push({ url, authorization: headers.get('authorization') });
+      if (url.endsWith('/v1/toolsets')) {
+        return new Response(JSON.stringify({
+          data: [{ name: 'web', enabled: false }],
+          inventory_complete: true,
+          effective_toolsets: [],
+          effective_tools: [],
+        }), { status: 200 });
+      }
+      if (url.endsWith('/v1/runs')) return new Response(JSON.stringify({ run_id: 'tool_free_run' }), { status: 202 });
+      if (url.endsWith('/v1/runs/tool_free_run/events')) {
+        return new Response(`data: ${JSON.stringify({ event: 'run.completed', output: '{"verdict":"PASS"}' })}\n\n`, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      }
+      return new Response('not found', { status: 404 });
+    }));
+    const adapter = new HermesStrictJsonVerifier(env({
+      ARTIFACT_RED_TEAM_MODE: 'shadow',
+      ARTIFACT_RED_TEAM_API_BASE_URL: 'http://reviewer.local:8643',
+      ARTIFACT_RED_TEAM_API_KEY: 'reviewer-key',
+    }), reviewerSecrets);
+
+    await expect(adapter.runStrictJsonTask({
+      prompt: '{"artifact":"safe data"}',
+      instructions: 'Return JSON only.',
+      sessionId: 'cw-red-team-tool-free-success',
+      timeoutMs: 1_000,
+      profile: 'artifact-red-team',
+    })).resolves.toMatchObject({ reviewerRunId: 'tool_free_run', rawJson: '{"verdict":"PASS"}' });
+    expect(requests.map((request) => request.url)).toEqual([
+      'http://reviewer.local:8643/v1/toolsets',
+      'http://reviewer.local:8643/v1/runs',
+      'http://reviewer.local:8643/v1/runs/tool_free_run/events',
+    ]);
+    expect(requests.every((request) => request.authorization === 'Bearer reviewer-key')).toBe(true);
+  });
+
   it('does not auto-rerun general chat, but report/decision mode repairs only bad claims and re-verifies once', async () => {
     const nli: NliProvider = {
       providerId: 'repair_nli',

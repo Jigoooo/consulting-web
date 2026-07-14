@@ -271,28 +271,60 @@ export class HermesStrictJsonVerifier implements LlmStrictJsonVerifier {
   }
 
   async verifyJson(input: { claims: ClaimInput[]; evidence: EvidenceInput[]; nliVerdicts: ClaimVerdict[] }): Promise<{ rawJson: string; latencyMs: number }> {
-    const started = Date.now();
     const apiKey = this.secrets.get('HERMES_API_KEY');
     if (!this.env.VERIFIER_LLM_ENABLED || apiKey.length === 0) return { rawJson: '{"verdicts":[]}', latencyMs: 0 };
+    const result = await this.runStrictJsonTask({
+      prompt: this.strictJsonPrompt(input),
+      instructions: 'You are a strict fact-checking judge. Return ONLY one JSON object. No markdown, no prose.',
+      sessionId: 'cw-verifier-strict-json',
+      timeoutMs: this.env.VERIFIER_LLM_TIMEOUT_MS,
+    });
+    return { rawJson: result.rawJson, latencyMs: result.latencyMs };
+  }
+
+  async runStrictJsonTask(input: {
+    prompt: string;
+    instructions: string;
+    sessionId: string;
+    timeoutMs: number;
+    profile?: 'default' | 'artifact-red-team';
+  }): Promise<{ reviewerRunId: string; rawJson: string; latencyMs: number }> {
+    const started = Date.now();
+    const profile = input.profile ?? 'default';
+    const connection = this.strictJsonConnection(profile);
+    const { apiKey, baseUrl } = connection;
+    if (apiKey.length === 0) throw new Error('Hermes strict JSON task API key is unavailable');
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.env.VERIFIER_LLM_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), input.timeoutMs);
+    let runId: string | null = null;
     try {
-      const runId = await this.startRun(this.strictJsonPrompt(input), apiKey, controller.signal);
-      const rawJson = await this.readRunOutput(runId, apiKey, controller.signal);
-      return { rawJson, latencyMs: Date.now() - started };
+      if (profile === 'artifact-red-team') await this.assertToolFreeProfile(connection, controller.signal);
+      runId = await this.startRun(input.prompt, apiKey, baseUrl, controller.signal, input.sessionId, input.instructions);
+      const rawJson = await this.readRunOutput(runId, apiKey, baseUrl, controller.signal);
+      return { reviewerRunId: runId, rawJson, latencyMs: Date.now() - started };
+    } catch (error) {
+      if (runId) await this.stopRun(runId, apiKey, baseUrl).catch(() => undefined);
+      throw error;
     } finally {
       clearTimeout(timeout);
     }
   }
 
-  private async startRun(prompt: string, apiKey: string, signal: AbortSignal): Promise<string> {
+  private async startRun(
+    prompt: string,
+    apiKey: string,
+    baseUrl: string,
+    signal: AbortSignal,
+    sessionId: string,
+    instructions: string,
+  ): Promise<string> {
     const payload: Record<string, unknown> = {
       input: prompt,
-      session_id: 'cw-verifier-strict-json',
-      instructions: 'You are a strict fact-checking judge. Return ONLY one JSON object. No markdown, no prose.',
+      session_id: sessionId,
+      instructions,
     };
     if (this.env.VERIFIER_LLM_MODEL) payload.model = this.env.VERIFIER_LLM_MODEL;
-    const response = await fetch(this.url('/v1/runs'), {
+    const response = await fetch(this.url(baseUrl, '/v1/runs'), {
       method: 'POST',
       signal,
       headers: this.headers(apiKey, { 'content-type': 'application/json' }),
@@ -306,8 +338,8 @@ export class HermesStrictJsonVerifier implements LlmStrictJsonVerifier {
     return body.run_id;
   }
 
-  private async readRunOutput(runId: string, apiKey: string, signal: AbortSignal): Promise<string> {
-    const response = await fetch(this.url(`/v1/runs/${encodeURIComponent(runId)}/events`), {
+  private async readRunOutput(runId: string, apiKey: string, baseUrl: string, signal: AbortSignal): Promise<string> {
+    const response = await fetch(this.url(baseUrl, `/v1/runs/${encodeURIComponent(runId)}/events`), {
       method: 'GET',
       signal,
       headers: this.headers(apiKey, { accept: 'text/event-stream' }),
@@ -326,21 +358,33 @@ export class HermesStrictJsonVerifier implements LlmStrictJsonVerifier {
         const parsed = this.drainSseBuffer(buffer);
         buffer = parsed.remainder;
         output += parsed.output;
+        if (parsed.toolUsed) throw new Error(`Hermes strict JSON task attempted tool use: ${parsed.toolUsed}`);
+        if (parsed.failed) throw new Error(`Hermes strict JSON task failed: ${parsed.failed}`);
         if (parsed.completed) return parsed.output.trim().length > 0 ? parsed.output.trim() : output.trim();
       }
       buffer += decoder.decode();
       const parsed = this.drainSseBuffer(`${buffer}\n\n`);
       output += parsed.output;
+      if (parsed.toolUsed) throw new Error(`Hermes strict JSON task attempted tool use: ${parsed.toolUsed}`);
+      if (parsed.failed) throw new Error(`Hermes strict JSON task failed: ${parsed.failed}`);
       return output.trim();
     } finally {
       reader.releaseLock();
     }
   }
 
-  private drainSseBuffer(buffer: string): { output: string; remainder: string; completed: boolean } {
+  private drainSseBuffer(buffer: string): {
+    output: string;
+    remainder: string;
+    completed: boolean;
+    toolUsed: string | null;
+    failed: string | null;
+  } {
     let remainder = buffer;
     let output = '';
     let completed = false;
+    let toolUsed: string | null = null;
+    let failed: string | null = null;
     let boundary = remainder.indexOf('\n\n');
     while (boundary >= 0) {
       const frame = remainder.slice(0, boundary);
@@ -351,23 +395,97 @@ export class HermesStrictJsonVerifier implements LlmStrictJsonVerifier {
         if (typeof event.output === 'string') output = event.output;
         completed = true;
       }
+      const eventName = typeof event?.event === 'string' ? event.event : '';
+      if (eventName.startsWith('tool.') || typeof event?.tool === 'string') {
+        toolUsed = typeof event?.tool === 'string' && event.tool.length > 0 ? event.tool : 'unknown-tool';
+      }
+      if (event?.event === 'run.failed') {
+        failed = typeof event.error === 'string' ? event.error : 'unknown failure';
+      }
       boundary = remainder.indexOf('\n\n');
     }
-    return { output, remainder, completed };
+    return { output, remainder, completed, toolUsed, failed };
   }
 
   private parseSseFrame(frame: string): Record<string, unknown> | null {
-    const data = frame
-      .split(/\r?\n/)
+    const lines = frame.split(/\r?\n/);
+    const eventName = lines
+      .filter((line) => line.startsWith('event:'))
+      .map((line) => line.slice('event:'.length).trim())
+      .find((value) => value.length > 0);
+    const data = lines
       .filter((line) => line.startsWith('data: '))
       .map((line) => line.slice('data: '.length))
       .join('\n');
-    if (data.length === 0) return null;
+    if (data.length === 0) return eventName ? { event: eventName } : null;
     try {
       const parsed: unknown = JSON.parse(data);
-      return isRecord(parsed) ? parsed : null;
+      if (!isRecord(parsed)) return eventName ? { event: eventName } : null;
+      return eventName ? { ...parsed, event: eventName } : parsed;
     } catch {
-      return null;
+      return eventName ? { event: eventName } : null;
+    }
+  }
+
+  private async stopRun(runId: string, apiKey: string, baseUrl: string): Promise<void> {
+    const response = await fetch(this.url(baseUrl, `/v1/runs/${encodeURIComponent(runId)}/stop`), {
+      method: 'POST',
+      headers: this.headers(apiKey, { 'content-type': 'application/json' }),
+      body: '{}',
+    });
+    if (!response.ok && response.status !== 409) {
+      throw new Error(`Hermes strict JSON task stop failed (${response.status})`);
+    }
+  }
+
+  private strictJsonConnection(profile: 'default' | 'artifact-red-team'): { baseUrl: string; apiKey: string } {
+    if (profile === 'artifact-red-team') {
+      const baseUrl = this.env.ARTIFACT_RED_TEAM_API_BASE_URL ?? '';
+      const apiKey = this.secrets.get('ARTIFACT_RED_TEAM_API_KEY');
+      if (!baseUrl || !apiKey) throw new Error('artifact red-team reviewer connection is unavailable');
+      return { baseUrl, apiKey };
+    }
+    return {
+      baseUrl: this.env.HERMES_API_BASE_URL,
+      apiKey: this.secrets.get('HERMES_API_KEY'),
+    };
+  }
+
+  private async assertToolFreeProfile(
+    connection: { baseUrl: string; apiKey: string },
+    signal: AbortSignal,
+  ): Promise<void> {
+    const response = await fetch(this.url(connection.baseUrl, '/v1/toolsets'), {
+      method: 'GET',
+      signal,
+      headers: this.headers(connection.apiKey, { accept: 'application/json' }),
+    });
+    if (!response.ok) throw new Error(`Hermes artifact reviewer tool policy check failed (${response.status})`);
+    const body: unknown = await response.json();
+    if (
+      !isRecord(body)
+      || !Array.isArray(body.data)
+      || body.inventory_complete !== true
+      || !Array.isArray(body.effective_toolsets)
+      || body.effective_toolsets.some((toolset) => typeof toolset !== 'string')
+      || !Array.isArray(body.effective_tools)
+      || body.effective_tools.some((tool) => typeof tool !== 'string')
+    ) {
+      throw new Error('Hermes artifact reviewer effective tool inventory attestation is incomplete');
+    }
+    if (!body.data.every((item) => isRecord(item) && typeof item.name === 'string' && typeof item.enabled === 'boolean')) {
+      throw new Error('Hermes artifact reviewer tool policy response is malformed');
+    }
+    const enabled = body.data.flatMap((item) => isRecord(item)
+      && item.enabled === true
+      && typeof item.name === 'string'
+      ? [item.name]
+      : []);
+    enabled.push(...body.effective_toolsets as string[]);
+    enabled.push(...body.effective_tools as string[]);
+    if (enabled.length > 0) {
+      const names = [...new Set(enabled)].sort();
+      throw new Error(`Hermes artifact reviewer requires a tool-free profile; enabled inventory entries: ${names.join(', ')}`);
     }
   }
 
@@ -388,8 +506,8 @@ export class HermesStrictJsonVerifier implements LlmStrictJsonVerifier {
     });
   }
 
-  private url(path: string): string {
-    return `${this.env.HERMES_API_BASE_URL.replace(/\/$/, '')}${path}`;
+  private url(baseUrl: string, path: string): string {
+    return `${baseUrl.replace(/\/$/, '')}${path}`;
   }
 
   private headers(apiKey: string, extra: Record<string, string>): Record<string, string> {

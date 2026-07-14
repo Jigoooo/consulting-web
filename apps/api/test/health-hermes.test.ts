@@ -18,6 +18,9 @@ const env: Env = {
   VOYAGE_MULTIMODAL_MODEL: 'voyage-multimodal-3.5',
   VERIFIER_LLM_ENABLED: false,
   VERIFIER_LLM_TIMEOUT_MS: 30_000,
+  ARTIFACT_RED_TEAM_MODE: 'warning',
+  ARTIFACT_RED_TEAM_TIMEOUT_MS: 45_000,
+  REPORT_WORKFLOW_SHADOW_MODE: 'off',
   VAPID_SUBJECT: 'mailto:admin@localhost',
 };
 

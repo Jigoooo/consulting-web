@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { authStore } from './api';
+import { authStore, revokeAndClearSession } from './api';
 
 /** React binding for the auth store — re-renders on login/logout. */
 export function useAuth() {
@@ -8,6 +8,6 @@ export function useAuth() {
     session: snapshot,
     user: snapshot?.user ?? null,
     isAuthed: snapshot !== null,
-    logout: authStore.clear,
+    logout: revokeAndClearSession,
   };
 }

@@ -1,5 +1,5 @@
 import { Body, Controller, Headers, HttpCode, Inject, Post } from '@nestjs/common';
-import { AuthSessionResponseSchema, LoginRequestSchema, RefreshRequestSchema, SignUpBootstrapResponseSchema, SignUpRequestSchema } from '@consulting/contracts';
+import { AuthSessionResponseSchema, LoginRequestSchema, LogoutRequestSchema, LogoutResponseSchema, RefreshRequestSchema, SignUpBootstrapResponseSchema, SignUpRequestSchema } from '@consulting/contracts';
 import { SignUpUseCase } from './sign-up.usecase.js';
 import { AuthSessionUseCase } from './auth-session.usecase.js';
 import { parseBody, parseResponse, throwDomainError } from '../http/contract-adapter.js';
@@ -39,5 +39,12 @@ export class AuthController {
     const result = await this.authSessionUseCase.refresh(req.refreshToken, userAgent);
     if (!result.ok) return throwDomainError(result.error);
     return parseResponse(AuthSessionResponseSchema, result.value);
+  }
+
+  @Post('logout')
+  @HttpCode(200)
+  async logout(@Body() body: unknown) {
+    const req = parseBody(LogoutRequestSchema, body);
+    return parseResponse(LogoutResponseSchema, await this.authSessionUseCase.logout(req.refreshToken));
   }
 }

@@ -1,7 +1,8 @@
-import { boolean, index, integer, jsonb, numeric, pgTable, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { bigint, boolean, check, foreignKey, index, integer, jsonb, numeric, pgTable, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { primaryId, softDelete, timestamps } from './_shared';
-import { evidenceItems, fileAttachments, documentExtractions } from './collab';
+import { artifacts, artifactVersions, evidenceItems, fileAttachments, documentExtractions } from './collab';
+import { users } from './identity';
 import { workspaces } from './organization';
 import { channels, chatMessages, projects, threads, topics } from './space';
 
@@ -109,6 +110,7 @@ export const decisionScorecardItems = pgTable(
     index('decision_items_workspace_idx').on(t.workspaceId, t.weightedScore),
   ],
 );
+
 
 export const documentRetrievalUnits = pgTable(
   'document_retrieval_units',
@@ -245,6 +247,33 @@ export const activeReviewItems = pgTable(
   (t) => [
     index('active_review_workspace_idx').on(t.workspaceId, t.status, t.priorityScore),
     index('active_review_thread_idx').on(t.threadId, t.createdAt),
+  ],
+);
+
+/** Append-only human decisions bound to the exact artifact-version content hash. */
+export const artifactReviewDecisions = pgTable(
+  'artifact_review_decisions',
+  {
+    id: primaryId,
+    sequenceNo: bigint('sequence_no', { mode: 'number' }).notNull().default(0),
+    workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'restrict' }),
+    projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'restrict' }),
+    artifactId: uuid('artifact_id').notNull().references(() => artifacts.id, { onDelete: 'restrict' }),
+    artifactVersionId: uuid('artifact_version_id').notNull().references(() => artifactVersions.id, { onDelete: 'restrict' }),
+    contentHash: text('content_hash').notNull(),
+    action: text('action').notNull(),
+    note: text('note').notNull().default(''),
+    actorKind: text('actor_kind').notNull().default('user'),
+    decidedByUserId: uuid('decided_by_user_id').references(() => users.id, { onDelete: 'restrict' }),
+    previousHash: text('previous_hash'),
+    eventHash: text('event_hash').notNull().default(''),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('artifact_review_decisions_sequence_unique').on(t.artifactVersionId, t.sequenceNo),
+    unique('artifact_review_decisions_event_hash_unique').on(t.eventHash),
+    index('artifact_review_version_idx').on(t.artifactVersionId, t.sequenceNo),
+    index('artifact_review_project_idx').on(t.workspaceId, t.projectId, t.createdAt),
   ],
 );
 
@@ -446,6 +475,7 @@ export const retrievalRuns = pgTable(
     ...softDelete,
   },
   (t) => [
+    unique('retrieval_runs_scope_unique').on(t.id, t.workspaceId, t.threadId),
     index('retrieval_runs_workspace_idx').on(t.workspaceId, t.createdAt),
     index('retrieval_runs_scope_idx').on(t.workspaceId, t.projectId, t.channelId, t.topicId, t.createdAt),
     index('retrieval_runs_thread_idx').on(t.threadId, t.createdAt),
@@ -489,6 +519,13 @@ export const retrievalHits = pgTable(
     ...softDelete,
   },
   (t) => [
+    foreignKey({
+      columns: [t.retrievalRunId, t.workspaceId, t.threadId],
+      foreignColumns: [retrievalRuns.id, retrievalRuns.workspaceId, retrievalRuns.threadId],
+      name: 'retrieval_hits_run_scope_fk',
+    }).onDelete('cascade'),
+    check('retrieval_hits_failure_type_check', sql`${t.failureType} IS NULL OR ${t.failureType} IN ('wrong_project','wrong_topic','wrong_phase','wrong_client','raw_over_selected','lexical_false_positive','semantic_false_positive','graph_over_fanout','stale_source','unsupported_claim','citation_missing','duplicate_chunk','too_generic_context','query_rewrite_error','reranker_error')`),
+    check('retrieval_hits_label_pair_check', sql`(${t.judgedRelevant} IS NULL AND ${t.failureType} IS NULL) OR (${t.judgedRelevant} = true AND ${t.failureType} IS NULL) OR (${t.judgedRelevant} = false AND ${t.failureType} IS NOT NULL)`),
     index('retrieval_hits_workspace_idx').on(t.workspaceId, t.createdAt),
     index('retrieval_hits_run_idx').on(t.retrievalRunId, t.rank),
     index('retrieval_hits_thread_idx').on(t.threadId, t.createdAt),

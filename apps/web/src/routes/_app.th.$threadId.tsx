@@ -42,6 +42,7 @@ function ThreadPage() {
     <ChatThread
       key={threadId}
       threadId={threadId}
+      projectId={detail.data.projectId}
       title={detail.data.title}
       topicId={detail.data.topicId}
       {...(focusMessageId ? { focusMessageId } : {})}

@@ -160,6 +160,7 @@ export const DecisionScorecardSummarySchema = z
   .strict();
 export type DecisionScorecardSummary = z.infer<typeof DecisionScorecardSummarySchema>;
 
+
 export const DocumentUnitsSummarySchema = z
   .object({
     total: z.number().int().nonnegative(),
@@ -296,6 +297,49 @@ export const ExactnessSummarySchema = z
   .strict();
 export type ExactnessSummary = z.infer<typeof ExactnessSummarySchema>;
 
+export const JudgmentGuardIssueSchema = z
+  .object({
+    code: z.enum([
+      'source_intake_parse_failure',
+      'stale_source_warning',
+      'applicability_map_required',
+      'decision_gate_order_required',
+      'latest_authority_required',
+      'comparator_consistency_required',
+      'counterargument_required',
+      'user_correction_pattern',
+      'overclaim_strength_risk',
+    ]),
+    severity: z.enum(['warning', 'blocker']),
+    message: z.string().min(1),
+    requiredAction: z.string().min(1),
+  })
+  .strict();
+export type JudgmentGuardIssue = z.infer<typeof JudgmentGuardIssueSchema>;
+
+export const JudgmentGuardRunSummarySchema = z
+  .object({
+    id: UuidSchema,
+    status: z.enum(['skipped', 'warnings', 'blocked']),
+    required: z.boolean(),
+    issueSummary: z.string(),
+    issues: z.array(JudgmentGuardIssueSchema),
+    promptRules: z.array(z.string()),
+    currentTimeIso: z.string().datetime({ offset: true }),
+    userCorrectionDetected: z.boolean(),
+    createdAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+export type JudgmentGuardRunSummary = z.infer<typeof JudgmentGuardRunSummarySchema>;
+
+export const JudgmentGuardSummarySchema = z
+  .object({
+    latestRun: JudgmentGuardRunSummarySchema.nullable(),
+    blockedCount: z.number().int().nonnegative(),
+  })
+  .strict();
+export type JudgmentGuardSummary = z.infer<typeof JudgmentGuardSummarySchema>;
+
 export const EvidenceDecisionSummaryResponseSchema = z
   .object({
     verdictSummary: ClaimVerdictSummarySchema,
@@ -317,9 +361,19 @@ export const EvidenceDecisionSummaryResponseSchema = z
   .strict();
 export type EvidenceDecisionSummaryResponse = z.infer<typeof EvidenceDecisionSummaryResponseSchema>;
 
+/** Opt-in v2. The v1 shape stays strict and unchanged for service-worker/API skew safety. */
+export const EvidenceDecisionSummaryV2ResponseSchema = EvidenceDecisionSummaryResponseSchema.extend({
+  judgment: JudgmentGuardSummarySchema,
+}).strict();
+export type EvidenceDecisionSummaryV2Response = z.infer<typeof EvidenceDecisionSummaryV2ResponseSchema>;
+
+
 // ---------------------------------------------------------------------------
 // Phase 2-B — Artifacts
 // ---------------------------------------------------------------------------
+
+export const ArtifactContractCapabilitiesResponseSchema = z.object({ version: z.literal(2) }).strict();
+export type ArtifactContractCapabilitiesResponse = z.infer<typeof ArtifactContractCapabilitiesResponseSchema>;
 
 export const ArtifactSummarySchema = z
   .object({
@@ -339,6 +393,14 @@ export const ListArtifactsResponseSchema = z
   .strict();
 export type ListArtifactsResponse = z.infer<typeof ListArtifactsResponseSchema>;
 
+export const ArtifactStructureSchema = z
+  .object({
+    governingMessage: z.string().trim().min(10).max(500),
+    soWhat: z.string().trim().min(10).max(1_000),
+  })
+  .strict();
+export type ArtifactStructure = z.infer<typeof ArtifactStructureSchema>;
+
 export const ArtifactVersionSchema = z
   .object({
     id: UuidSchema,
@@ -349,10 +411,18 @@ export const ArtifactVersionSchema = z
     authorName: z.string().nullable(),
     sourceThreadId: UuidSchema.nullable(),
     sourceMessageId: UuidSchema.nullable(),
+    governingMessage: z.string().nullable(),
+    soWhat: z.string().nullable(),
     createdAt: z.string().datetime({ offset: true }),
   })
   .strict();
 export type ArtifactVersion = z.infer<typeof ArtifactVersionSchema>;
+
+export const ArtifactVersionV1Schema = ArtifactVersionSchema.omit({
+  governingMessage: true,
+  soWhat: true,
+}).strict();
+export type ArtifactVersionV1 = z.infer<typeof ArtifactVersionV1Schema>;
 
 export const ArtifactDetailResponseSchema = z
   .object({
@@ -365,27 +435,38 @@ export const ArtifactDetailResponseSchema = z
   .strict();
 export type ArtifactDetailResponse = z.infer<typeof ArtifactDetailResponseSchema>;
 
+export const ArtifactDetailV1ResponseSchema = ArtifactDetailResponseSchema.extend({
+  versions: z.array(ArtifactVersionV1Schema),
+}).strict();
+export type ArtifactDetailV1Response = z.infer<typeof ArtifactDetailV1ResponseSchema>;
+
 export const CreateArtifactRequestSchema = z
   .object({
     projectId: UuidSchema,
     title: TitleSchema,
     content: z.string().min(1).max(200_000),
     note: z.string().trim().max(300).default(''),
+    structure: ArtifactStructureSchema.optional(),
     sourceThreadId: UuidSchema.optional(),
     sourceMessageId: UuidSchema.optional(),
   })
   .strict();
 export type CreateArtifactRequest = z.infer<typeof CreateArtifactRequestSchema>;
+export const CreateArtifactV1RequestSchema = CreateArtifactRequestSchema.omit({ structure: true }).strict();
+export type CreateArtifactV1Request = z.infer<typeof CreateArtifactV1RequestSchema>;
 
 export const AddArtifactVersionRequestSchema = z
   .object({
     content: z.string().min(1).max(200_000),
     note: z.string().trim().max(300).default(''),
+    structure: ArtifactStructureSchema.optional(),
     sourceThreadId: UuidSchema.optional(),
     sourceMessageId: UuidSchema.optional(),
   })
   .strict();
 export type AddArtifactVersionRequest = z.infer<typeof AddArtifactVersionRequestSchema>;
+export const AddArtifactVersionV1RequestSchema = AddArtifactVersionRequestSchema.omit({ structure: true }).strict();
+export type AddArtifactVersionV1Request = z.infer<typeof AddArtifactVersionV1RequestSchema>;
 
 export const CreateArtifactResponseSchema = z
   .object({ id: UuidSchema, versionNo: z.number().int().positive() })
@@ -397,16 +478,173 @@ export const VerifyArtifactVersionRequestSchema = z
   .strict();
 export type VerifyArtifactVersionRequest = z.infer<typeof VerifyArtifactVersionRequestSchema>;
 
+export const ArtifactRedTeamAttackSchema = z.object({
+  persona: z.enum(['감사원', '의회', '노조']),
+  severity: z.enum(['warning', 'blocker']),
+  category: z.string().min(1).max(100),
+  message: z.string().min(1).max(1_000),
+}).strict();
+
+export const ArtifactRedTeamDefenseSchema = z.object({
+  attackIndex: z.number().int().nonnegative(),
+  response: z.string().min(1).max(1_000),
+  disposition: z.enum(['sustained', 'mitigated', 'unresolved']),
+}).strict();
+
+export const ArtifactRedTeamPreflightSchema = z.object({
+  mode: z.enum(['off', 'shadow', 'warning']),
+  status: z.enum(['disabled', 'missing', 'pending', 'processing', 'completed', 'failed', 'stale']),
+  verdict: z.enum(['PASS', 'PASS_WITH_WARNINGS', 'BLOCKED']).nullable(),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/u).nullable(),
+  policyVersion: z.string().min(1).max(200).nullable(),
+  attacks: z.array(ArtifactRedTeamAttackSchema).max(20),
+  defenses: z.array(ArtifactRedTeamDefenseSchema).max(20),
+  reviewedAt: z.string().datetime().nullable(),
+}).strict().superRefine((value, ctx) => {
+  for (const [index, defense] of value.defenses.entries()) {
+    if (defense.attackIndex >= value.attacks.length) {
+      ctx.addIssue({ code: 'custom', path: ['defenses', index, 'attackIndex'], message: 'defense must reference an existing attack' });
+    }
+  }
+  if (value.status === 'disabled' && value.mode !== 'off') {
+    ctx.addIssue({ code: 'custom', path: ['mode'], message: 'disabled red-team state requires off mode' });
+  }
+  if (value.status === 'completed' && (!value.verdict || !value.contentHash || !value.policyVersion || !value.reviewedAt)) {
+    ctx.addIssue({ code: 'custom', path: ['status'], message: 'completed red-team state requires verdict, hash, policy, and timestamp' });
+  }
+});
+export type ArtifactRedTeamPreflight = z.infer<typeof ArtifactRedTeamPreflightSchema>;
+
+const DISABLED_ARTIFACT_RED_TEAM_PREFLIGHT: ArtifactRedTeamPreflight = {
+  mode: 'off',
+  status: 'disabled',
+  verdict: null,
+  contentHash: null,
+  policyVersion: null,
+  attacks: [],
+  defenses: [],
+  reviewedAt: null,
+};
+
 export const ArtifactExportPreflightResponseSchema = z
   .object({
     canExport: z.boolean(),
-    reason: z.enum(['OK', 'ARTIFACT_VERIFICATION_REQUIRED', 'VERIFIER_GATE_BLOCKED']),
+    reason: z.enum([
+      'OK',
+      'ARTIFACT_STRUCTURE_REQUIRED',
+      'ARTIFACT_VERIFICATION_REQUIRED',
+      'VERIFIER_GATE_BLOCKED',
+      'RED_TEAM_BLOCKED',
+      'RED_TEAM_REVIEW_REQUIRED',
+      'HUMAN_REVIEW_REQUIRED',
+      'HUMAN_REVIEW_REJECTED',
+      'HUMAN_REVIEW_LEDGER_INVALID',
+    ]),
     versionNo: z.number().int().positive(),
     gate: VerifierGateSummarySchema.nullable(),
     messages: z.array(z.string().min(1)).max(20),
+    redTeam: ArtifactRedTeamPreflightSchema.default(DISABLED_ARTIFACT_RED_TEAM_PREFLIGHT),
+    humanReview: z.object({
+      status: z.enum(['not_required', 'pending', 'approved', 'rejected', 'blocked', 'invalid']),
+      reason: z.enum([
+        'OK',
+        'ARTIFACT_STRUCTURE_REQUIRED',
+        'ARTIFACT_VERIFICATION_REQUIRED',
+        'VERIFIER_GATE_BLOCKED',
+        'RED_TEAM_BLOCKED',
+        'RED_TEAM_REVIEW_REQUIRED',
+        'HUMAN_REVIEW_REQUIRED',
+        'HUMAN_REVIEW_REJECTED',
+        'HUMAN_REVIEW_LEDGER_INVALID',
+      ]),
+    }).strict().optional(),
   })
   .strict();
 export type ArtifactExportPreflightResponse = z.infer<typeof ArtifactExportPreflightResponseSchema>;
+
+export const ArtifactExportPreflightV1ResponseSchema = z.object({
+  canExport: z.boolean(),
+  reason: z.enum(['OK', 'ARTIFACT_VERIFICATION_REQUIRED', 'VERIFIER_GATE_BLOCKED']),
+  versionNo: z.number().int().positive(),
+  gate: VerifierGateSummarySchema.nullable(),
+  messages: z.array(z.string().min(1)).max(20),
+}).strict();
+export type ArtifactExportPreflightV1Response = z.infer<typeof ArtifactExportPreflightV1ResponseSchema>;
+
+export const ArtifactReviewPrioritySchema = z.enum(['critical', 'high', 'medium', 'clear']);
+export const ArtifactReviewStatusSchema = z.enum(['not_required', 'pending', 'approved', 'rejected', 'blocked', 'invalid']);
+
+export const ArtifactReviewDecisionSchema = z.object({
+  id: UuidSchema,
+  sequenceNo: z.number().int().positive(),
+  action: z.enum(['approve', 'reject']),
+  note: z.string().max(1_000),
+  actorKind: z.enum(['user', 'legacy_unknown']),
+  decidedByUserId: UuidSchema.nullable(),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  previousHash: z.string().regex(/^[a-f0-9]{64}$/u).nullable(),
+  eventHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  decidedAt: z.string().datetime({ offset: true }),
+}).strict().superRefine((value, ctx) => {
+  const validPair = value.actorKind === 'user'
+    ? value.decidedByUserId !== null
+    : value.decidedByUserId === null;
+  if (!validPair) ctx.addIssue({ code: 'custom', path: ['decidedByUserId'], message: 'actor kind and user id mismatch' });
+});
+export type ArtifactReviewDecision = z.infer<typeof ArtifactReviewDecisionSchema>;
+
+export const ArtifactReviewWorklistItemSchema = z.object({
+  artifactId: UuidSchema,
+  artifactVersionId: UuidSchema,
+  title: z.string().min(1).max(500),
+  versionNo: z.number().int().positive(),
+  priority: ArtifactReviewPrioritySchema,
+  reasons: z.array(z.string().min(1).max(200)).max(20),
+  needsHumanReview: z.boolean(),
+  reviewStatus: ArtifactReviewStatusSchema,
+  latestDecision: ArtifactReviewDecisionSchema.nullable(),
+}).strict();
+export type ArtifactReviewWorklistItem = z.infer<typeof ArtifactReviewWorklistItemSchema>;
+
+export const ArtifactBatchReviewPlanResponseSchema = z.object({
+  projectId: UuidSchema,
+  projectName: z.string().min(1).max(500),
+  cohort: z.object({
+    totalCandidates: z.number().int().nonnegative(),
+    offset: z.number().int().nonnegative(),
+    returned: z.number().int().nonnegative().max(500),
+    nextOffset: z.number().int().nonnegative().nullable(),
+    summaryScope: z.literal('returned_page'),
+  }).strict(),
+  summary: z.object({
+    total: z.number().int().nonnegative(),
+    critical: z.number().int().nonnegative(),
+    high: z.number().int().nonnegative(),
+    medium: z.number().int().nonnegative(),
+    clear: z.number().int().nonnegative(),
+    needsHumanReview: z.number().int().nonnegative(),
+    pending: z.number().int().nonnegative(),
+    approved: z.number().int().nonnegative(),
+    rejected: z.number().int().nonnegative(),
+    blocked: z.number().int().nonnegative(),
+    invalid: z.number().int().nonnegative(),
+  }).strict(),
+  worklist: z.array(ArtifactReviewWorklistItemSchema).max(500),
+}).strict();
+export type ArtifactBatchReviewPlanResponse = z.infer<typeof ArtifactBatchReviewPlanResponseSchema>;
+
+export const ArtifactReviewDecisionRequestSchema = z.object({
+  action: z.enum(['approve', 'reject']),
+  note: z.string().trim().max(1_000).optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.action === 'reject' && !value.note) {
+    ctx.addIssue({ code: 'custom', path: ['note'], message: 'reject requires a note' });
+  }
+});
+export type ArtifactReviewDecisionRequest = z.infer<typeof ArtifactReviewDecisionRequestSchema>;
+
+export const ArtifactReviewDecisionResponseSchema = z.object({ decision: ArtifactReviewDecisionSchema }).strict();
+export type ArtifactReviewDecisionResponse = z.infer<typeof ArtifactReviewDecisionResponseSchema>;
 
 // ---------------------------------------------------------------------------
 // Phase 2-C — Notifications

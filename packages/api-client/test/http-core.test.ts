@@ -40,6 +40,22 @@ describe('HttpCore fetch binding', () => {
     expect(calls[0]).toBe('/api/chat/threads/00000000-0000-4000-8000-000000000009/messages/search?q=%EC%B0%BD%EC%9B%90+%EB%B2%84%EC%8A%A4&limit=7');
   });
 
+  it('requests workspace tree effective permissions only when opted in', async () => {
+    const calls: string[] = [];
+    const fakeFetch = vi.fn((url: string | URL | Request) => {
+      calls.push(String(url));
+      return Promise.resolve(new Response(JSON.stringify({
+        workspaceId: '00000000-0000-4000-8000-000000000001',
+        permissions: ['workspace.read'],
+        projects: [],
+      }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    });
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+    const tree = await client.workspaceTree('00000000-0000-4000-8000-000000000001', true);
+    expect(tree.permissions).toEqual(['workspace.read']);
+    expect(calls[0]).toBe('/api/spaces/workspaces/00000000-0000-4000-8000-000000000001/tree?includePermissions=true');
+  });
+
   it('invokes fetch without binding it to the client instance', async () => {
     let capturedThis: unknown = 'unset';
     const fakeFetch = vi.fn(function (this: unknown, _url: string | URL | Request, _init?: RequestInit) {
@@ -121,7 +137,7 @@ describe('HttpCore fetch binding', () => {
     const calls: Array<{ url: string; method: string | undefined }> = [];
     const fakeFetch = vi.fn((url: string | URL | Request, init?: RequestInit) => {
       calls.push({ url: String(url), method: init?.method });
-      if (String(url).endsWith('/archive')) {
+      if (String(url).includes('/archive?includePermissions=true')) {
         return Promise.resolve(new Response(JSON.stringify({
           items: [{
             kind: 'channel',
@@ -141,7 +157,7 @@ describe('HttpCore fetch binding', () => {
 
     expect(archive.items[0]?.parentPath).toEqual(['프로젝트']);
     expect(calls).toEqual([
-      { url: '/api/spaces/workspaces/00000000-0000-4000-8000-000000000001/archive', method: 'GET' },
+      { url: '/api/spaces/workspaces/00000000-0000-4000-8000-000000000001/archive?includePermissions=true', method: 'GET' },
       { url: '/api/spaces/archive/channel/11111111-1111-4111-8111-111111111111/restore', method: 'POST' },
     ]);
   });
@@ -305,11 +321,129 @@ describe('HttpCore fetch binding', () => {
     const preflight = await client.exportArtifactPreflight('11111111-1111-4111-8111-111111111111', 'pdf', 2);
 
     expect(calls[0]).toEqual({
-      url: '/api/artifacts/11111111-1111-4111-8111-111111111111/export-preflight?format=pdf&version=2',
+      url: '/api/artifacts/11111111-1111-4111-8111-111111111111/export-preflight?format=pdf&includeReview=1&version=2',
       method: 'GET',
     });
     expect(preflight.canExport).toBe(false);
     expect(preflight.reason).toBe('VERIFIER_GATE_BLOCKED');
+  });
+
+  it('opts into artifact detail v2 while normalizing an old strict v1 response', async () => {
+    const calls: string[] = [];
+    const v1 = {
+      id: '11111111-1111-4111-8111-111111111111',
+      projectId: '22222222-2222-4222-8222-222222222222',
+      title: 'legacy artifact',
+      headVersion: 1,
+      versions: [{
+        id: '33333333-3333-4333-8333-333333333333',
+        versionNo: 1,
+        content: 'legacy',
+        note: '',
+        authorUserId: null,
+        authorName: null,
+        sourceThreadId: null,
+        sourceMessageId: null,
+        createdAt: '2026-07-14T00:00:00.000Z',
+      }],
+    };
+    const fakeFetch = vi.fn((url: string | URL | Request) => {
+      calls.push(String(url));
+      return Promise.resolve(new Response(JSON.stringify(v1), { status: 200, headers: { 'content-type': 'application/json' } }));
+    });
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+
+    const detail = await client.artifactDetail(v1.id);
+    expect(calls[0]).toBe(`/api/artifacts/${v1.id}?includeStructure=1`);
+    expect(detail.versions[0]).toEqual(expect.objectContaining({ governingMessage: null, soWhat: null }));
+  });
+
+  it('fails closed without sending a mutation when the old API has no v2 capability', async () => {
+    const calls: Array<{ url: string; body: unknown }> = [];
+    const fakeFetch = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), body: init?.body ? JSON.parse(String(init.body)) : null });
+      if (String(url).endsWith('/artifact-contract')) {
+        return Promise.resolve(new Response(JSON.stringify({ code: 'NOT_FOUND', message: 'not found' }), {
+          status: 404,
+          headers: { 'content-type': 'application/json' },
+        }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ id: '11111111-1111-4111-8111-111111111111', versionNo: 1 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+    });
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+
+    await expect(client.createArtifact({
+      projectId: '22222222-2222-4222-8222-222222222222',
+      title: 'rolling',
+      content: 'body',
+      note: '',
+      structure: { governingMessage: 'governing message', soWhat: 'decision consequence' },
+    })).rejects.toMatchObject({ status: 409, code: 'CONFLICT' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual({ url: '/api/artifact-contract', body: null });
+    await expect(client.supportsArtifactContractV2()).resolves.toBe(false);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('sends structure through the v2 opt-in query when capability is present', async () => {
+    const calls: Array<{ url: string; body: unknown }> = [];
+    const fakeFetch = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), body: init?.body ? JSON.parse(String(init.body)) : null });
+      const payload = String(url).endsWith('/artifact-contract')
+        ? { version: 2 }
+        : { id: '11111111-1111-4111-8111-111111111111', versionNo: 1 };
+      return Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { 'content-type': 'application/json' } }));
+    });
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+    await client.createArtifact({
+      projectId: '22222222-2222-4222-8222-222222222222',
+      title: 'rolling',
+      content: 'body',
+      note: '',
+      structure: { governingMessage: 'governing message', soWhat: 'decision consequence' },
+    });
+    expect(calls[1]?.url).toBe('/api/artifacts?includeStructure=1');
+    expect(calls[1]?.body).toEqual(expect.objectContaining({ structure: expect.any(Object) }));
+  });
+
+  it('requests the next 500-item artifact review cohort by offset', async () => {
+    const calls: string[] = [];
+    const projectId = '22222222-2222-4222-8222-222222222222';
+    const fakeFetch = vi.fn((url: string | URL | Request) => {
+      calls.push(String(url));
+      return Promise.resolve(new Response(JSON.stringify({
+        projectId,
+        projectName: 'large project',
+        cohort: { totalCandidates: 750, offset: 500, returned: 250, nextOffset: null, summaryScope: 'returned_page' },
+        summary: { total: 250, critical: 0, high: 0, medium: 250, clear: 0, needsHumanReview: 250, pending: 250, approved: 0, rejected: 0, blocked: 0, invalid: 0 },
+        worklist: [],
+      }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    });
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+
+    const plan = await client.artifactReviewPlan(projectId, 500);
+    expect(calls[0]).toBe(`/api/artifacts/projects/${projectId}/review-plan?offset=500`);
+    expect(plan.cohort).toEqual(expect.objectContaining({ offset: 500, returned: 250, nextOffset: null }));
+  });
+
+  it('requests a bounded artifact list page by project and offset', async () => {
+    const calls: string[] = [];
+    const workspaceId = '11111111-1111-4111-8111-111111111111';
+    const projectId = '22222222-2222-4222-8222-222222222222';
+    const fakeFetch = vi.fn((url: string | URL | Request) => {
+      calls.push(String(url));
+      return Promise.resolve(new Response(JSON.stringify({ artifacts: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+    });
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+
+    await client.listArtifacts(workspaceId, projectId, 500);
+    expect(calls[0]).toBe(`/api/artifacts/workspaces/${workspaceId}?projectId=${projectId}&offset=500`);
   });
 });
 
@@ -373,7 +507,7 @@ describe('HttpCore transport failures', () => {
     });
 
     // Stream endpoint opts out of timeout and honors the caller signal.
-    const gen = client.streamChat({ threadId: '00000000-0000-4000-8000-000000000009', message: 'hi' }, controller.signal);
+    const gen = client.streamChat({ threadId: '00000000-0000-4000-8000-000000000009', message: 'hi', clientMessageId: '00000000-0000-4000-8000-000000000010' }, controller.signal);
     const pending = gen.next().catch((e) => e);
     controller.abort();
     const err = await pending;

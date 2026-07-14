@@ -11,7 +11,7 @@ import { CreateChannelUseCase } from '../src/spaces/create-channel.usecase.js';
 import { ScopeRepository } from '../src/spaces/scope.repository.js';
 import { MatrixPolicyEngine } from '../src/permissions/matrix-policy-engine.js';
 
-const url = process.env.DATABASE_URL;
+const url = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const d = url ? describe : describe.skip;
 
 let pool: Pool;

@@ -8,7 +8,7 @@ import { outboxJobId, OutboxRelayService } from '../src/queues/outbox-relay.serv
 import { SignUpUseCase } from '../src/auth/sign-up.usecase.js';
 import { ScryptPasswordHasher } from '../src/auth/password.js';
 
-const dbUrl = process.env.DATABASE_URL;
+const dbUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const redisUrl = process.env.REDIS_URL;
 const TEST_CREDENTIAL = 'supersecret1';
 const d = dbUrl && redisUrl ? describe : describe.skip;

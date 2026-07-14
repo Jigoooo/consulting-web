@@ -3,15 +3,17 @@ import { Inject, Injectable } from '@nestjs/common';
 import { schema } from '@consulting/db-schema';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import {
+  JudgmentGuardIssueSchema,
   RetrievalFailureTypeSchema,
   type EvidenceDecisionSummaryResponse,
+  type EvidenceDecisionSummaryV2Response,
   type ListRetrievalHitFeedbackResponse,
   type RetrievalFailureType,
   type ReviewQueueFilter,
   type ReviewQueueResponse,
 } from '@consulting/contracts';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
-import { EvidenceToDecisionService, type ClaimInput, type ClaimVerdict, type DecisionRating, type EvidenceInput, type ProvenanceGraphEdge, type ReviewInput } from './evidence-to-decision.service.js';
+import { EvidenceToDecisionService, type ClaimInput, type ClaimVerdict, type DecisionRating, type EvidenceInput, type ProvenanceGraphEdge, type ReviewInput, type StrictJsonVerificationResult } from './evidence-to-decision.service.js';
 import { ClaimVerifierService } from './claim-verifier.service.js';
 import { ExactnessGateService, type ExactnessGateResult, type ExactnessRunStatus } from './exactness-gate.service.js';
 import { VerifierGatePolicyService, type VerifierGateResult } from './verifier-gate-policy.service.js';
@@ -25,6 +27,32 @@ type ReviewAction = {
   label: '근거 보강 후 재작성' | '해당 문장 제거' | '추가 자료 요청';
   prompt: string;
 };
+
+export interface CompletedAnswerInput {
+  workspaceId: string;
+  threadId: string;
+  assistantMessageId: string;
+  userPrompt: string;
+  answer: string;
+  runId: string | null;
+}
+
+type PreparedEvidenceRow = {
+  id: string;
+  ref: string;
+  excerpt: string;
+  qualityScore: number | null;
+  createdAt: Date;
+};
+
+export interface PreparedCompletedAnswer {
+  fingerprint: string;
+  startedAt: Date;
+  durationMs: number;
+  evidenceRows: PreparedEvidenceRow[];
+  evidence: EvidenceInput[];
+  verification: StrictJsonVerificationResult | null;
+}
 
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -59,6 +87,19 @@ function latestMessagePrefix(messageId: string): string {
   return messageId.replaceAll('-', '').slice(0, 10).toUpperCase();
 }
 
+function completedAnswerFingerprint(input: CompletedAnswerInput): string {
+  return createHash('sha256')
+    .update(JSON.stringify([
+      input.workspaceId,
+      input.threadId,
+      input.assistantMessageId,
+      input.userPrompt,
+      input.answer,
+      input.runId,
+    ]))
+    .digest('hex');
+}
+
 /**
  * Durable store for Evidence-to-Decision Intelligence.
  *
@@ -77,25 +118,27 @@ export class EvidenceDecisionStore {
     @Inject(ConsultingJudgmentGuardService) private readonly judgmentGuard: ConsultingJudgmentGuardService,
   ) {}
 
-  async recordCompletedAnswer(input: {
-    workspaceId: string;
-    threadId: string;
-    assistantMessageId: string;
-    userPrompt: string;
-    answer: string;
-    runId: string | null;
-  }): Promise<{ verifiedContradictions: ConsultingVerifiedContradiction[] }> {
-    const verificationStartedAt = new Date();
-    const verificationStartedMs = Date.now();
-    await this.assertThreadInWorkspace(input.workspaceId, input.threadId);
-    const judgmentGuard = this.judgmentGuard.evaluate({ query: input.userPrompt, hits: [], userFeedback: input.answer, now: new Date() });
-    if (judgmentGuard.required) await this.persistJudgmentGuardRun(input, judgmentGuard);
+  async recordCompletedAnswer(input: CompletedAnswerInput): Promise<{ verifiedContradictions: ConsultingVerifiedContradiction[] }> {
+    const prepared = await this.prepareCompletedAnswer(input);
+    return this.persistCompletedAnswer(input, prepared, this.db);
+  }
 
-    const exactnessRun = this.exactness.evaluateAnswer({ query: input.userPrompt, answer: input.answer });
-    if (exactnessRun.required) await this.persistExactnessRun(input, exactnessRun);
-
+  /** Reads evidence and performs optional remote verification without holding a DB transaction. */
+  async prepareCompletedAnswer(input: CompletedAnswerInput): Promise<PreparedCompletedAnswer> {
+    const startedAt = new Date();
+    const startedMs = Date.now();
+    await this.assertThreadInWorkspace(input.workspaceId, input.threadId, this.db);
     const claimTexts = splitClaims(input.answer);
-    if (claimTexts.length === 0) return { verifiedContradictions: [] };
+    if (claimTexts.length === 0) {
+      return {
+        fingerprint: completedAnswerFingerprint(input),
+        startedAt,
+        durationMs: Date.now() - startedMs,
+        evidenceRows: [],
+        evidence: [],
+        verification: null,
+      };
+    }
 
     const evidenceRows = await this.db
       .select({
@@ -126,6 +169,34 @@ export class EvidenceDecisionStore {
 
     const highRiskClaimIds = claims.filter((claim) => (claim.decisionImpact ?? 0) >= 0.8).map((claim) => claim.id);
     const verification = await this.verifier.verify({ claims, evidence, highRiskClaimIds });
+    return {
+      fingerprint: completedAnswerFingerprint(input),
+      startedAt,
+      durationMs: Date.now() - startedMs,
+      evidenceRows,
+      evidence,
+      verification,
+    };
+  }
+
+  /** Persists a prepared verification inside the caller's short settlement transaction. */
+  async persistCompletedAnswer(
+    input: CompletedAnswerInput,
+    prepared: PreparedCompletedAnswer,
+    db: Db,
+  ): Promise<{ verifiedContradictions: ConsultingVerifiedContradiction[] }> {
+    if (prepared.fingerprint !== completedAnswerFingerprint(input)) {
+      throw new Error('prepared completed-answer verification does not match input');
+    }
+    await this.assertThreadInWorkspace(input.workspaceId, input.threadId, db);
+    const judgmentGuard = this.judgmentGuard.evaluate({ query: input.userPrompt, hits: [], userFeedback: input.answer, now: new Date() });
+    if (judgmentGuard.required) await this.persistJudgmentGuardRun(input, judgmentGuard, db);
+
+    const exactnessRun = this.exactness.evaluateAnswer({ query: input.userPrompt, answer: input.answer });
+    if (exactnessRun.required) await this.persistExactnessRun(input, exactnessRun, db);
+    if (!prepared.verification) return { verifiedContradictions: [] };
+
+    const { evidenceRows, evidence, verification } = prepared;
     const lattice = verification.lattice;
     const evidenceById = new Map(evidenceRows.map((row) => [row.id, row]));
     const verifiedContradictions: ConsultingVerifiedContradiction[] = [];
@@ -147,7 +218,7 @@ export class EvidenceDecisionStore {
       });
     }
     if (lattice.verdicts.length > 0) {
-      await this.db.insert(schema.claimVerificationVerdicts).values(
+      await db.insert(schema.claimVerificationVerdicts).values(
         lattice.verdicts.map((verdict) => {
           const verdictEvidenceId = verdict.verdict === 'mixed' ? (verdict.counterEvidenceId ?? null) : verdict.evidenceId;
           return {
@@ -172,7 +243,7 @@ export class EvidenceDecisionStore {
     const provenanceGraph = this.engine.buildProvenanceGraph({ verdicts: lattice.verdicts, evidence, asOf: new Date() });
     if (provenanceGraph.edges.length > 0) {
       try {
-        await this.db.insert(schema.provenanceGraphEdges).values(
+        await db.insert(schema.provenanceGraphEdges).values(
           provenanceGraph.edges.map((edge) => ({
             workspaceId: input.workspaceId,
             threadId: input.threadId,
@@ -219,18 +290,18 @@ export class EvidenceDecisionStore {
       ],
       ratings,
     });
-    const [scorecardRow] = await this.db
+    const [scorecardRow] = await db
       .insert(schema.decisionScorecards)
       .values({
         workspaceId: input.workspaceId,
         threadId: input.threadId,
         question: scorecard.question,
         recommendedAlternativeId: scorecard.recommendedAlternativeId,
-        scoreSummary: { runId: input.runId, source: 'post_answer_verification_v1', verificationMetrics: verification.metrics, verifier: verification.verifier, verifierGate },
+        scoreSummary: { runId: input.runId, source: 'post_answer_verification_v2', verificationMetrics: verification.metrics, verifier: verification.verifier, verifierGate },
       })
       .returning({ id: schema.decisionScorecards.id });
     if (scorecardRow) {
-      await this.db.insert(schema.decisionScorecardItems).values(
+      await db.insert(schema.decisionScorecardItems).values(
         scorecard.ranked.map((item) => ({
           workspaceId: input.workspaceId,
           scorecardId: scorecardRow.id,
@@ -243,6 +314,7 @@ export class EvidenceDecisionStore {
           criteriaBreakdown: item.criteriaBreakdown,
         })),
       );
+
     }
 
     const reviewInputs: ReviewInput[] = [
@@ -260,7 +332,7 @@ export class EvidenceDecisionStore {
     ];
     const reviewQueue = this.engine.prioritizeReviewQueue({ items: reviewInputs });
     if (reviewQueue.length > 0) {
-      await this.db.insert(schema.activeReviewItems).values(
+      await db.insert(schema.activeReviewItems).values(
         reviewQueue.map((item) => ({
           workspaceId: input.workspaceId,
           threadId: input.threadId,
@@ -284,9 +356,9 @@ export class EvidenceDecisionStore {
       verdictSummary: lattice.summary,
       verifierGate,
       verificationMetrics: verification.metrics,
-      startedAt: verificationStartedAt,
-      durationMs: Date.now() - verificationStartedMs,
-    });
+      startedAt: prepared.startedAt,
+      durationMs: prepared.durationMs,
+    }, db);
     return { verifiedContradictions };
   }
 
@@ -305,7 +377,7 @@ export class EvidenceDecisionStore {
     verificationMetrics: unknown;
     startedAt: Date;
     durationMs: number;
-  }): Promise<void> {
+  }, db: Db = this.db): Promise<void> {
     const { input, exactnessRun, verdictSummary, verifierGate } = args;
     const traceId = `post-answer:${input.runId ?? input.assistantMessageId}`;
     const claimCount = Math.max(1, verdictSummary.claimCount);
@@ -327,7 +399,7 @@ export class EvidenceDecisionStore {
       verificationMetrics: args.verificationMetrics,
     };
     try {
-      await this.db.insert(schema.traceSpans).values({
+      await db.insert(schema.traceSpans).values({
         workspaceId: input.workspaceId,
         threadId: input.threadId,
         traceId,
@@ -345,7 +417,7 @@ export class EvidenceDecisionStore {
         },
         metadata: sharedMetrics,
       });
-      const [evalCase] = await this.db
+      const [evalCase] = await db
         .insert(schema.evalCases)
         .values({
           workspaceId: input.workspaceId,
@@ -362,7 +434,7 @@ export class EvidenceDecisionStore {
           metadata: sharedMetrics,
         })
         .returning({ id: schema.evalCases.id });
-      const [evalRun] = await this.db
+      const [evalRun] = await db
         .insert(schema.evalRuns)
         .values({
           workspaceId: input.workspaceId,
@@ -374,7 +446,7 @@ export class EvidenceDecisionStore {
         })
         .returning({ id: schema.evalRuns.id });
       if (!evalCase || !evalRun) return;
-      await this.db.insert(schema.evalScores).values([
+      await db.insert(schema.evalScores).values([
         {
           workspaceId: input.workspaceId,
           evalRunId: evalRun.id,
@@ -432,9 +504,9 @@ export class EvidenceDecisionStore {
     assistantMessageId: string;
     userPrompt: string;
     answer: string;
-  }, run: ExactnessGateResult): Promise<void> {
+  }, run: ExactnessGateResult, db: Db = this.db): Promise<void> {
     try {
-      await this.db.insert(schema.exactnessRuns).values({
+      await db.insert(schema.exactnessRuns).values({
         workspaceId: input.workspaceId,
         threadId: input.threadId,
         assistantMessageId: input.assistantMessageId,
@@ -457,9 +529,9 @@ export class EvidenceDecisionStore {
     assistantMessageId: string;
     userPrompt: string;
     answer: string;
-  }, run: ConsultingJudgmentGuardResult): Promise<void> {
+  }, run: ConsultingJudgmentGuardResult, db: Db = this.db): Promise<void> {
     try {
-      await this.db.insert(schema.judgmentGuardRuns).values({
+      await db.insert(schema.judgmentGuardRuns).values({
         workspaceId: input.workspaceId,
         threadId: input.threadId,
         assistantMessageId: input.assistantMessageId,
@@ -478,8 +550,8 @@ export class EvidenceDecisionStore {
     }
   }
 
-  private async assertThreadInWorkspace(workspaceId: string, threadId: string): Promise<void> {
-    const [thread] = await this.db
+  private async assertThreadInWorkspace(workspaceId: string, threadId: string, db: Db = this.db): Promise<void> {
+    const [thread] = await db
       .select({ id: schema.threads.id })
       .from(schema.threads)
       .where(and(
@@ -724,6 +796,71 @@ export class EvidenceDecisionStore {
     };
   }
 
+  async summaryV2(threadId: string): Promise<EvidenceDecisionSummaryV2Response> {
+    const base = await this.summary(threadId);
+    let judgmentRows: Array<{
+      id: string;
+      status: string;
+      required: boolean;
+      issueSummary: string;
+      issues: unknown;
+      promptRules: unknown;
+      currentTimeIso: string;
+      userCorrectionDetected: boolean;
+      createdAt: Date;
+    }> = [];
+    try {
+      judgmentRows = await this.db
+        .select({
+          id: schema.judgmentGuardRuns.id,
+          status: schema.judgmentGuardRuns.status,
+          required: schema.judgmentGuardRuns.required,
+          issueSummary: schema.judgmentGuardRuns.issueSummary,
+          issues: schema.judgmentGuardRuns.issues,
+          promptRules: schema.judgmentGuardRuns.promptRules,
+          currentTimeIso: schema.judgmentGuardRuns.currentTimeIso,
+          userCorrectionDetected: schema.judgmentGuardRuns.userCorrectionDetected,
+          createdAt: schema.judgmentGuardRuns.createdAt,
+        })
+        .from(schema.judgmentGuardRuns)
+        .where(and(eq(schema.judgmentGuardRuns.threadId, threadId), isNull(schema.judgmentGuardRuns.deletedAt)))
+        .orderBy(desc(schema.judgmentGuardRuns.createdAt))
+        .limit(50);
+    } catch (error) {
+      if (!isMissingRelationError(error)) throw error;
+    }
+    const latestJudgment = judgmentRows[0];
+    const judgmentIssues = judgmentIssuesForResponse(latestJudgment?.issues);
+    const gate = this.gatePolicy.evaluate({
+      mode: 'report_decision',
+      ...(base.exactness.latestRun ? { exactnessStatus: base.exactness.latestRun.status } : {}),
+      citationIssueCount: 0,
+      verdicts: base.latestVerdicts.map(verdictRowForGate),
+      judgmentIssues,
+    });
+    return {
+      ...base,
+      postAnswerVerification: { ...base.postAnswerVerification, gate },
+      judgment: {
+        latestRun: latestJudgment
+          ? {
+              id: latestJudgment.id,
+              status: judgmentStatusForResponse(latestJudgment.status),
+              required: latestJudgment.required,
+              issueSummary: latestJudgment.issueSummary,
+              issues: judgmentIssues,
+              promptRules: stringArray(latestJudgment.promptRules),
+              currentTimeIso: latestJudgment.currentTimeIso,
+              userCorrectionDetected: latestJudgment.userCorrectionDetected,
+              createdAt: iso(latestJudgment.createdAt),
+            }
+          : null,
+        blockedCount: judgmentRows.filter((row) => row.status === 'blocked').length,
+      },
+    };
+  }
+
+
   async reviewQueue(threadId: string, limit = 30, filter: ReviewQueueFilter = 'all'): Promise<ReviewQueueResponse> {
     const predicates = [
       eq(schema.activeReviewItems.threadId, threadId),
@@ -934,6 +1071,23 @@ function exactnessKind(value: unknown): ExactnessCheckForResponse['kind'] {
 function exactnessCheckStatus(value: unknown): ExactnessCheckForResponse['status'] {
   if (value === 'mismatch' || value === 'invalid_input' || value === 'passed') return value;
   return 'invalid_input';
+}
+
+function judgmentIssuesForResponse(raw: unknown): ConsultingJudgmentGuardResult['issues'] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item) => {
+    const parsed = JudgmentGuardIssueSchema.safeParse(item);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+function judgmentStatusForResponse(value: string): NonNullable<EvidenceDecisionSummaryV2Response['judgment']['latestRun']>['status'] {
+  if (value === 'blocked' || value === 'warnings' || value === 'skipped') return value;
+  return 'skipped';
+}
+
+function stringArray(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.filter((item): item is string => typeof item === 'string') : [];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

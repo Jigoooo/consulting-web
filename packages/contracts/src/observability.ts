@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { RetrievalFailureTypeSchema } from './collab.js';
 
 const UuidSchema = z.string().uuid();
 const JsonRecordSchema = z.record(z.string(), z.unknown());
@@ -68,12 +69,39 @@ export const EvalRunItemSchema = z
   .strict();
 export type EvalRunItem = z.infer<typeof EvalRunItemSchema>;
 
+export const RagEvalMetricsSummarySchema = z
+  .object({
+    runKind: z.literal('retrieval_human_labels'),
+    scope: z.enum(['workspace', 'thread']),
+    status: z.enum(['ready', 'partial_labels', 'insufficient_labels']),
+    cohortLimit: z.number().int().positive().nullable(),
+    cohortTruncated: z.boolean(),
+    totalRuns: z.number().int().nonnegative(),
+    labeledRuns: z.number().int().nonnegative(),
+    labeledRunCoverage: z.number().min(0).max(1),
+    labeledHits: z.number().int().nonnegative(),
+    relevantHits: z.number().int().nonnegative(),
+    precisionAtK: z.record(z.string(), z.number().min(0).max(1)),
+    precisionEvaluatedRunsAtK: z.record(z.string(), z.number().int().nonnegative()),
+    precisionCoverageAtK: z.record(z.string(), z.number().min(0).max(1)),
+    mrr: z.number().min(0).max(1),
+    hitRateAtK: z.record(z.string(), z.number().min(0).max(1)),
+    failureBreakdown: z.array(z.object({
+      failureType: RetrievalFailureTypeSchema,
+      count: z.number().int().positive(),
+    }).strict()),
+    failureFixtureCount: z.number().int().nonnegative(),
+  })
+  .strict();
+export type RagEvalMetricsSummary = z.infer<typeof RagEvalMetricsSummarySchema>;
+
 export const ObservabilityTraceListResponseSchema = z
   .object({
     traces: z.array(TraceSummarySchema),
     spans: z.array(TraceSpanItemSchema),
     evalCases: z.array(EvalCaseItemSchema),
     evalRuns: z.array(EvalRunItemSchema),
+    ragMetrics: RagEvalMetricsSummarySchema.nullable(),
     nextCursor: z.string().nullable(),
   })
   .strict();

@@ -6,13 +6,14 @@ import { Pool } from 'pg';
 import { SignUpUseCase } from '../src/auth/sign-up.usecase.js';
 import { InvitationUseCase } from '../src/organization/invitation.usecase.js';
 import { ScryptPasswordHasher } from '../src/auth/password.js';
+import { AuthSessionUseCase } from '../src/auth/auth-session.usecase.js';
 
 /**
  * Integration tests against the real dev DB (5434). Requires:
  *   docker compose -f docker-compose.local.yml up -d  &&  migrate
  * Skipped automatically if DATABASE_URL is not set.
  */
-const url = process.env.DATABASE_URL;
+const url = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const d = url ? describe : describe.skip;
 
 let pool: Pool;
@@ -97,6 +98,86 @@ d('auth + invitation integration (ADR-0001/0009)', () => {
     const loser = [a, b].find((r) => !r.ok);
     // the concurrent loser must be a clean CONFLICT (409), never INTERNAL (500)
     expect(loser && !loser.ok && loser.error.code).toBe('CONFLICT');
+  });
+
+  it('allows exactly one successor when the same refresh token is rotated concurrently', async () => {
+    const hasher = new ScryptPasswordHasher();
+    const signup = new SignUpUseCase(db, hasher);
+    const email = `refresh-race-${crypto.randomUUID()}@example.com`;
+    const created = await signup.execute({ email, password: 'supersecret1', displayName: 'Refresh Race' });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    createdUsers.push(created.value.userId);
+    createdWorkspaces.push(created.value.personalWorkspaceId);
+
+    const auth = new AuthSessionUseCase(db, {
+      JWT_ACCESS_SECRET: 'access-secret-for-refresh-race',
+      JWT_REFRESH_SECRET: 'refresh-secret-for-refresh-race',
+    } as any, hasher);
+    const login = await auth.login({ email, password: 'supersecret1' });
+    expect(login.ok).toBe(true);
+    if (!login.ok) return;
+
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION test_auth_refresh_delete_delay() RETURNS trigger AS $$
+      BEGIN
+        PERFORM pg_sleep(0.15);
+        RETURN OLD;
+      END;
+      $$ LANGUAGE plpgsql;
+      DROP TRIGGER IF EXISTS test_auth_refresh_delete_delay ON sessions;
+      CREATE TRIGGER test_auth_refresh_delete_delay
+        BEFORE DELETE ON sessions
+        FOR EACH ROW EXECUTE FUNCTION test_auth_refresh_delete_delay();
+    `);
+    let first: Awaited<ReturnType<AuthSessionUseCase['refresh']>>;
+    let second: Awaited<ReturnType<AuthSessionUseCase['refresh']>>;
+    try {
+      [first, second] = await Promise.all([
+        auth.refresh(login.value.tokens.refreshToken),
+        auth.refresh(login.value.tokens.refreshToken),
+      ]);
+    } finally {
+      await pool.query(`
+        DROP TRIGGER IF EXISTS test_auth_refresh_delete_delay ON sessions;
+        DROP FUNCTION IF EXISTS test_auth_refresh_delete_delay();
+      `);
+    }
+    expect([first, second].filter((result) => result.ok)).toHaveLength(1);
+    const loser = [first, second].find((result) => !result.ok);
+    expect(loser && !loser.ok && loser.error.code).toBe('UNAUTHENTICATED');
+
+    const sessions = await db.select().from(schema.sessions).where(eq(schema.sessions.userId, created.value.userId));
+    expect(sessions).toHaveLength(1);
+  });
+
+  it('explicit logout revokes only the presented refresh session', async () => {
+    const hasher = new ScryptPasswordHasher();
+    const signup = new SignUpUseCase(db, hasher);
+    const email = `logout-${crypto.randomUUID()}@example.com`;
+    const created = await signup.execute({ email, password: 'supersecret1', displayName: 'Logout Test' });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    createdUsers.push(created.value.userId);
+    createdWorkspaces.push(created.value.personalWorkspaceId);
+
+    const auth = new AuthSessionUseCase(db, {
+      JWT_ACCESS_SECRET: 'access-secret-for-logout-test',
+      JWT_REFRESH_SECRET: 'refresh-secret-for-logout-test',
+    } as any, hasher);
+    const first = await auth.login({ email, password: 'supersecret1' });
+    const sibling = await auth.login({ email, password: 'supersecret1' });
+    expect(first.ok && sibling.ok).toBe(true);
+    if (!first.ok || !sibling.ok) return;
+
+    const revoked = await auth.logout(first.value.tokens.refreshToken);
+    expect(revoked).toEqual({ revoked: true });
+    expect(await auth.logout(first.value.tokens.refreshToken)).toEqual({ revoked: false });
+
+    const replay = await auth.refresh(first.value.tokens.refreshToken);
+    expect(replay.ok).toBe(false);
+    const siblingRefresh = await auth.refresh(sibling.value.tokens.refreshToken);
+    expect(siblingRefresh.ok).toBe(true);
   });
 
   it('invitation: create → accept creates membership; reuse rejected', async () => {

@@ -42,8 +42,12 @@ export class ObservabilityController {
       }
     }
     const limit = parseLimit(limitRaw);
+    const allowedThreadIds = threadId
+      ? [threadId]
+      : await this.access.readableThreadIds(userId, workspaceId);
     return parseResponse(ObservabilityTraceListResponseSchema, await this.store.listTraces({
       workspaceId,
+      allowedThreadIds,
       ...(threadId ? { threadId } : {}),
       ...(traceId ? { traceId } : {}),
       ...(limit !== undefined ? { limit } : {}),

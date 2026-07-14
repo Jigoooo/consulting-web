@@ -69,6 +69,9 @@ export const CreateChannelRequestSchema = z.object({
 }).strict();
 export type CreateChannelRequest = z.infer<typeof CreateChannelRequestSchema>;
 
+export const CreateChannelBundleRequestSchema = CreateChannelRequestSchema;
+export type CreateChannelBundleRequest = z.infer<typeof CreateChannelBundleRequestSchema>;
+
 export const CreateTopicRequestSchema = z.object({
   channelId: UuidSchema,
   name: NameSchema,
@@ -107,6 +110,12 @@ export const CreateWorkspaceResponseSchema = IdResponseSchema;
 export type CreateWorkspaceResponse = z.infer<typeof CreateWorkspaceResponseSchema>;
 export const CreateChannelResponseSchema = IdResponseSchema;
 export type CreateChannelResponse = z.infer<typeof CreateChannelResponseSchema>;
+export const CreateChannelBundleResponseSchema = z.object({
+  channelId: UuidSchema,
+  topicId: UuidSchema,
+  threadId: UuidSchema,
+}).strict();
+export type CreateChannelBundleResponse = z.infer<typeof CreateChannelBundleResponseSchema>;
 export const CreateTopicResponseSchema = IdResponseSchema;
 export type CreateTopicResponse = z.infer<typeof CreateTopicResponseSchema>;
 export const CreateThreadResponseSchema = IdResponseSchema;
@@ -116,6 +125,30 @@ export type CreateThreadResponse = z.infer<typeof CreateThreadResponseSchema>;
 // Read contracts (Phase 1-M). Strict responses; no secrets, no internal fields
 // (memoryTopicId, tokenHash, version counters stay server-side).
 // ---------------------------------------------------------------------------
+
+export const EffectivePermissionSchema = z.enum([
+  'workspace.read',
+  'workspace.manage',
+  'workspace.invite',
+  'project.create',
+  'project.read',
+  'project.update',
+  'channel.create',
+  'channel.read',
+  'channel.update',
+  'topic.create',
+  'topic.connect_memory',
+  'message.send',
+  'message.read',
+  'artifact.create',
+  'artifact.render',
+  'permission.read',
+  'permission.manage',
+  'bot.install',
+  'bot.configure',
+  'bot.invoke',
+]);
+export type EffectivePermission = z.infer<typeof EffectivePermissionSchema>;
 
 export const WorkspaceSummarySchema = z
   .object({
@@ -153,6 +186,7 @@ export const TopicNodeSchema = z
     defaultThreadId: UuidSchema.nullable().optional(),
     /** Lightweight per-topic message density used only for smooth initial channel placeholders. */
     messageStats: TopicMessageStatsSchema.optional(),
+    permissions: z.array(EffectivePermissionSchema).optional(),
   })
   .strict();
 export type TopicNode = z.infer<typeof TopicNodeSchema>;
@@ -163,6 +197,7 @@ export const ChannelNodeSchema = z
     name: NameSchema,
     slug: z.string(),
     topics: z.array(TopicNodeSchema),
+    permissions: z.array(EffectivePermissionSchema).optional(),
   })
   .strict();
 export type ChannelNode = z.infer<typeof ChannelNodeSchema>;
@@ -173,6 +208,7 @@ export const ProjectNodeSchema = z
     name: NameSchema,
     slug: z.string(),
     channels: z.array(ChannelNodeSchema),
+    permissions: z.array(EffectivePermissionSchema).optional(),
   })
   .strict();
 export type ProjectNode = z.infer<typeof ProjectNodeSchema>;
@@ -181,6 +217,7 @@ export const WorkspaceTreeResponseSchema = z
   .object({
     workspaceId: UuidSchema,
     projects: z.array(ProjectNodeSchema),
+    permissions: z.array(EffectivePermissionSchema).optional(),
   })
   .strict();
 export type WorkspaceTreeResponse = z.infer<typeof WorkspaceTreeResponseSchema>;
@@ -283,6 +320,7 @@ export const ArchivedScopeItemSchema = z
     /** Human breadcrumb excluding the archived item itself, e.g. project → channel. */
     parentPath: z.array(z.string().min(1).max(200)),
     archivedAt: z.string().datetime({ offset: true }),
+    canRestore: z.boolean().optional(),
   })
   .strict();
 export type ArchivedScopeItem = z.infer<typeof ArchivedScopeItemSchema>;

@@ -14,7 +14,10 @@ function fakeDb(captured: unknown[], threadRows: Array<{ id: string }> = [{ id: 
     insert: (table: unknown) => ({
       values: (value: unknown) => {
         captured.push({ table, value });
-        return { returning: async () => [{ id: 'row-1' }] };
+        return {
+          returning: async () => [{ id: 'row-1' }],
+          onConflictDoNothing: async () => [],
+        };
       },
     }),
   };

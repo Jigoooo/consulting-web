@@ -61,6 +61,15 @@ describe('evidence tab motion policy', () => {
     expect(css).toMatch(/prefers-reduced-motion:\s*reduce/);
   });
 
+  it('does not zoom or fully disappear the panel during tab changes', () => {
+    const modeMotion = css.slice(
+      css.indexOf('@keyframes cwEvidencePanelSlideForward'),
+      css.indexOf('.decisionStack'),
+    );
+    expect(modeMotion).not.toMatch(/scale\(/);
+    expect(modeMotion).not.toMatch(/opacity:\s*0/);
+  });
+
   it('uses a transform-driven thumb for the channel/project scope switch', () => {
     expect(cssRule('.scopeSwitch::before')).toMatch(/transform:\s*translateX/);
     expect(cssRule('.scopeSwitch::before')).toMatch(/transition:\s*transform/);

@@ -90,7 +90,8 @@
 .threadSearchBtn {
   border: 0;
   border-radius: 999px;
-  padding: 4px 8px;
+  min-height: 24px;
+  padding: 4px 10px;
   background: var(--bg-warm);
   color: var(--text-secondary);
   font: inherit;
@@ -241,7 +242,7 @@
   position: absolute;
   inset: 0 auto 0 0;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--accent), var(--accent-hi));
+  background: var(--accent);
 }
 .runPopReasoning {
   font-size: 11.5px;
@@ -357,7 +358,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text-primary);
-  font-weight: 750;
+  font-weight: var(--fw-strong);
 }
 .runSep {
   color: var(--border-strong);
@@ -367,18 +368,18 @@
   height: 7px;
   border-radius: 999px;
   background: var(--green);
-  box-shadow: 0 0 0 3px rgba(26, 174, 57, 0.1);
+  box-shadow: none;
 }
 .runStatusRunning .runStateDot {
   animation: pulse 1.4s infinite;
 }
 .runStatusDone .runStateDot {
   background: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: none;
 }
 .runStatusError .runStateDot {
   background: var(--red);
-  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1);
+  box-shadow: none;
 }
 .runMeter {
   position: relative;
@@ -394,7 +395,7 @@
   inset: 0 auto 0 0;
   max-width: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--accent), var(--accent-hi));
+  background: var(--accent);
   transition: width 220ms var(--ease-out);
 }
 .pulse {
@@ -465,11 +466,11 @@
   color: #fff;
 }
 .avatarUser {
-  background: linear-gradient(135deg, #8b8f98, #6b6f78);
+  background: #676c74;
 }
 .avatarAi {
-  background: linear-gradient(135deg, var(--accent), var(--accent-hi));
-  box-shadow: 0 3px 10px -3px var(--accent-glow);
+  background: var(--accent);
+  box-shadow: none;
 }
 .body {
   flex: 1;
@@ -538,7 +539,6 @@
 .historyMoreBtn:hover:not(:disabled) {
   background: var(--bg-warm);
   color: var(--text-primary);
-  transform: translateY(-1px);
 }
 .scrollProbe {
   align-self: center;
@@ -721,10 +721,11 @@
   display: flex;
   flex-direction: column;
   gap: 7px;
-  padding: 10px;
-  border: 1px solid var(--border-hair);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--surface-card) 92%, var(--bg-warm));
+  padding: 10px 0;
+  border: 0;
+  border-top: 1px solid var(--border-hair);
+  border-radius: 0;
+  background: transparent;
 }
 .verificationInlineHead {
   display: flex;
@@ -740,7 +741,7 @@
   justify-content: center;
   border: 1px solid var(--border-hair);
   border-radius: 999px;
-  font-weight: 750;
+  font-weight: var(--fw-strong);
   white-space: nowrap;
 }
 .verificationGateBadge {
@@ -804,9 +805,10 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
   gap: 7px 8px;
-  padding: 8px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--bg-warm) 70%, transparent);
+  padding: 8px 0 8px 10px;
+  border-left: 2px solid var(--border-whisper);
+  border-radius: 0;
+  background: transparent;
 }
 .verificationClaimText {
   min-width: 0;
@@ -873,10 +875,10 @@
   margin-left: 4px;
 }
 .msgActionBtn {
-  width: 20px;
-  height: 20px;
+  width: 28px;
+  height: 28px;
   border: none;
-  border-radius: 5px;
+  border-radius: 6px;
   background: transparent;
   color: var(--text-muted);
   font-size: 12px;
@@ -983,6 +985,7 @@
 }
 .fileChipMain {
   min-width: 0;
+  min-height: 24px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -999,8 +1002,8 @@
 .fileChipRemove {
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   border-radius: 999px;
   color: var(--text-muted);
   flex: none;
@@ -1043,7 +1046,7 @@
   font-family: var(--font-mono);
   color: var(--accent);
   font-size: 12px;
-  font-weight: 750;
+  font-weight: var(--fw-strong);
 }
 .slashTitle {
   color: var(--text-primary);
@@ -1147,12 +1150,12 @@
   gap: 6px;
 }
 .btnPrimary {
-  background: linear-gradient(135deg, var(--accent), #6b74e0);
-  color: #fff;
-  box-shadow: 0 3px 10px -3px var(--accent-glow);
+  background: var(--accent);
+  color: var(--primary-foreground);
+  box-shadow: none;
 }
 .btnPrimary:hover {
-  background: linear-gradient(135deg, #6b74e0, var(--accent-hi));
+  background: var(--accent-hi);
 }
 .btnGhost {
   background: transparent;
@@ -1190,13 +1193,13 @@
   height: 8px;
   border-radius: 9999px;
   background: var(--accent);
-  box-shadow: 0 0 0 4px var(--accent-soft);
+  box-shadow: none;
   flex: none;
 }
 .flowLabel {
   color: var(--text-primary);
   font-size: 12px;
-  font-weight: 760;
+  font-weight: var(--fw-strong);
   letter-spacing: -0.01em;
 }
 .flowDetail,
@@ -1235,9 +1238,10 @@
 .approvalCard {
   margin-bottom: 8px;
   border: 1px solid color-mix(in srgb, var(--danger, var(--accent)) 28%, var(--border-whisper));
-  border-radius: 16px;
+  border-left: 3px solid var(--danger, var(--accent));
+  border-radius: var(--radius-card);
   background: var(--surface-card);
-  box-shadow: var(--shadow-pop);
+  box-shadow: none;
   padding: 12px;
 }
 .approvalHead {
@@ -1249,7 +1253,7 @@
 .approvalHead strong {
   display: block;
   font-size: 13px;
-  font-weight: 760;
+  font-weight: var(--fw-strong);
 }
 .approvalHead span {
   display: block;
@@ -1312,7 +1316,7 @@
   margin-top: 4px;
   color: var(--text-primary);
   font-size: 18px;
-  font-weight: 780;
+  font-weight: var(--fw-display);
   letter-spacing: -0.02em;
   word-break: break-word;
 }
@@ -1402,6 +1406,33 @@
 }
 
 @media (max-width: 720px) {
+  .head {
+    min-height: 0;
+    padding: 10px 10px 10px 50px;
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .headTitleBlock {
+    width: 100%;
+  }
+  .right {
+    width: 100%;
+    margin-left: 0;
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .threadSearch {
+    min-width: 0;
+    flex: 1 1 220px;
+  }
+  .runStatus {
+    max-width: 100%;
+  }
+  .stickyDate {
+    display: none;
+  }
   .quickControls,
   .flowStrip {
     align-items: stretch;

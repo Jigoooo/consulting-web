@@ -65,30 +65,26 @@
 }
 .modePanel {
   min-height: 0;
-  animation: cwEvidencePanelSlideForward 220ms cubic-bezier(0.22, 1, 0.36, 1);
-  will-change: transform, opacity;
+  animation: cwEvidencePanelSlideForward 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
 }
 .modePanel[data-direction='back'] {
   animation-name: cwEvidencePanelSlideBack;
 }
 @keyframes cwEvidencePanelSlideForward {
   from {
-    opacity: 0;
-    transform: translateX(12px) scale(0.992);
+    transform: translateX(8px);
   }
   to {
-    opacity: 1;
-    transform: translateX(0) scale(1);
+    transform: translateX(0);
   }
 }
 @keyframes cwEvidencePanelSlideBack {
   from {
-    opacity: 0;
-    transform: translateX(-12px) scale(0.992);
+    transform: translateX(-8px);
   }
   to {
-    opacity: 1;
-    transform: translateX(0) scale(1);
+    transform: translateX(0);
   }
 }
 .decisionStack {
@@ -98,23 +94,21 @@
   padding-top: 4px;
 }
 .gateCard {
-  padding: 10px;
-  border: 1px solid var(--border-hair);
-  border-radius: 12px;
-  background: var(--surface-card);
-  box-shadow: var(--shadow-ring);
+  padding: 10px 10px 10px 12px;
+  border: 0;
+  border-left: 3px solid var(--border-whisper);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 .gateCard[data-gate='good'] {
-  border-color: color-mix(in srgb, var(--semantic-success) 26%, var(--border-hair));
-  background: color-mix(in srgb, var(--semantic-success) 7%, var(--surface-card));
+  border-left-color: var(--semantic-success);
 }
 .gateCard[data-gate='warn'] {
-  border-color: color-mix(in srgb, var(--semantic-warning) 34%, var(--border-hair));
-  background: color-mix(in srgb, var(--semantic-warning) 8%, var(--surface-card));
+  border-left-color: var(--semantic-warning);
 }
 .gateCard[data-gate='bad'] {
-  border-color: color-mix(in srgb, var(--semantic-danger) 34%, var(--border-hair));
-  background: color-mix(in srgb, var(--semantic-danger) 7%, var(--surface-card));
+  border-left-color: var(--semantic-danger);
 }
 .gateTop {
   display: flex;
@@ -125,15 +119,15 @@
 .gateLabel {
   color: var(--text-primary);
   font-size: 12px;
-  font-weight: 850;
+  font-weight: var(--fw-strong);
 }
 .gateDecision {
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-warm);
   color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: 10px;
-  font-weight: 800;
+  font-weight: var(--fw-strong);
   padding: 2px 6px;
 }
 .gateDetail,
@@ -155,13 +149,14 @@
 .scoreRow,
 .reviewRow,
 .verdictRow {
-  border: 1px solid var(--border-hair);
-  border-radius: 11px;
-  background: var(--surface-card);
-  box-shadow: var(--shadow-ring);
+  border: 0;
+  border-top: 1px solid var(--border-hair);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 .metric {
-  padding: 10px;
+  padding: 10px 2px;
 }
 .metric b {
   display: block;
@@ -183,7 +178,7 @@
   margin-top: 4px;
   color: var(--text-muted);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: var(--fw-strong);
 }
 .verdictRow {
   display: grid;
@@ -193,11 +188,11 @@
 }
 .verdictBadge {
   align-self: start;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-warm);
   color: var(--text-secondary);
   font-size: 10px;
-  font-weight: 800;
+  font-weight: var(--fw-strong);
   padding: 2px 7px;
 }
 .verdictRow[data-verdict='supports'] .verdictBadge { color: var(--semantic-success); }
@@ -225,13 +220,14 @@
   gap: 8px;
 }
 .scorecardHead {
-  padding: 10px;
-  border: 1px solid var(--border-hair);
-  border-radius: 11px;
-  background: var(--bg-warm);
+  padding: 8px 2px;
+  border: 0;
+  border-bottom: 1px solid var(--border-hair);
+  border-radius: 0;
+  background: transparent;
   color: var(--text-secondary);
   font-size: 12px;
-  font-weight: 750;
+  font-weight: var(--fw-strong);
 }
 .scorecardHead b,
 .scoreTop b,
@@ -273,7 +269,7 @@
 .reviewTop span {
   color: var(--text-primary);
   font-size: 12px;
-  font-weight: 760;
+  font-weight: var(--fw-strong);
 }
 .scoreMeta,
 .reviewReasons {
@@ -294,14 +290,6 @@
   height: 100%;
   border-radius: inherit;
   background: var(--accent);
-}
-.reviewTitle {
-  margin-top: 6px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.55;
-  word-break: keep-all;
-  overflow-wrap: anywhere;
 }
 .reviewPromptActions,
 .reviewDecisionActions {
@@ -419,6 +407,29 @@
   font-size: 12px;
   color: var(--text-muted);
 }
+.errorState {
+  display: grid;
+  gap: 5px;
+  padding: 10px 10px 10px 12px;
+  border: 1px solid var(--border-hair);
+  border-left: 3px solid var(--semantic-danger);
+  border-radius: var(--radius-card);
+  background: var(--surface-panel);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.errorState[data-tone='warn'] {
+  border-left-color: var(--semantic-warning);
+}
+.errorState strong {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.errorState button {
+  justify-self: start;
+  margin-top: 2px;
+}
 .rows {
   display: flex;
   flex-direction: column;
@@ -500,11 +511,12 @@
 }
 .detail {
   margin: 8px 0 4px;
-  padding: 12px;
-  border: 1px solid var(--border-hair);
-  border-radius: 12px;
-  background: var(--surface-card);
-  box-shadow: var(--shadow-ring);
+  padding: 12px 2px;
+  border: 0;
+  border-top: 1px solid var(--border-hair);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 .detailHead {
   display: flex;
@@ -512,7 +524,7 @@
   justify-content: space-between;
   gap: 8px;
   font-size: 11px;
-  font-weight: 800;
+  font-weight: var(--fw-strong);
   color: var(--accent);
   margin-bottom: 6px;
 }
@@ -713,7 +725,7 @@
 .searchSectionLabel {
   padding: 8px 2px 2px;
   font-size: 10px;
-  font-weight: 800;
+  font-weight: var(--fw-strong);
   letter-spacing: 0.08em;
   color: var(--text-muted);
 }

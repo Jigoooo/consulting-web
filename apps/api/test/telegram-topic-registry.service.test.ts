@@ -7,18 +7,59 @@ import {
 
 describe('TelegramTopicRegistryService dry-run planner', () => {
   it('covers the Changwon Telegram forum threads with exact chat/thread bindings', () => {
-    expect(CHANGWON_TELEGRAM_TOPIC_REGISTRY.map((item) => item.telegramThreadId)).toEqual(['12', '524', '533', '356', '1']);
-    expect(CHANGWON_TELEGRAM_TOPIC_REGISTRY.map((item) => `${item.telegramChatId}:${item.telegramThreadId}`)).toEqual([
+    expect(CHANGWON_TELEGRAM_TOPIC_REGISTRY.map((item) => item.telegramThreadId)).toEqual([
+      '12',
+      '524',
+      '533',
+      '356',
+      '1060',
+      '1',
+    ]);
+    expect(CHANGWON_TELEGRAM_TOPIC_REGISTRY.map((item) => item.consultingTopicSlug)).toEqual([
+      'changwon-consulting',
+      'changwon-pay-system',
+      'changwon-tenure-promotion',
+      'changwon-agency-business',
+      'changwon-budget-standards',
+      'changwon-general-review',
+    ]);
+    expect(
+      CHANGWON_TELEGRAM_TOPIC_REGISTRY.every(
+        (item) => item.consultingTopicSlug !== 'changwon-org-mgmt-diagnosis',
+      ),
+    ).toBe(true);
+    expect(
+      CHANGWON_TELEGRAM_TOPIC_REGISTRY.map(
+        (item) => `${item.telegramChatId}:${item.telegramThreadId}`,
+      ),
+    ).toEqual([
       '-1004453868195:12',
       '-1004453868195:524',
       '-1004453868195:533',
       '-1004453868195:356',
+      '-1004453868195:1060',
       '-1004453868195:1',
     ]);
-    expect(CHANGWON_TELEGRAM_TOPIC_REGISTRY.find((item) => item.telegramThreadId === '524')?.profile.rules).toContain('보수');
-    expect(CHANGWON_TELEGRAM_TOPIC_REGISTRY.find((item) => item.telegramThreadId === '533')?.profile.rules).toContain('근속승진');
-    expect(CHANGWON_TELEGRAM_TOPIC_REGISTRY.find((item) => item.telegramThreadId === '356')?.profile.rules).toContain('대행사업');
-    expect(CHANGWON_TELEGRAM_TOPIC_REGISTRY.find((item) => item.telegramThreadId === '1')?.reviewRequired).toBe(true);
+    expect(
+      CHANGWON_TELEGRAM_TOPIC_REGISTRY.find((item) => item.telegramThreadId === '524')?.profile
+        .rules,
+    ).toContain('보수');
+    expect(
+      CHANGWON_TELEGRAM_TOPIC_REGISTRY.find((item) => item.telegramThreadId === '533')?.profile
+        .rules,
+    ).toContain('근속승진');
+    expect(
+      CHANGWON_TELEGRAM_TOPIC_REGISTRY.find((item) => item.telegramThreadId === '356')?.profile
+        .rules,
+    ).toContain('대행사업');
+    expect(
+      CHANGWON_TELEGRAM_TOPIC_REGISTRY.find((item) => item.telegramThreadId === '1060')?.profile
+        .rules,
+    ).toContain('예산편성기준');
+    expect(
+      CHANGWON_TELEGRAM_TOPIC_REGISTRY.find((item) => item.telegramThreadId === '1')
+        ?.reviewRequired,
+    ).toBe(true);
   });
 
   it('builds a read-only backfill plan without relying on NULL thread bindings', () => {
@@ -28,13 +69,27 @@ describe('TelegramTopicRegistryService dry-run planner', () => {
       workspaceId: 'workspace-1',
       telegramChannel: { id: 'channel-telegram', slug: 'telegram', name: '텔레그램' },
       existingTopics: [
-        { id: 'topic-existing', channelId: 'channel-telegram', slug: 'changwon-consulting', name: '창원-컨설팅', memoryTopicId: 'consulting:changwon-org-mgmt-diagnosis#telegram/changwon-consulting' },
+        {
+          id: 'topic-existing',
+          channelId: 'channel-telegram',
+          slug: 'changwon-consulting',
+          name: '창원-컨설팅',
+          memoryTopicId: 'consulting:changwon-org-mgmt-diagnosis#telegram/changwon-consulting',
+        },
       ],
-      existingThreads: [
-        { id: 'thread-existing', topicId: 'topic-existing', title: '창원-컨설팅' },
-      ],
+      existingThreads: [{ id: 'thread-existing', topicId: 'topic-existing', title: '창원-컨설팅' }],
       existingTelegramTopicLinks: [
-        { telegramChatId: '-1004453868195', telegramThreadId: '12', memoryTopicId: 'consulting:changwon-org-mgmt-diagnosis#telegram/changwon-consulting' },
+        {
+          workspaceId: 'workspace-1',
+          projectId: 'project-1',
+          channelId: 'channel-telegram',
+          webTopicId: 'topic-existing',
+          threadId: 'thread-existing',
+          telegramChatId: '-1004453868195',
+          telegramThreadId: '12',
+          consultingTopicSlug: 'changwon-consulting',
+          memoryTopicId: 'consulting:changwon-org-mgmt-diagnosis#telegram/changwon-consulting',
+        },
       ],
       existingTopicProfiles: [{ scopeType: 'topic', scopeId: 'topic-existing', source: 'manual' }],
       before: { webMessages: 249, telegramChunks: 112 },
@@ -42,12 +97,19 @@ describe('TelegramTopicRegistryService dry-run planner', () => {
 
     expect(plan.readOnly).toBe(true);
     expect(plan.before).toEqual({ webMessages: 249, telegramChunks: 112 });
-    expect(plan.plannedCreates).toEqual({ channels: 0, topics: 4, threads: 4, telegramTopicLinks: 4, topicProfiles: 4 });
+    expect(plan.plannedCreates).toEqual({
+      channels: 0,
+      topics: 5,
+      threads: 5,
+      telegramTopicLinks: 5,
+      topicProfiles: 5,
+    });
     expect(plan.exactBindingKeys).toEqual([
       '-1004453868195:12',
       '-1004453868195:524',
       '-1004453868195:533',
       '-1004453868195:356',
+      '-1004453868195:1060',
       '-1004453868195:1',
     ]);
     expect(plan.warnings).toContain('thread_1_review_required');
@@ -91,7 +153,8 @@ describe('TelegramTopicRegistryService dry-run planner', () => {
           memoryTopicId: 'consulting:changwon-org-mgmt-diagnosis#telegram/broad',
           webTopicSlug: 'changwon-consulting',
           webTopicName: '창원-컨설팅',
-          webTopicMemoryTopicId: 'consulting:changwon-org-mgmt-diagnosis#telegram/changwon-consulting',
+          webTopicMemoryTopicId:
+            'consulting:changwon-org-mgmt-diagnosis#telegram/changwon-consulting',
           threadTitle: '창원-컨설팅',
           status: 'active',
         },
@@ -111,12 +174,14 @@ describe('TelegramTopicRegistryService dry-run planner', () => {
     });
 
     expect(broken.status).toBe('blocked');
-    expect(broken.blockers).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: 'BROAD_OR_NULL_THREAD_BINDING' }),
-      expect.objectContaining({ code: 'MEMORY_TOPIC_MISMATCH', key: '-1004453868195:12' }),
-      expect.objectContaining({ code: 'WEB_TOPIC_MISMATCH', key: '-1004453868195:12' }),
-      expect.objectContaining({ code: 'MISSING_TELEGRAM_TOPIC_LINK', key: '-1004453868195:524' }),
-      expect.objectContaining({ code: 'MISSING_TELEGRAM_TOPIC_LINK', key: '-1004453868195:533' }),
-    ]));
+    expect(broken.blockers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'BROAD_OR_NULL_THREAD_BINDING' }),
+        expect.objectContaining({ code: 'MEMORY_TOPIC_MISMATCH', key: '-1004453868195:12' }),
+        expect.objectContaining({ code: 'WEB_TOPIC_MISMATCH', key: '-1004453868195:12' }),
+        expect.objectContaining({ code: 'MISSING_TELEGRAM_TOPIC_LINK', key: '-1004453868195:524' }),
+        expect.objectContaining({ code: 'MISSING_TELEGRAM_TOPIC_LINK', key: '-1004453868195:533' }),
+      ]),
+    );
   });
 });

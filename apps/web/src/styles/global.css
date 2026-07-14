@@ -147,21 +147,17 @@ kbd,
 :focus:not(:focus-visible) {
   outline: none;
 }
-button:focus,
-button:focus-visible,
-[role='button']:focus,
-[role='button']:focus-visible,
-.cwTap:focus,
-.cwTap:focus-visible {
-  outline: none;
-}
 
-/* Respect reduced-motion: GSAP timelines also check this at runtime. */
+/* Respect reduced-motion: GSAP timelines also check this at runtime.
+   Zeroing duration alone lets infinite-loop animations strobe at 0.001ms, so
+   also clamp iteration-count to 1 — a structural guarantee that no animation
+   (present or future) can keep repainting under reduced-motion. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
 }

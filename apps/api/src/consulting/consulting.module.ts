@@ -24,6 +24,9 @@ import {
 import { ConsultingTopicResolver } from './consulting-topic-resolver.service.js';
 import { TelegramTopicRegistryService } from './telegram-topic-registry.service.js';
 import { SpacesModule } from '../spaces/spaces.module.js';
+import { ConsultingInsightShadowStore } from './consulting-insight-shadow.store.js';
+import { ConsultingInsightShadowWorkerService } from './consulting-insight-shadow.worker.service.js';
+import { ConsultingInsightShadowWorker } from './consulting-insight-shadow.worker.js';
 
 @Module({
   imports: [DrizzleModule, SpacesModule],
@@ -36,7 +39,8 @@ import { SpacesModule } from '../spaces/spaces.module.js';
     EvidenceDecisionStore,
     EvidenceToDecisionService,
     LocalNliProvider,
-    { provide: DisabledLlmStrictJsonVerifier, useClass: HermesStrictJsonVerifier },
+    HermesStrictJsonVerifier,
+    { provide: DisabledLlmStrictJsonVerifier, useExisting: HermesStrictJsonVerifier },
     ClaimVerifierService,
     ExactnessGateService,
     VerifierGatePolicyService,
@@ -47,10 +51,13 @@ import { SpacesModule } from '../spaces/spaces.module.js';
     VisualDocumentSearchService,
     ConsultingRunTraceService,
     ConsultingMemoryContextBuilder,
+    ConsultingInsightShadowStore,
+    ConsultingInsightShadowWorkerService,
+    ConsultingInsightShadowWorker,
     ConsultingWebIngestService,
     { provide: CONSULTING_WEB_INGEST_RUNNER, useValue: defaultConsultingWebIngestRunner },
     ConsultingWebIngestWorker,
   ],
-  exports: [ConsultingTopicResolver, TelegramTopicRegistryService, ConsultingGraphRagBridge, CitationPostCheckService, EvidenceSufficiencyEvaluator, EvidenceDecisionStore, EvidenceToDecisionService, LocalNliProvider, DisabledLlmStrictJsonVerifier, ClaimVerifierService, ExactnessGateService, VerifierGatePolicyService, ConsultingJudgmentGuardService, LocalVisualHashProvider, VoyageMultimodalProvider, DocumentUnitEmbeddingService, VisualDocumentSearchService, ConsultingRunTraceService, ConsultingMemoryContextBuilder, ConsultingWebIngestService],
+  exports: [ConsultingTopicResolver, TelegramTopicRegistryService, ConsultingGraphRagBridge, CitationPostCheckService, EvidenceSufficiencyEvaluator, EvidenceDecisionStore, EvidenceToDecisionService, LocalNliProvider, DisabledLlmStrictJsonVerifier, HermesStrictJsonVerifier, ClaimVerifierService, ExactnessGateService, VerifierGatePolicyService, ConsultingJudgmentGuardService, LocalVisualHashProvider, VoyageMultimodalProvider, DocumentUnitEmbeddingService, VisualDocumentSearchService, ConsultingRunTraceService, ConsultingMemoryContextBuilder, ConsultingInsightShadowStore, ConsultingWebIngestService],
 })
 export class ConsultingModule {}

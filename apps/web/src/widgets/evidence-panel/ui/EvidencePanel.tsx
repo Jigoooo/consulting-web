@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useEvidence, useProjectEvidence, useAddEvidence, useEvidenceDecisionSummary, useRetrievalHits, useRetrievalHitFeedback, useReviewQueue, useReviewQueueDecision } from '../../../lib/collab';
 import { composerDraftRequestStore, useHoveredMessage } from '../../../lib/threadCtx';
 import { useToast } from '../../../shared/ui/toast/Toast';
 import { Icon } from '../../../shared/icons/Icon';
-import type { EvidenceDecisionSummaryResponse, ListRetrievalHitFeedbackResponse, RecordRetrievalHitFeedbackRequest, RetrievalFailureType, ReviewQueueFilter, ReviewQueueResponse } from '@consulting/contracts';
+import type { EvidenceDecisionSummaryV2Response, ListRetrievalHitFeedbackResponse, RecordRetrievalHitFeedbackRequest, RetrievalFailureType, ReviewQueueFilter, ReviewQueueResponse } from '@consulting/contracts';
 import type { IconName } from '../../../shared/icons/registry';
 import { Button } from '../../../shared/ui/button/Button';
 import { Input, Textarea } from '../../../shared/ui/input/Input';
@@ -11,6 +11,11 @@ import { EmptyState, Spinner } from '../../../shared/ui/feedback/EmptyState';
 import { useDelayedFlag } from '../../../shared/lib/useDelayedFlag';
 import { describeVerifierGate } from '../../../shared/lib/verifierGateView';
 import { searchStore } from '../../chat-thread/model/searchStore';
+import { evidenceAddErrorMessage } from './evidenceAddError';
+import { evidencePanelLoadState } from './evidencePanelState';
+import { nextRovingIndex } from '../../../shared/lib/rovingTablist';
+import { useWorkspaceTree } from '../../../lib/spaces';
+import { useSelectedWorkspace } from '../../../lib/wsStore';
 import s from './EvidencePanel.module.css';
 
 const sourceLabel: Record<string, string> = {
@@ -63,7 +68,14 @@ function modeIndex(mode: EvidenceMode) {
  * B4/B5: flat rows (no card chrome), EmptyState/Spinner reuse, and the add
  * form swaps instantly to avoid curtain-like right-panel motion.
  */
-export function EvidencePanel({ threadId, projectId }: { threadId: string; projectId?: string }) {
+export function EvidencePanel({ threadId, projectId, topicId }: { threadId: string; projectId?: string; topicId?: string }) {
+  const workspaceId = useSelectedWorkspace();
+  const { data: tree } = useWorkspaceTree(workspaceId ?? undefined);
+  const activeProject = tree?.projects.find((project) => project.id === projectId);
+  const activeTopic = activeProject?.channels
+    .flatMap((channel) => channel.topics)
+    .find((topic) => topic.id === topicId || topic.defaultThreadId === threadId);
+  const canMutateEvidence = activeTopic?.permissions?.includes('message.send') ?? false;
   const [scope, setScope] = useState<EvidenceScope>('channel');
   const [mode, setMode] = useState<EvidenceMode>('sources');
   const [reviewFilter, setReviewFilter] = useState<ReviewQueueFilter>('all');
@@ -77,8 +89,9 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
   const retrievalFeedback = useRetrievalHitFeedback(threadId);
   const review = useReviewQueue(threadId, reviewFilter);
   const reviewDecision = useReviewQueueDecision(threadId);
-  const data = scope === 'project' ? projectEv.data : channelEv.data;
-  const isLoading = scope === 'project' ? projectEv.isLoading : channelEv.isLoading;
+  const sourceQuery = scope === 'project' ? projectEv : channelEv;
+  const data = sourceQuery.data;
+  const isLoading = sourceQuery.isLoading;
   const hovered = useHoveredMessage();
   const addEvidence = useAddEvidence(threadId);
   const toast = useToast();
@@ -100,7 +113,16 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
     return () => window.cancelAnimationFrame(frame);
   }, [formOpen]);
 
+  useEffect(() => {
+    if (canMutateEvidence) return;
+    setFormOpen(false);
+    setRef('');
+    setExcerpt('');
+    setUrl('');
+  }, [canMutateEvidence]);
+
   async function submit() {
+    if (!canMutateEvidence) return;
     if (!ref.trim() || !excerpt.trim()) return;
     try {
       await addEvidence.mutateAsync({
@@ -115,8 +137,8 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
       setExcerpt('');
       setUrl('');
       setFormOpen(false);
-    } catch {
-      toast('error', '근거 추가 실패. URL을 확인해주세요.');
+    } catch (error) {
+      toast('error', evidenceAddErrorMessage(error));
     }
   }
 
@@ -130,6 +152,17 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
   const activeModeIndex = Math.max(0, modeIndex(mode));
   const modeMotionStyle = { '--mode-index': String(activeModeIndex) } as CSSProperties;
   const scopeMotionStyle = { '--scope-index': scope === 'project' ? '1' : '0' } as CSSProperties;
+  const modeTabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  function onModeTabsKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const target = nextRovingIndex(event.key, activeModeIndex, modeTabs.length);
+    if (target === null) return;
+    event.preventDefault();
+    const nextTab = modeTabs[target];
+    if (!nextTab) return;
+    selectMode(nextTab.id);
+    modeTabRefs.current[target]?.focus();
+  }
 
   function selectMode(next: EvidenceMode) {
     if (next === mode) return;
@@ -147,11 +180,13 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
   }
 
   function queueReviewPrompt(prompt: string) {
+    if (!canMutateEvidence) return;
     composerDraftRequestStore.request(threadId, prompt);
     toast('info', '작성창에 검토 요청을 넣었어요. 확인 후 전송해주세요.');
   }
 
   async function decideReviewItem(itemId: string, action: 'resolve' | 'ignore') {
+    if (!canMutateEvidence) return;
     setPendingReviewItemId(itemId);
     try {
       await reviewDecision.mutateAsync({ itemId, body: { action } });
@@ -164,6 +199,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
   }
 
   async function labelRetrievalHit(hitId: string, body: RecordRetrievalHitFeedbackRequest) {
+    if (!canMutateEvidence) return;
     setPendingRetrievalHitId(hitId);
     try {
       await retrievalFeedback.mutateAsync({ hitId, body });
@@ -176,17 +212,20 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
   }
 
   const items = data?.evidence ?? [];
+  const sourceState = evidencePanelLoadState(sourceQuery.isLoading, sourceQuery.isError, items.length);
   const selected = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
 
   return (
     <div className={s.wrap}>
-      <div className={s.modeTabs} role="tablist" aria-label="근거 지능 패널" style={modeMotionStyle}>
-        {modeTabs.map(({ id, label }) => (
+      <div className={s.modeTabs} role="tablist" aria-label="근거 지능 패널" style={modeMotionStyle} onKeyDown={onModeTabsKeyDown}>
+        {modeTabs.map(({ id, label }, tabIndex) => (
           <button
             key={id}
             type="button"
             role="tab"
             aria-selected={mode === id}
+            tabIndex={mode === id ? 0 : -1}
+            ref={(node) => { modeTabRefs.current[tabIndex] = node; }}
             className={`${s.modeTab} ${mode === id ? s.modeTabOn : ''}`}
             onClick={() => selectMode(id)}
           >
@@ -220,18 +259,31 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
       <div key={mode} className={s.modePanel} data-direction={modeDirection} data-mode={mode}>
         {mode === 'verification' ? (
         <div className={s.decisionStack}>
-          <VerificationView isLoading={decision.isLoading} summary={decision.data} />
+          <VerificationView
+            isLoading={decision.isLoading}
+            isError={decision.isError}
+            summary={decision.data}
+            onRetry={() => void decision.refetch()}
+          />
           <RetrievalFeedbackView
             isLoading={retrieval.isLoading}
+            isError={retrieval.isError}
             hits={retrieval.data?.hits ?? []}
             pendingHitId={pendingRetrievalHitId}
+            canMutate={canMutateEvidence}
+            onRetry={() => void retrieval.refetch()}
             onFeedback={(hitId, body) => void labelRetrievalHit(hitId, body)}
           />
         </div>
       ) : null}
 
       {mode === 'scorecard' ? (
-        <ScorecardView isLoading={decision.isLoading} summary={decision.data} />
+        <ScorecardView
+          isLoading={decision.isLoading}
+          isError={decision.isError}
+          summary={decision.data}
+          onRetry={() => void decision.refetch()}
+        />
       ) : null}
 
       {mode === 'review' ? (
@@ -251,9 +303,12 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
           </div>
           <ReviewQueueView
             isLoading={review.isLoading}
+            isError={review.isError}
             items={review.data?.items ?? []}
             filter={reviewFilter}
             pendingItemId={pendingReviewItemId}
+            canMutate={canMutateEvidence}
+            onRetry={() => void review.refetch()}
             onPrompt={queueReviewPrompt}
             onResolve={(itemId) => void decideReviewItem(itemId, 'resolve')}
             onIgnore={(itemId) => void decideReviewItem(itemId, 'ignore')}
@@ -261,12 +316,27 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
         </div>
       ) : null}
 
-      {mode === 'sources' && showLoading ? (
+      {mode === 'sources' && sourceState === 'loading' && showLoading ? (
         <div className={s.loadingRow}>
           <Spinner label="근거 불러오는 중" /> 근거 불러오는 중…
         </div>
       ) : null}
-      {mode === 'sources' && !isLoading && items.length === 0 && !formOpen ? (
+      {mode === 'sources' && sourceState === 'error' && !formOpen ? (
+        <PanelError
+          title="근거를 불러오지 못했어요"
+          description="연결 상태를 확인한 뒤 다시 시도해주세요. 근거가 없는 상태와는 다릅니다."
+          onRetry={() => void sourceQuery.refetch()}
+        />
+      ) : null}
+      {mode === 'sources' && sourceState === 'stale' ? (
+        <PanelError
+          tone="warn"
+          title="최신 근거를 확인하지 못했어요"
+          description="아래에는 마지막으로 불러온 자료를 표시합니다."
+          onRetry={() => void sourceQuery.refetch()}
+        />
+      ) : null}
+      {mode === 'sources' && sourceState === 'empty' && !formOpen ? (
         <EmptyState
           icon="pin"
           title="아직 수집된 근거가 없어요"
@@ -344,7 +414,7 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
       ) : null}
 
       {/* Add form: always mounted for stable focus, but no height transition. */}
-      <div className={`${s.formShell} ${mode === 'sources' && formOpen ? s.formShellOpen : ''}`} aria-hidden={mode !== 'sources' || !formOpen} inert={mode !== 'sources' || !formOpen ? true : undefined}>
+      <div className={`${s.formShell} ${mode === 'sources' && formOpen && canMutateEvidence ? s.formShellOpen : ''}`} aria-hidden={mode !== 'sources' || !formOpen || !canMutateEvidence} inert={mode !== 'sources' || !formOpen || !canMutateEvidence ? true : undefined}>
         <div className={s.formInner}>
           <Input
             ref={firstFieldRef}
@@ -378,35 +448,55 @@ export function EvidencePanel({ threadId, projectId }: { threadId: string; proje
       </div>
 
       {/* Add button: instant mutual-exclusive swap with the form. No upward slide. */}
-      <div
-        className={`${s.addBtnShell} ${mode !== 'sources' || formOpen ? s.addBtnShellHidden : ''}`}
-        aria-hidden={mode !== 'sources' || formOpen}
-        inert={mode !== 'sources' || formOpen ? true : undefined}
-      >
-        <button type="button" className={`${s.addBtn} cwTap`} onClick={() => setFormOpen(true)}>
-          <Icon name="plus" size="xs" decorative /> 근거 추가
-        </button>
-      </div>
+      {canMutateEvidence ? (
+        <div
+          className={`${s.addBtnShell} ${mode !== 'sources' || formOpen ? s.addBtnShellHidden : ''}`}
+          aria-hidden={mode !== 'sources' || formOpen}
+          inert={mode !== 'sources' || formOpen ? true : undefined}
+        >
+          <button type="button" className={`${s.addBtn} cwTap`} onClick={() => setFormOpen(true)}>
+            <Icon name="plus" size="xs" decorative /> 근거 추가
+          </button>
+        </div>
+      ) : null}
       </div>
     </div>
   );
 }
 
-type DecisionSummary = EvidenceDecisionSummaryResponse;
+type DecisionSummary = EvidenceDecisionSummaryV2Response;
 type RetrievalHit = ListRetrievalHitFeedbackResponse['hits'][number];
 type ReviewItem = ReviewQueueResponse['items'][number];
 
-function VerificationView({ isLoading, summary }: { isLoading: boolean; summary: DecisionSummary | undefined }) {
-  if (isLoading) return <PanelLoading label="근거검증 계산 중" />;
+function VerificationView({
+  isLoading,
+  isError,
+  summary,
+  onRetry,
+}: {
+  isLoading: boolean;
+  isError: boolean;
+  summary: DecisionSummary | undefined;
+  onRetry: () => void;
+}) {
+  if (isLoading && !summary) return <PanelLoading label="근거검증 계산 중" />;
+  if (isError && !summary) {
+    return <PanelError title="근거검증을 불러오지 못했어요" description="검증 결과가 없는 상태와는 다릅니다." onRetry={onRetry} />;
+  }
   if (!summary || summary.verdictSummary.claimCount === 0) {
     return <EmptyState icon="info" title="검증된 답변이 아직 없어요" description="답변이 생성되면 문장별 지지/반박/근거부족 판정이 여기에 쌓입니다." />;
   }
   const v = summary.verdictSummary;
   const exactness = summary.exactness.latestRun;
+  const judgment = summary.judgment.latestRun;
   const gateView = describeVerifierGate(summary.postAnswerVerification.gate);
   const gateIssues = [...summary.postAnswerVerification.gate.blockers, ...summary.postAnswerVerification.gate.warnings];
   return (
-    <div className={s.decisionStack} data-testid="evidence-verification-panel">
+    <>
+      {isError ? (
+        <PanelError tone="warn" title="최신 근거검증을 확인하지 못했어요" description="아래에는 마지막으로 불러온 검증 결과를 표시합니다." onRetry={onRetry} />
+      ) : null}
+      <div className={s.decisionStack} data-testid="evidence-verification-panel">
       <div className={s.gateCard} data-gate={gateView.tone} data-testid="verifier-release-gate" title={gateView.title}>
         <div className={s.gateTop}>
           <span className={s.gateLabel}>{gateView.label}</span>
@@ -428,6 +518,25 @@ function VerificationView({ isLoading, summary }: { isLoading: boolean; summary:
           <span className={s.verdictMeta}>검산 {exactness.checks.length}건</span>
         </div>
       ) : null}
+      {judgment ? (
+        <>
+          <div className={s.verdictRow} data-verdict={judgment.status === 'blocked' ? 'refutes' : judgment.status === 'warnings' ? 'not_enough_info' : 'supports'}>
+            <span className={s.verdictBadge}>판단안전</span>
+            <span className={s.verdictText}>{judgmentStatusLabel(judgment.status)} · {judgment.issueSummary}</span>
+            <span className={s.verdictMeta}>이슈 {judgment.issues.length}건</span>
+          </div>
+          {judgment.issues.slice(0, 3).map((issue) => (
+            <div key={issue.code} className={s.reviewRow} data-verdict={issue.severity === 'blocker' ? 'refutes' : 'not_enough_info'}>
+              <div className={s.reviewTop}>
+                <span>{judgmentIssueLabel(issue.code)}</span>
+                <b>{issue.severity === 'blocker' ? '차단' : '주의'}</b>
+              </div>
+              <div className={s.reviewTitle}>{issue.message}</div>
+              <div className={s.reviewReasons}>필수조치: {issue.requiredAction}</div>
+            </div>
+          ))}
+        </>
+      ) : null}
       <div className={s.sectionLabel}>최근 판정</div>
       {summary.latestVerdicts.slice(0, 6).map((row) => (
         <div key={row.id} className={s.verdictRow} data-verdict={row.verdict}>
@@ -436,26 +545,36 @@ function VerificationView({ isLoading, summary }: { isLoading: boolean; summary:
           <span className={s.verdictMeta}>신뢰 {Math.round(row.confidence * 100)}%</span>
         </div>
       ))}
-    </div>
+      </div>
+    </>
   );
 }
 
 function RetrievalFeedbackView({
   isLoading,
+  isError,
   hits,
   pendingHitId,
+  canMutate,
+  onRetry,
   onFeedback,
 }: {
   isLoading: boolean;
+  isError: boolean;
   hits: RetrievalHit[];
   pendingHitId: string | null;
+  canMutate: boolean;
+  onRetry: () => void;
   onFeedback: (hitId: string, body: RecordRetrievalHitFeedbackRequest) => void;
 }) {
+  const state = evidencePanelLoadState(isLoading, isError, hits.length);
   return (
     <div className={s.retrievalFeedback} data-testid="retrieval-hit-feedback-panel">
       <div className={s.sectionLabel}>검색 근거 품질</div>
-      {isLoading ? <PanelLoading label="검색 근거 불러오는 중" /> : null}
-      {!isLoading && hits.length === 0 ? <div className={s.gateDetail}>이 채널에서 평가할 검색 근거가 아직 없어요.</div> : null}
+      {state === 'loading' ? <PanelLoading label="검색 근거 불러오는 중" /> : null}
+      {state === 'error' ? <PanelError title="검색 근거를 불러오지 못했어요" description="평가할 근거가 없는 상태와는 다릅니다." onRetry={onRetry} /> : null}
+      {state === 'stale' ? <PanelError tone="warn" title="최신 검색 근거를 확인하지 못했어요" description="마지막으로 불러온 결과를 표시합니다." onRetry={onRetry} /> : null}
+      {state === 'empty' ? <div className={s.gateDetail}>이 채널에서 평가할 검색 근거가 아직 없어요.</div> : null}
       {hits.slice(0, 8).map((hit) => {
         const disabled = pendingHitId !== null;
         return (
@@ -466,31 +585,33 @@ function RetrievalFeedbackView({
             </div>
             <div className={s.reviewTitle}>{hit.textPreview}</div>
             <div className={s.reviewReasons}>질의: {hit.queryText}{hit.sourceTopicSlug ? ` · ${hit.sourceTopicSlug}` : ''}</div>
-            <div className={s.reviewPromptActions} aria-label="검색 근거 평가">
-              <button
-                type="button"
-                className={`${s.reviewPromptButton} cwTap`}
-                aria-pressed={hit.judgedRelevant === true}
-                disabled={disabled}
-                onClick={() => onFeedback(hit.id, { judgedRelevant: true })}
-              >
-                <Icon name="check" size="xs" decorative />
-                유효
-              </button>
-              {retrievalFailureActions.map((action) => (
+            {canMutate ? (
+              <div className={s.reviewPromptActions} aria-label="검색 근거 평가">
                 <button
-                  key={action.failureType}
                   type="button"
                   className={`${s.reviewPromptButton} cwTap`}
-                  aria-pressed={hit.failureType === action.failureType}
+                  aria-pressed={hit.judgedRelevant === true}
                   disabled={disabled}
-                  onClick={() => onFeedback(hit.id, { judgedRelevant: false, failureType: action.failureType })}
+                  onClick={() => onFeedback(hit.id, { judgedRelevant: true })}
                 >
-                  <Icon name="x" size="xs" decorative />
-                  {action.label}
+                  <Icon name="check" size="xs" decorative />
+                  유효
                 </button>
-              ))}
-            </div>
+                {retrievalFailureActions.map((action) => (
+                  <button
+                    key={action.failureType}
+                    type="button"
+                    className={`${s.reviewPromptButton} cwTap`}
+                    aria-pressed={hit.failureType === action.failureType}
+                    disabled={disabled}
+                    onClick={() => onFeedback(hit.id, { judgedRelevant: false, failureType: action.failureType })}
+                  >
+                    <Icon name="x" size="xs" decorative />
+                    {action.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
         );
       })}
@@ -498,49 +619,75 @@ function RetrievalFeedbackView({
   );
 }
 
-function ScorecardView({ isLoading, summary }: { isLoading: boolean; summary: DecisionSummary | undefined }) {
-  if (isLoading) return <PanelLoading label="결정표 불러오는 중" />;
+function ScorecardView({
+  isLoading,
+  isError,
+  summary,
+  onRetry,
+}: {
+  isLoading: boolean;
+  isError: boolean;
+  summary: DecisionSummary | undefined;
+  onRetry: () => void;
+}) {
+  if (isLoading && !summary) return <PanelLoading label="결정표 불러오는 중" />;
+  if (isError && !summary) {
+    return <PanelError title="결정표를 불러오지 못했어요" description="결정표가 생성되지 않은 상태와는 다릅니다." onRetry={onRetry} />;
+  }
   const scorecard = summary?.latestScorecard;
   if (!scorecard) return <EmptyState icon="info" title="결정표가 아직 없어요" description="답변 검증 뒤 유지/보강 같은 선택지가 점수표로 정리됩니다." />;
   return (
-    <div className={s.decisionStack} data-testid="decision-scorecard-panel">
-      <div className={s.scorecardHead}>
-        <span>{scorecard.question === 'post_answer_verification' ? '답변 후검증 결정표' : scorecard.question}</span>
-        <b>{scorecard.recommendedAlternativeId ? '추천 있음' : '보류'}</b>
-      </div>
-      {scorecard.ranked.map((item) => (
-        <div key={item.id} className={s.scoreRow}>
-          <div className={s.scoreTop}>
-            <span>{item.alternativeLabel}</span>
-            <b>{Math.round(item.weightedScore * 100)}점</b>
-          </div>
-          <div className={s.scoreMeta}>근거충족 {Math.round(item.evidenceCoverage * 100)}% · 불확실성 {Math.round(item.uncertainty * 100)}% · {actionLabel(item.requiredAction)}</div>
-          <div className={s.scoreBar}><span style={{ width: `${Math.round(item.weightedScore * 100)}%` }} /></div>
+    <>
+      {isError ? <PanelError tone="warn" title="최신 결정표를 확인하지 못했어요" description="마지막으로 불러온 결정표를 표시합니다." onRetry={onRetry} /> : null}
+      <div className={s.decisionStack} data-testid="decision-scorecard-panel">
+        <div className={s.scorecardHead}>
+          <span>{scorecard.question === 'post_answer_verification' ? '답변 후검증 결정표' : scorecard.question}</span>
+          <b>{scorecard.recommendedAlternativeId ? '추천 있음' : '보류'}</b>
         </div>
-      ))}
-    </div>
+        {scorecard.ranked.map((item) => (
+          <div key={item.id} className={s.scoreRow}>
+            <div className={s.scoreTop}>
+              <span>{item.alternativeLabel}</span>
+              <b>{Math.round(item.weightedScore * 100)}점</b>
+            </div>
+            <div className={s.scoreMeta}>근거충족 {Math.round(item.evidenceCoverage * 100)}% · 불확실성 {Math.round(item.uncertainty * 100)}% · {actionLabel(item.requiredAction)}</div>
+            <div className={s.scoreBar}><span style={{ width: `${Math.round(item.weightedScore * 100)}%` }} /></div>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
 function ReviewQueueView({
   isLoading,
+  isError,
   items,
   filter,
   pendingItemId,
+  canMutate,
+  onRetry,
   onPrompt,
   onResolve,
   onIgnore,
 }: {
   isLoading: boolean;
+  isError: boolean;
   items: ReviewItem[];
   filter: ReviewQueueFilter;
   pendingItemId: string | null;
+  canMutate: boolean;
+  onRetry: () => void;
   onPrompt: (prompt: string) => void;
   onResolve: (itemId: string) => void;
   onIgnore: (itemId: string) => void;
 }) {
-  if (isLoading) return <PanelLoading label="검토큐 불러오는 중" />;
-  if (items.length === 0) {
+  const state = evidencePanelLoadState(isLoading, isError, items.length);
+  if (state === 'loading') return <PanelLoading label="검토큐 불러오는 중" />;
+  if (state === 'error') {
+    return <PanelError title="검토큐를 불러오지 못했어요" description="열린 항목이 없는 상태와는 다릅니다." onRetry={onRetry} />;
+  }
+  if (state === 'empty') {
     const title = filter === 'refuted_claim'
       ? '반박 검토 항목이 없어요'
       : filter === 'unsupported_claim'
@@ -552,7 +699,9 @@ function ReviewQueueView({
     return <EmptyState icon="check" title={title} description={description} />;
   }
   return (
-    <div className={s.decisionStack} data-testid="active-review-queue-panel">
+    <>
+      {state === 'stale' ? <PanelError tone="warn" title="최신 검토큐를 확인하지 못했어요" description="마지막으로 불러온 항목을 표시합니다." onRetry={onRetry} /> : null}
+      <div className={s.decisionStack} data-testid="active-review-queue-panel">
       {items.map((item) => {
         const disabled = pendingItemId === item.id;
         return (
@@ -563,24 +712,49 @@ function ReviewQueueView({
             </div>
             <div className={s.reviewTitle}>{item.title}</div>
             <div className={s.reviewReasons}>{item.reasons.join(' · ')}</div>
-            <div className={s.reviewPromptActions} aria-label="검토 작업 작성">
-              {item.actions.map((action) => (
-                <button key={action.id} type="button" className={`${s.reviewPromptButton} cwTap`} onClick={() => onPrompt(action.prompt)}>
-                  {action.label}
-                </button>
-              ))}
-            </div>
-            <div className={s.reviewDecisionActions} aria-label="검토 항목 처리">
-              <button type="button" className={`${s.reviewDecisionButton} cwTap`} disabled={disabled} onClick={() => onResolve(item.id)}>
-                완료 처리
-              </button>
-              <button type="button" className={`${s.reviewDecisionButton} ${s.reviewDecisionButtonMuted} cwTap`} disabled={disabled} onClick={() => onIgnore(item.id)}>
-                나중에 보기
-              </button>
-            </div>
+            {canMutate ? (
+              <>
+                <div className={s.reviewPromptActions} aria-label="검토 작업 작성">
+                  {item.actions.map((action) => (
+                    <button key={action.id} type="button" className={`${s.reviewPromptButton} cwTap`} onClick={() => onPrompt(action.prompt)}>
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+                <div className={s.reviewDecisionActions} aria-label="검토 항목 처리">
+                  <button type="button" className={`${s.reviewDecisionButton} cwTap`} disabled={disabled} onClick={() => onResolve(item.id)}>
+                    완료 처리
+                  </button>
+                  <button type="button" className={`${s.reviewDecisionButton} ${s.reviewDecisionButtonMuted} cwTap`} disabled={disabled} onClick={() => onIgnore(item.id)}>
+                    나중에 보기
+                  </button>
+                </div>
+              </>
+            ) : null}
           </div>
         );
       })}
+      </div>
+    </>
+  );
+}
+
+function PanelError({
+  title,
+  description,
+  onRetry,
+  tone = 'error',
+}: {
+  title: string;
+  description: string;
+  onRetry: () => void;
+  tone?: 'error' | 'warn';
+}) {
+  return (
+    <div className={s.errorState} data-tone={tone} role={tone === 'error' ? 'alert' : 'status'}>
+      <strong>{title}</strong>
+      <span>{description}</span>
+      <Button type="button" variant="ghost" size="sm" onClick={onRetry}>다시 시도</Button>
     </div>
   );
 }
@@ -604,6 +778,27 @@ function exactnessLabel(status: string): string {
   if (status === 'passed') return '검산 통과';
   if (status === 'blocked') return '검산 차단';
   return '검산 생략';
+}
+
+function judgmentStatusLabel(status: string): string {
+  if (status === 'blocked') return '판단 차단';
+  if (status === 'warnings') return '주의 필요';
+  return '판단 점검 생략';
+}
+
+function judgmentIssueLabel(code: string): string {
+  const labels: Record<string, string> = {
+    source_intake_parse_failure: '원문 파싱 실패',
+    stale_source_warning: '기준일 누락',
+    applicability_map_required: '적용대상 구분 필요',
+    decision_gate_order_required: '판단 순서 필요',
+    latest_authority_required: '최신 권위자료 필요',
+    comparator_consistency_required: '비교기준 일관성 필요',
+    counterargument_required: '반대논거 검토 필요',
+    user_correction_pattern: '사용자 정정 재검토',
+    overclaim_strength_risk: '과도한 단정 위험',
+  };
+  return labels[code] ?? '판단 점검';
 }
 
 function actionLabel(action: string): string {

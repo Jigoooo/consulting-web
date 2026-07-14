@@ -9,6 +9,7 @@ import { useCreateProject } from '../../../lib/spaces';
 import {
   BASIC_INFO_EDIT_HELPER,
   CONNECTION_EDIT_HELPER,
+  DEFAULT_TEMPLATE_CHANNEL_LABEL,
   EDIT_AFTER_CREATE_NOTICE,
   REVIEW_EDIT_HELPER,
   SUCCESS_EDIT_NOTICE,
@@ -136,7 +137,7 @@ export function ProjectCreateWizard({
               </label>
               <label className={s.checkRow}>
                 <input type="checkbox" checked={draft.useDefaultTemplate} onChange={(event) => patchDraft({ useDefaultTemplate: event.target.checked })} />
-                <span>자료수집·분석·보고서·Q&A 기본 채널을 자동으로 만들기</span>
+                <span>{DEFAULT_TEMPLATE_CHANNEL_LABEL}</span>
               </label>
             </section>
           ) : null}

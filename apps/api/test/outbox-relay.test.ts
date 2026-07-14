@@ -8,7 +8,7 @@ import { outboxJobId, OutboxRelayService } from '../src/queues/outbox-relay.serv
 import { SignUpUseCase } from '../src/auth/sign-up.usecase.js';
 import { ScryptPasswordHasher } from '../src/auth/password.js';
 
-const dbUrl = process.env.DATABASE_URL;
+const dbUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const redisUrl = process.env.REDIS_URL;
 const TEST_CREDENTIAL = 'supersecret1';
 const d = dbUrl && redisUrl ? describe : describe.skip;
@@ -18,6 +18,7 @@ let lockClient: PoolClient;
 let db: NodePgDatabase<typeof schema>;
 let queue: Queue;
 let consultingQueue: Queue;
+let notificationQueue: Queue;
 const users: string[] = [];
 const workspaces: string[] = [];
 
@@ -35,13 +36,18 @@ d('outbox relay → BullMQ (ADR-0005/0020)', () => {
     consultingQueue = new Queue(`consulting-web-ingest-test-${queueSuffix}`, {
       connection: { host: u.hostname, port: Number(u.port || 6379) },
     });
+    notificationQueue = new Queue(`notification-push-test-${queueSuffix}`, {
+      connection: { host: u.hostname, port: Number(u.port || 6379) },
+    });
   }, 30_000);
 
   afterAll(async () => {
     await queue.obliterate({ force: true }).catch(() => undefined);
     await consultingQueue.obliterate({ force: true }).catch(() => undefined);
+    await notificationQueue.obliterate({ force: true }).catch(() => undefined);
     await queue.close();
     await consultingQueue.close();
+    await notificationQueue.close();
     if (workspaces.length) {
       await db.delete(schema.workspaces).where(inArray(schema.workspaces.id, workspaces));
     }
@@ -130,6 +136,45 @@ d('outbox relay → BullMQ (ADR-0005/0020)', () => {
     expect(job?.opts.attempts).toBeGreaterThanOrEqual(5);
     expect(job?.opts.backoff).toMatchObject({ type: 'exponential' });
     expect(job?.opts.removeOnFail).toBeGreaterThanOrEqual(5000);
+  });
+
+  it('routes durable notification pushes only to the notification queue', async () => {
+    const signup = new SignUpUseCase(db, new ScryptPasswordHasher());
+    const result = await signup.execute({
+      email: `outbox-notification-${Date.now()}@example.com`,
+      password: TEST_CREDENTIAL,
+      displayName: 'Outbox Notification Tester',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    users.push(result.value.userId);
+    workspaces.push(result.value.personalWorkspaceId);
+    const idempotencyKey = `notification-push:test:${result.value.personalWorkspaceId}`;
+    await db.insert(schema.outboxEvents).values({
+      workspaceId: result.value.personalWorkspaceId,
+      eventType: 'NotificationPushRequested',
+      aggregateType: 'notification',
+      aggregateId: result.value.personalWorkspaceId,
+      payload: {
+        subscriptionId: result.value.userId,
+        recipientUserId: result.value.userId,
+        title: 'title',
+        body: 'body',
+        url: '/',
+        tag: 'tag',
+      },
+      status: 'pending',
+      idempotencyKey,
+    });
+
+    const relay = new OutboxRelayService(db, queue, consultingQueue, undefined, notificationQueue);
+    await relay.relayOnce(500);
+
+    const jobId = outboxJobId(idempotencyKey);
+    const job = await notificationQueue.getJob(jobId);
+    expect(job?.data.eventType).toBe('NotificationPushRequested');
+    expect(await queue.getJob(jobId)).toBeUndefined();
+    expect(await consultingQueue.getJob(jobId)).toBeUndefined();
   });
 
   it('marks an unregistered event dead without enqueueing it to either queue', async () => {

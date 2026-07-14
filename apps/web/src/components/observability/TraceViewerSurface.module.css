@@ -131,11 +131,12 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
-  padding: 20px;
-  border: 1px solid var(--border-hair);
-  border-radius: var(--radius-card);
-  background: var(--surface-card);
-  box-shadow: var(--shadow-card);
+  padding: 2px 0 18px;
+  border: 0;
+  border-bottom: 1px solid var(--border-hair);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 .kicker {
   margin-bottom: 5px;
@@ -165,10 +166,11 @@
 }
 .stat {
   min-width: 86px;
-  padding: 9px 11px;
-  border: 1px solid var(--border-hair);
-  border-radius: 12px;
-  background: var(--surface-panel);
+  padding: 3px 0 3px 11px;
+  border: 0;
+  border-left: 1px solid var(--border-whisper);
+  border-radius: 0;
+  background: transparent;
 }
 .stat span {
   display: block;
@@ -180,31 +182,57 @@
   margin-top: 2px;
   font-size: 15px;
 }
-.statWarn {
-  background: color-mix(in srgb, var(--amber) 12%, var(--surface-panel));
+.statWarn strong {
+  color: var(--semantic-warning);
 }
-.statOk {
-  background: color-mix(in srgb, var(--green) 10%, var(--surface-panel));
+.statOk strong {
+  color: var(--semantic-success);
 }
 .section,
 .ledgerPanel {
-  border: 1px solid var(--border-hair);
-  border-radius: var(--radius-card);
-  background: var(--surface-card);
-  overflow: hidden;
+  border: 0;
+  border-top: 1px solid var(--border-hair);
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
 }
 .section,
 .gridSections {
   flex: 0 0 auto;
+}
+.evalScopeSection {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-whisper);
+}
+.evalScopeIntro {
+  padding: 0 2px;
+}
+.evalScopeIntro h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.evalScopeIntro p {
+  margin: 5px 0 0;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.55;
+  word-break: keep-all;
 }
 .sectionHead {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 13px 16px;
+  padding: 13px 2px 10px;
   border-bottom: 1px solid var(--border-hair);
-  background: color-mix(in srgb, var(--surface-panel) 74%, var(--surface-card));
+  background: transparent;
 }
 .sectionHead h2 {
   margin: 0;
@@ -220,19 +248,21 @@
 .ledgerList {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px;
+  gap: 0;
+  padding: 0;
 }
 .spanRow,
 .ledgerItem {
-  padding: 12px;
-  border: 1px solid var(--border-whisper);
-  border-radius: 12px;
-  background: var(--bg-canvas);
+  padding: 12px 2px;
+  border: 0;
+  border-bottom: 1px solid var(--border-hair);
+  border-radius: 0;
+  background: transparent;
 }
 .spanRow[data-status='error'],
 .spanRow[data-status='warning'] {
-  border-color: color-mix(in srgb, var(--amber) 34%, var(--border-whisper));
+  border-left: 3px solid var(--semantic-warning);
+  padding-left: 10px;
 }
 .spanTop {
   display: flex;
@@ -314,6 +344,59 @@
   line-height: 1.55;
   word-break: keep-all;
 }
+.ragCard {
+  border: 1px solid var(--border-hair);
+  border-radius: 14px;
+  background: var(--surface-card);
+  overflow: hidden;
+}
+.ragMetricGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--border-hair);
+}
+.ragMetric {
+  min-width: 0;
+  padding: 14px;
+  background: var(--surface-card);
+}
+.ragMetric span,
+.ragMetric small {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+}
+.ragMetric strong {
+  display: block;
+  margin: 4px 0;
+  color: var(--text-primary);
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+.ragNotice {
+  margin: 0;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-hair);
+  background: color-mix(in srgb, var(--semantic-warning) 8%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.failureList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px 14px;
+  border-top: 1px solid var(--border-hair);
+}
+.failureList span {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--semantic-warning) 10%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
 @media (max-width: 980px) {
   .page {
     grid-template-columns: 1fr;
@@ -332,5 +415,8 @@
   }
   .stats {
     justify-content: flex-start;
+  }
+  .ragMetricGrid {
+    grid-template-columns: 1fr;
   }
 }

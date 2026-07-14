@@ -8,7 +8,7 @@ import { ArtifactVerificationDbLedger } from '../src/artifacts/artifact-verifica
 import { artifactContentHash } from '../src/artifacts/artifact-export-preflight-audit.js';
 import { artifactVerificationPolicyPrefix } from '../src/artifacts/artifact-verification.service.js';
 
-const url = process.env.DATABASE_URL;
+const url = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const d = url ? describe : describe.skip;
 
 let pool: Pool;
@@ -45,12 +45,16 @@ d('ArtifactVerificationDbLedger', () => {
     await db.insert(schema.workspaces).values({ id: workspaceId, name: 'ledger-test', slug: `ledger-${workspaceId}`, ownerUserId: userId });
     await db.insert(schema.projects).values({ id: projectId, workspaceId, name: 'ledger-project', slug: `p-${projectId}` });
     await db.insert(schema.artifacts).values({ id: artifactId, workspaceId, projectId, title: '검증 원장 테스트', createdByUserId: userId });
+    const governingMessage = '핵심 결론은 사업 범위를 단계적으로 조정해야 한다는 것입니다.';
+    const soWhat = '따라서 이번 분기에 예산 우선순위와 실행 일정을 다시 확정해야 합니다.';
     await db.insert(schema.artifactVersions).values({
       id: artifactVersionId,
       workspaceId,
       artifactId,
       versionNo: 1,
       content: '검증 대상 본문입니다.',
+      governingMessage,
+      soWhat,
       authorUserId: userId,
     });
 
@@ -62,6 +66,8 @@ d('ArtifactVerificationDbLedger', () => {
       title: '검증 원장 테스트',
       versionNo: 1,
       content: '검증 대상 본문입니다.',
+      governingMessage,
+      soWhat,
       sourceThreadId: null,
       sourceMessageId: null,
     };
@@ -69,7 +75,7 @@ d('ArtifactVerificationDbLedger', () => {
     const ledger = new ArtifactVerificationDbLedger(db);
     await ledger.record({
       target,
-      contentHash: artifactContentHash(target.content),
+      contentHash: artifactContentHash(target.content, target.governingMessage, target.soWhat),
       sourceThreadId: null,
       sourceMessageId: null,
       exactness: {
@@ -87,11 +93,16 @@ d('ArtifactVerificationDbLedger', () => {
       verifiedByUserId: userId,
     });
 
-    expect(await ledger.latest(target)).toMatchObject({ artifactVersionId, workspaceId, contentHash: artifactContentHash(target.content), gate });
+    const currentContentHash = artifactContentHash(target.content, target.governingMessage, target.soWhat);
+    expect(await ledger.latest(target)).toMatchObject({ artifactVersionId, workspaceId, contentHash: currentContentHash, gate });
+    expect(await ledger.loadCurrentPassVerdicts(target, currentContentHash)).toEqual([]);
+    expect(await ledger.loadCurrentPassVerdicts({ ...target, title: '변경된 사실형 제목' }, currentContentHash)).toBeNull();
+    expect(await ledger.loadCurrentPassVerdicts({ ...target, workspaceId: randomUUID() }, currentContentHash)).toBeNull();
+    expect(await ledger.loadCurrentPassVerdicts(target, artifactContentHash(`${target.content} mismatch`))).toBeNull();
     expect(await ledger.latest({ ...target, title: '변경된 사실형 제목' })).toBeNull();
     expect(await ledger.latest({ ...target, workspaceId: randomUUID() })).toMatchObject({ workspaceId });
     expect(await ledger.latest({ ...target, content: `${target.content} 변경` })).toMatchObject({
-      contentHash: artifactContentHash(target.content),
+      contentHash: artifactContentHash(target.content, target.governingMessage, target.soWhat),
     });
 
     const newerWrongHash = artifactContentHash(`${target.content} newer wrong hash`);
@@ -121,7 +132,7 @@ d('ArtifactVerificationDbLedger', () => {
     };
     await ledger.record({
       target,
-      contentHash: artifactContentHash(target.content),
+      contentHash: artifactContentHash(target.content, target.governingMessage, target.soWhat),
       sourceThreadId: null,
       sourceMessageId: null,
       exactness: {
@@ -149,7 +160,7 @@ d('ArtifactVerificationDbLedger', () => {
       projectId,
       artifactId,
       artifactVersionId,
-      contentHash: artifactContentHash(target.content),
+      contentHash: artifactContentHash(target.content, target.governingMessage, target.soWhat),
       status: 'passed',
       exactness: {},
       verdicts: [],
@@ -163,7 +174,7 @@ d('ArtifactVerificationDbLedger', () => {
       projectId,
       artifactId,
       artifactVersionId,
-      contentHash: artifactContentHash(target.content),
+      contentHash: artifactContentHash(target.content, target.governingMessage, target.soWhat),
       status: 'blocked',
       exactness: {},
       verdicts: [],
@@ -177,7 +188,7 @@ d('ArtifactVerificationDbLedger', () => {
       projectId,
       artifactId,
       artifactVersionId,
-      contentHash: artifactContentHash(target.content),
+      contentHash: artifactContentHash(target.content, target.governingMessage, target.soWhat),
       status: 'passed',
       exactness: {},
       verdicts: [],
@@ -198,7 +209,7 @@ d('ArtifactVerificationDbLedger', () => {
       projectId,
       artifactId,
       artifactVersionId,
-      contentHash: artifactContentHash(target.content),
+      contentHash: artifactContentHash(target.content, target.governingMessage, target.soWhat),
       status: 'passed',
       exactness: {},
       verdicts: [],

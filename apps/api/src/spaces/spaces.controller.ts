@@ -6,6 +6,8 @@ import {
   CreateWorkspaceResponseSchema,
   CreateChannelRequestSchema,
   CreateChannelResponseSchema,
+  CreateChannelBundleRequestSchema,
+  CreateChannelBundleResponseSchema,
   CreateTopicRequestSchema,
   CreateTopicResponseSchema,
   CreateThreadRequestSchema,
@@ -32,6 +34,7 @@ import { parseBody, parseResponse, throwDomainError } from '../http/contract-ada
 import { CreateProjectUseCase } from './create-project.usecase.js';
 import { CreateWorkspaceUseCase } from './create-workspace.usecase.js';
 import { CreateChannelUseCase } from './create-channel.usecase.js';
+import { CreateChannelBundleUseCase } from './create-channel-bundle.usecase.js';
 import { CreateTopicUseCase } from './create-topic.usecase.js';
 import { CreateThreadUseCase } from './create-thread.usecase.js';
 import { SpaceAccessService, type SpaceAccess } from './space-access.service.js';
@@ -39,6 +42,7 @@ import { SpaceReadService } from './space-read.service.js';
 import { RestoreParentNotActiveError, SpaceMutateService } from './space-mutate.service.js';
 import { ContextGraphService, type ContextGraphRelatedScope, type ContextGraphScopeType } from './context-graph.service.js';
 import { ScopeProfileService } from './scope-profile.service.js';
+import type { Permission } from '../permissions/permission.types.js';
 
 @Controller('spaces')
 @UseGuards(AccessTokenGuard)
@@ -52,6 +56,7 @@ export class SpacesController {
     @Inject(CreateProjectUseCase) private readonly createProject: CreateProjectUseCase,
     @Inject(CreateWorkspaceUseCase) private readonly createWorkspace: CreateWorkspaceUseCase,
     @Inject(CreateChannelUseCase) private readonly createChannel: CreateChannelUseCase,
+    @Inject(CreateChannelBundleUseCase) private readonly createChannelBundle: CreateChannelBundleUseCase,
     @Inject(CreateTopicUseCase) private readonly createTopic: CreateTopicUseCase,
     @Inject(CreateThreadUseCase) private readonly createThread: CreateThreadUseCase,
   ) {}
@@ -63,10 +68,17 @@ export class SpacesController {
   }
 
   @Get('workspaces/:workspaceId/tree')
-  async tree(@Param('workspaceId') workspaceId: string, @Req() req: AuthenticatedRequest) {
+  async tree(
+    @Param('workspaceId') workspaceId: string,
+    @Query('includePermissions') includePermissions: string | undefined,
+    @Req() req: AuthenticatedRequest,
+  ) {
     const userId = requireAuthUserId(req);
-    this.throwIfDenied(await this.access.workspaceMember(userId, workspaceId));
-    return parseResponse(WorkspaceTreeResponseSchema, await this.reads.workspaceTree(workspaceId));
+    this.throwIfDenied(await this.access.workspaceAnyMembership(userId, workspaceId));
+    return parseResponse(
+      WorkspaceTreeResponseSchema,
+      await this.reads.workspaceTree(workspaceId, userId, includePermissions === 'true'),
+    );
   }
 
   @Get('workspaces/:workspaceId/members')
@@ -77,18 +89,41 @@ export class SpacesController {
   }
 
   @Get('workspaces/:workspaceId/archive')
-  async archive(@Param('workspaceId') workspaceId: string, @Req() req: AuthenticatedRequest) {
+  async archive(
+    @Param('workspaceId') workspaceId: string,
+    @Req() req: AuthenticatedRequest,
+    @Query('includePermissions') includePermissions?: string,
+  ) {
     const userId = requireAuthUserId(req);
-    this.throwIfDenied(await this.access.workspaceMember(userId, workspaceId));
-    return parseResponse(ListArchivedScopesResponseSchema, await this.reads.listArchivedScopes(workspaceId));
+    this.throwIfDenied(await this.access.workspaceAnyMembership(userId, workspaceId));
+    const archive = await this.reads.listArchivedScopes(workspaceId);
+    const checks = await Promise.all(
+      archive.items.map((item) => this.archivedScopeReadAccess(userId, item.kind, item.id)),
+    );
+    const visibleItems = archive.items.filter((_item, index) => {
+      const access = checks[index];
+      return access?.allowed === true && access.workspaceId === workspaceId;
+    });
+    if (includePermissions !== 'true') {
+      return parseResponse(ListArchivedScopesResponseSchema, { items: visibleItems });
+    }
+    const restoreChecks = await Promise.all(
+      visibleItems.map((item) => this.archivedScopeRestoreAccess(userId, item.kind, item.id)),
+    );
+    return parseResponse(ListArchivedScopesResponseSchema, {
+      items: visibleItems.map((item, index) => ({
+        ...item,
+        canRestore: restoreChecks[index]?.allowed === true && restoreChecks[index]?.workspaceId === workspaceId,
+      })),
+    });
   }
 
   @Post('context-edges')
   async createContextEdge(@Body() body: unknown, @Req() req: AuthenticatedRequest) {
     const cmd = parseBody(CreateContextEdgeRequestSchema, body);
     const userId = requireAuthUserId(req);
-    await this.requireScopeMember(userId, cmd.fromScopeType, cmd.fromScopeId);
-    await this.requireScopeMember(userId, cmd.toScopeType, cmd.toScopeId);
+    await this.requireScopeMutation(userId, cmd.fromScopeType, cmd.fromScopeId);
+    await this.requireScopeMutation(userId, cmd.toScopeType, cmd.toScopeId);
     const result = await this.contextGraph.createManualEdge(cmd);
     if (!result.ok) return throwDomainError(result.error);
     return parseResponse(CreateContextEdgeResponseSchema, result.value);
@@ -97,9 +132,19 @@ export class SpacesController {
   @Get('context-edges')
   async contextEdges(@Query() query: unknown, @Req() req: AuthenticatedRequest) {
     const cmd = parseBody(ListContextEdgesRequestSchema, query);
-    await this.requireScopeMember(requireAuthUserId(req), cmd.scopeType, cmd.scopeId);
+    const userId = requireAuthUserId(req);
+    const anchorAccess = await this.scopeAccess(userId, cmd.scopeType, cmd.scopeId);
+    this.throwIfDenied(anchorAccess);
     const edges = await this.contextGraph.traverseRelatedScopes(cmd);
-    return parseResponse(ListContextEdgesResponseSchema, { edges: edges.map((edge) => this.contextEdgeResponse(edge)) });
+    const visible = await Promise.all(edges.map(async (edge) => ({
+      edge,
+      access: await this.scopeAccess(userId, edge.scopeType, edge.scopeId),
+    })));
+    return parseResponse(ListContextEdgesResponseSchema, {
+      edges: visible
+        .filter(({ edge, access }) => access.allowed && access.workspaceId === anchorAccess.workspaceId && edge.workspaceId === anchorAccess.workspaceId)
+        .map(({ edge }) => this.contextEdgeResponse(edge)),
+    });
   }
 
   @Delete('context-edges/:edgeId')
@@ -108,8 +153,8 @@ export class SpacesController {
     const target = await this.contextGraph.getManualEdgeTarget(edgeId);
     if (!target.ok) return throwDomainError(target.error);
     const userId = requireAuthUserId(req);
-    await this.requireScopeMember(userId, target.value.fromScopeType, target.value.fromScopeId);
-    await this.requireScopeMember(userId, target.value.toScopeType, target.value.toScopeId);
+    await this.requireScopeMutation(userId, target.value.fromScopeType, target.value.fromScopeId);
+    await this.requireScopeMutation(userId, target.value.toScopeType, target.value.toScopeId);
     const result = await this.contextGraph.deleteManualEdge(edgeId);
     if (!result.ok) return throwDomainError(result.error);
     return parseResponse(OkResponseSchema, result.value);
@@ -143,7 +188,7 @@ export class SpacesController {
   async updateProjectProfile(@Param('id') id: string, @Body() body: unknown, @Req() req: AuthenticatedRequest) {
     const patch = parseBody(UpdateScopeProfileRequestSchema, body);
     const userId = requireAuthUserId(req);
-    await this.requireNodeMember(userId, 'project', id);
+    await this.requireNodePermission(userId, 'project', id, 'project.update');
     const result = await this.scopeProfiles.updateProfile('project', id, { actorUserId: userId, patch });
     if (!result.ok) return throwDomainError(result.error);
     return parseResponse(ScopeProfileResponseSchema, result.value);
@@ -161,7 +206,7 @@ export class SpacesController {
   async updateChannelProfile(@Param('id') id: string, @Body() body: unknown, @Req() req: AuthenticatedRequest) {
     const patch = parseBody(UpdateScopeProfileRequestSchema, body);
     const userId = requireAuthUserId(req);
-    await this.requireNodeMember(userId, 'channel', id);
+    await this.requireNodePermission(userId, 'channel', id, 'channel.update');
     const result = await this.scopeProfiles.updateProfile('channel', id, { actorUserId: userId, patch });
     if (!result.ok) return throwDomainError(result.error);
     return parseResponse(ScopeProfileResponseSchema, result.value);
@@ -179,7 +224,7 @@ export class SpacesController {
   async updateTopicProfile(@Param('id') id: string, @Body() body: unknown, @Req() req: AuthenticatedRequest) {
     const patch = parseBody(UpdateScopeProfileRequestSchema, body);
     const userId = requireAuthUserId(req);
-    await this.requireNodeMember(userId, 'topic', id);
+    await this.requireNodePermission(userId, 'topic', id, 'topic.connect_memory');
     const result = await this.scopeProfiles.updateProfile('topic', id, { actorUserId: userId, patch });
     if (!result.ok) return throwDomainError(result.error);
     return parseResponse(ScopeProfileResponseSchema, result.value);
@@ -189,7 +234,7 @@ export class SpacesController {
   @Patch('projects/:id')
   async renameProject(@Param('id') id: string, @Body() body: unknown, @Req() req: AuthenticatedRequest) {
     const { name } = parseBody(RenameRequestSchema, body);
-    await this.requireNodeMember(requireAuthUserId(req), 'project', id);
+    await this.requireNodePermission(requireAuthUserId(req), 'project', id, 'project.update');
     await this.mutate.renameNode('project', id, name);
     return parseResponse(OkResponseSchema, { ok: true });
   }
@@ -197,7 +242,7 @@ export class SpacesController {
   @Patch('channels/:id')
   async renameChannel(@Param('id') id: string, @Body() body: unknown, @Req() req: AuthenticatedRequest) {
     const { name } = parseBody(RenameRequestSchema, body);
-    await this.requireNodeMember(requireAuthUserId(req), 'channel', id);
+    await this.requireNodePermission(requireAuthUserId(req), 'channel', id, 'channel.update');
     await this.mutate.renameNode('channel', id, name);
     return parseResponse(OkResponseSchema, { ok: true });
   }
@@ -205,7 +250,7 @@ export class SpacesController {
   @Patch('topics/:id')
   async renameTopic(@Param('id') id: string, @Body() body: unknown, @Req() req: AuthenticatedRequest) {
     const { name } = parseBody(RenameRequestSchema, body);
-    await this.requireNodeMember(requireAuthUserId(req), 'topic', id);
+    await this.requireNodePermission(requireAuthUserId(req), 'topic', id, 'channel.update');
     await this.mutate.renameNode('topic', id, name);
     return parseResponse(OkResponseSchema, { ok: true });
   }
@@ -213,7 +258,7 @@ export class SpacesController {
   @Patch('threads/:id')
   async renameThread(@Param('id') id: string, @Body() body: unknown, @Req() req: AuthenticatedRequest) {
     const { title } = parseBody(RenameThreadRequestSchema, body);
-    await this.requireThreadMember(requireAuthUserId(req), id);
+    await this.requireThreadPermission(requireAuthUserId(req), id, 'channel.update');
     await this.mutate.renameThread(id, title);
     return parseResponse(OkResponseSchema, { ok: true });
   }
@@ -221,28 +266,28 @@ export class SpacesController {
   // --- user-facing archive (N-4) ---
   @Delete('projects/:id')
   async deleteProject(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    await this.requireNodeMember(requireAuthUserId(req), 'project', id);
+    await this.requireNodePermission(requireAuthUserId(req), 'project', id, 'project.update');
     await this.mutate.archiveNode('project', id);
     return parseResponse(OkResponseSchema, { ok: true });
   }
 
   @Delete('channels/:id')
   async deleteChannel(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    await this.requireNodeMember(requireAuthUserId(req), 'channel', id);
+    await this.requireNodePermission(requireAuthUserId(req), 'channel', id, 'channel.update');
     await this.mutate.archiveNode('channel', id);
     return parseResponse(OkResponseSchema, { ok: true });
   }
 
   @Delete('topics/:id')
   async deleteTopic(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    await this.requireNodeMember(requireAuthUserId(req), 'topic', id);
+    await this.requireNodePermission(requireAuthUserId(req), 'topic', id, 'channel.update');
     await this.mutate.archiveNode('topic', id);
     return parseResponse(OkResponseSchema, { ok: true });
   }
 
   @Delete('threads/:id')
   async deleteThread(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    await this.requireThreadMember(requireAuthUserId(req), id);
+    await this.requireThreadPermission(requireAuthUserId(req), id, 'channel.update');
     await this.mutate.archiveThread(id);
     return parseResponse(OkResponseSchema, { ok: true });
   }
@@ -254,9 +299,9 @@ export class SpacesController {
     if (!kind.success) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'invalid archive scope kind' });
 
     if (kind.data === 'thread') {
-      await this.requireThreadMember(requireAuthUserId(req), id);
+      await this.requireThreadPermission(requireAuthUserId(req), id, 'channel.update', { allowArchived: true });
     } else {
-      await this.requireNodeMember(requireAuthUserId(req), kind.data, id);
+      await this.requireNodePermission(requireAuthUserId(req), kind.data, id, kind.data === 'project' ? 'project.update' : 'channel.update', { allowArchived: true });
     }
 
     try {
@@ -272,9 +317,45 @@ export class SpacesController {
     return parseResponse(OkResponseSchema, { ok: true });
   }
 
-  private async requireScopeMember(userId: string, kind: ContextGraphScopeType, id: string): Promise<void> {
-    if (kind === 'thread') await this.requireThreadMember(userId, id);
-    else await this.requireNodeMember(userId, kind, id);
+  private archivedScopeReadAccess(
+    userId: string,
+    kind: 'project' | 'channel' | 'topic' | 'thread',
+    id: string,
+  ): Promise<SpaceAccess> {
+    const options = { allowArchived: true };
+    switch (kind) {
+      case 'project': return this.access.projectPermission(userId, id, 'project.read', options);
+      case 'channel': return this.access.channelPermission(userId, id, 'channel.read', options);
+      case 'topic': return this.access.topicPermission(userId, id, 'message.read', options);
+      case 'thread': return this.access.threadPermission(userId, id, 'message.read', options);
+    }
+  }
+
+  private archivedScopeRestoreAccess(
+    userId: string,
+    kind: 'project' | 'channel' | 'topic' | 'thread',
+    id: string,
+  ): Promise<SpaceAccess> {
+    const options = { allowArchived: true };
+    switch (kind) {
+      case 'project': return this.access.projectPermission(userId, id, 'project.update', options);
+      case 'channel': return this.access.channelPermission(userId, id, 'channel.update', options);
+      case 'topic': return this.access.topicPermission(userId, id, 'channel.update', options);
+      case 'thread': return this.access.threadPermission(userId, id, 'channel.update', options);
+    }
+  }
+
+  private async scopeAccess(userId: string, kind: ContextGraphScopeType, id: string): Promise<SpaceAccess> {
+    if (kind === 'thread') return this.access.threadMember(userId, id);
+    if (kind === 'project') return this.access.projectMember(userId, id);
+    if (kind === 'channel') return this.access.channelMember(userId, id);
+    return this.access.topicMember(userId, id);
+  }
+
+  private async requireScopeMutation(userId: string, kind: ContextGraphScopeType, id: string): Promise<void> {
+    const permission: Permission = kind === 'project' ? 'project.update' : 'channel.update';
+    if (kind === 'thread') await this.requireThreadPermission(userId, id, permission);
+    else await this.requireNodePermission(userId, kind, id, permission);
   }
 
   private contextEdgeResponse(edge: ContextGraphRelatedScope) {
@@ -302,22 +383,45 @@ export class SpacesController {
   }
 
   private async requireNodeMember(userId: string, kind: 'project' | 'channel' | 'topic', id: string): Promise<void> {
-    const workspaceId = await this.mutate.nodeWorkspace(kind, id);
-    if (!workspaceId) throw new NotFoundException({ code: 'NOT_FOUND', message: `${kind} not found` });
-    this.throwIfDenied(await this.access.workspaceMember(userId, workspaceId));
+    const access = kind === 'project'
+      ? await this.access.projectMember(userId, id)
+      : kind === 'channel'
+        ? await this.access.channelMember(userId, id)
+        : await this.access.topicMember(userId, id);
+    this.throwIfDenied(access);
   }
 
   private async requireThreadMember(userId: string, id: string): Promise<void> {
-    const workspaceId = await this.mutate.threadWorkspace(id);
-    if (!workspaceId) throw new NotFoundException({ code: 'NOT_FOUND', message: 'thread not found' });
-    this.throwIfDenied(await this.access.workspaceMember(userId, workspaceId));
+    this.throwIfDenied(await this.access.threadMember(userId, id));
+  }
+
+  private async requireNodePermission(userId: string, kind: 'project' | 'channel' | 'topic', id: string, permission: Permission, options: { allowArchived?: boolean } = {}): Promise<void> {
+    const access = kind === 'project'
+      ? options.allowArchived
+        ? await this.access.projectPermission(userId, id, permission, options)
+        : await this.access.projectPermission(userId, id, permission)
+      : kind === 'channel'
+        ? options.allowArchived
+          ? await this.access.channelPermission(userId, id, permission, options)
+          : await this.access.channelPermission(userId, id, permission)
+        : options.allowArchived
+          ? await this.access.topicPermission(userId, id, permission, options)
+          : await this.access.topicPermission(userId, id, permission);
+    this.throwIfDenied(access);
+  }
+
+  private async requireThreadPermission(userId: string, id: string, permission: Permission, options: { allowArchived?: boolean } = {}): Promise<void> {
+    const access = options.allowArchived
+      ? await this.access.threadPermission(userId, id, permission, options)
+      : await this.access.threadPermission(userId, id, permission);
+    this.throwIfDenied(access);
   }
 
   @Post('projects')
   async project(@Body() body: unknown, @Req() req: AuthenticatedRequest) {
     const cmd = parseBody(CreateProjectRequestSchema, body);
     const userId = requireAuthUserId(req);
-    this.throwIfDenied(await this.access.workspaceMember(userId, cmd.workspaceId));
+    this.throwIfDenied(await this.access.workspacePermission(userId, cmd.workspaceId, 'project.create'));
     const result = await this.createProject.execute({ ...cmd, actorUserId: userId });
     if (!result.ok) return throwDomainError(result.error);
     return parseResponse(CreateProjectResponseSchema, {
@@ -342,17 +446,39 @@ export class SpacesController {
   async channel(@Body() body: unknown, @Req() req: AuthenticatedRequest) {
     const cmd = parseBody(CreateChannelRequestSchema, body);
     const userId = requireAuthUserId(req);
-    this.throwIfDenied(await this.access.projectMember(userId, cmd.projectId));
+    this.throwIfDenied(await this.access.projectPermission(userId, cmd.projectId, 'channel.create'));
     const result = await this.createChannel.commit({ ...cmd, actorUserId: userId });
     if (!result.ok) return throwDomainError(result.error);
     return parseResponse(CreateChannelResponseSchema, { id: result.value.channelId });
+  }
+
+  @Post('channel-bundles')
+  async channelBundle(@Body() body: unknown, @Req() req: AuthenticatedRequest) {
+    const cmd = parseBody(CreateChannelBundleRequestSchema, body);
+    const userId = requireAuthUserId(req);
+    this.throwIfDenied(await this.access.projectPermission(userId, cmd.projectId, 'channel.create'));
+    const result = await this.createChannelBundle.execute({ ...cmd, actorUserId: userId });
+    if (!result.ok) return throwDomainError(result.error);
+    return parseResponse(CreateChannelBundleResponseSchema, result.value);
+  }
+
+  @Post('channels/:channelId/ensure-conversation')
+  async ensureChannelConversation(
+    @Param('channelId') channelId: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const userId = requireAuthUserId(req);
+    this.throwIfDenied(await this.access.channelPermission(userId, channelId, 'topic.create'));
+    const result = await this.createChannelBundle.ensureConversation({ channelId, actorUserId: userId });
+    if (!result.ok) return throwDomainError(result.error);
+    return parseResponse(CreateChannelBundleResponseSchema, result.value);
   }
 
   @Post('topics')
   async topic(@Body() body: unknown, @Req() req: AuthenticatedRequest) {
     const cmd = parseBody(CreateTopicRequestSchema, body);
     const userId = requireAuthUserId(req);
-    this.throwIfDenied(await this.access.channelMember(userId, cmd.channelId));
+    this.throwIfDenied(await this.access.channelPermission(userId, cmd.channelId, 'topic.create'));
     const result = await this.createTopic.execute({ ...cmd, actorUserId: userId });
     if (!result.ok) return throwDomainError(result.error);
     return parseResponse(CreateTopicResponseSchema, { id: result.value.topicId });
@@ -362,7 +488,7 @@ export class SpacesController {
   async thread(@Body() body: unknown, @Req() req: AuthenticatedRequest) {
     const cmd = parseBody(CreateThreadRequestSchema, body);
     const userId = requireAuthUserId(req);
-    this.throwIfDenied(await this.access.topicMember(userId, cmd.topicId));
+    this.throwIfDenied(await this.access.topicPermission(userId, cmd.topicId, 'topic.create'));
     const result = await this.createThread.execute({ ...cmd, actorUserId: userId });
     if (!result.ok) return throwDomainError(result.error);
     return parseResponse(CreateThreadResponseSchema, { id: result.value.threadId });

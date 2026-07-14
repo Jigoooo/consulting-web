@@ -137,6 +137,8 @@ describe('EvidenceToDecisionService', () => {
     expect(scorecard.ranked[0]?.alternativeId).toBe('a1');
     expect(scorecard.ranked[0]?.requiredAction).toBe('recommend');
     expect(scorecard.ranked[1]?.evidenceCoverage).toBeLessThan(1);
+    expect(scorecard.ranked[0]?.criteriaBreakdown.find((item) => item.criterionId === 'impact')?.direction).toBe('higher_is_better');
+    expect(scorecard.ranked[0]?.criteriaBreakdown.find((item) => item.criterionId === 'risk')?.direction).toBe('lower_is_better');
   });
 
   it('diffuses graph scores with PPR-style and heat-kernel-style propagation before heavy Leiden', () => {

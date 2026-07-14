@@ -1,7 +1,6 @@
-/* Design tokens v2 — "절제된 프리미엄 컨설팅" (2026-07-06 redesign).
-   근거: Vercel(achromatic discipline + shadow-as-border), Linear(precise dark rail,
-   기능색 최소화), Superhuman(warm ivory + charcoal + 단 하나의 muted purple gesture),
-   WCAG 2.2 SC 1.4.3 (본문 4.5:1).
+/* Design tokens v3 — editorial consulting workspace (2026-07-12).
+   근거: NN/g(common-region/minimalism), Material 3(tonal elevation),
+   Carbon(neutral layering), Apple HIG(typographic hierarchy), WCAG 2.2.
    Single source of truth for color / type / spacing / motion.
    원칙: 색은 기능(CTA/focus/상태)에만. 장식용 그라디언트/원색 금지. */
 :root {
@@ -30,11 +29,11 @@
   --border-subtle: var(--border-whisper);
   --ring: var(--accent);
 
-  /* accent — 채도 낮춘 blue-violet 단 1색. CTA/focus/active 전용 */
-  --accent: #565f9f;
-  --accent-hi: #6a72b8;
-  --accent-soft: rgba(86, 95, 159, 0.11);
-  --accent-glow: rgba(86, 95, 159, 0.2);
+  /* accent — 저채도 cobalt 단 1색. CTA/focus/active 전용 */
+  --accent: #3f5f8f;
+  --accent-hi: #34517d;
+  --accent-soft: rgba(63, 95, 143, 0.1);
+  --accent-glow: transparent;
   --primary: var(--accent);
   --primary-foreground: #f9f7f2;
   --muted: var(--bg-warm);
@@ -48,6 +47,8 @@
   --ink: #1f211f;
   --ink-hover: #33352f;
   --ink-foreground: #f6f4ee;
+  --brand-mark-bg: var(--ink);
+  --brand-mark-fg: #f7f5f1;
 
   /* semantic — 저채도 기능색 */
   --link: #3451a3;
@@ -61,12 +62,12 @@
   --danger: var(--red);
   --danger-soft: rgba(180, 61, 47, 0.11);
 
-  /* radii — 8/12/16 3단 + pill */
+  /* radii — controls 8, sections 10, overlays 14 + semantic pill */
   --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
   --radius-btn: var(--radius-sm);
-  --radius-card: var(--radius-md);
+  --radius-card: 10px;
   --radius-pill: 9999px;
 
   /* type */
@@ -103,9 +104,9 @@
   --code-fg: #e9eaec;
   --code-border: rgba(31, 33, 36, 0.14);
 
-  /* elevation — Vercel식 shadow-as-border 스택 */
+  /* elevation — static surfaces stay flat; overlays use --shadow-pop. */
   --shadow-ring: 0 0 0 1px var(--border-whisper);
-  --shadow-card: 0 0 0 1px rgba(31, 33, 36, 0.08), 0 2px 2px rgba(31, 33, 36, 0.035), 0 12px 28px -22px rgba(31, 33, 36, 0.35);
+  --shadow-card: 0 1px 2px rgba(31, 33, 36, 0.06);
   --shadow-pop: 0 0 0 1px rgba(31, 33, 36, 0.1), 0 18px 55px -24px rgba(31, 33, 36, 0.45);
   --shadow-1: var(--shadow-card);
 
@@ -161,15 +162,17 @@
   --code-fg: #d7d4cc;
   --code-border: rgba(235, 231, 222, 0.08);
 
-  --accent: #8a91d6;
-  --accent-hi: #a0a5e6;
-  --accent-soft: rgba(138, 145, 214, 0.15);
-  --accent-glow: rgba(138, 145, 214, 0.28);
+  --accent: #87a5cf;
+  --accent-hi: #9ab4d8;
+  --accent-soft: rgba(135, 165, 207, 0.14);
+  --accent-glow: transparent;
   --primary-foreground: #16171a;
 
   --ink: #ebe7de;
   --ink-hover: #d8d3c8;
   --ink-foreground: #1a1b1e;
+  --brand-mark-bg: var(--ink);
+  --brand-mark-fg: #17181a;
 
   --link: #92a8e8;
   --green: #4fae72;
@@ -183,7 +186,7 @@
   --danger-soft: rgba(211, 112, 95, 0.16);
 
   --shadow-ring: 0 0 0 1px var(--border-whisper);
-  --shadow-card: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 2px 2px rgba(0, 0, 0, 0.25), 0 12px 28px -20px rgba(0, 0, 0, 0.6);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.24);
   --shadow-pop: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 18px 55px -22px rgba(0, 0, 0, 0.7);
   --shadow-1: var(--shadow-card);
 }

@@ -149,6 +149,7 @@ export interface DecisionScorecardItem {
     criterionId: string;
     label: string;
     normalizedWeight: number;
+    direction: 'higher_is_better' | 'lower_is_better';
     score: number;
     adjustedScore: number;
     uncertainty: number;
@@ -382,6 +383,7 @@ export class EvidenceToDecisionService {
           criterionId: criterion.id,
           label: criterion.label,
           normalizedWeight: round4(criterion.normalizedWeight),
+          direction: criterion.direction ?? 'higher_is_better',
           score: round4(rawScore),
           adjustedScore: round4(adjustedScore),
           uncertainty: round4(uncertainty),

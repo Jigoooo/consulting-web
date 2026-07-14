@@ -5,7 +5,7 @@ import s from './ThinkingRibbon.module.css';
 /**
  * 창조 패턴 #1 — "AI 사고 리본" (U-2).
  * Between run start and the first delta, most chat UIs show a generic spinner.
- * This ribbon instead renders an orbiting-dots + shimmer phrase strip that
+ * This ribbon renders a restrained dot pulse + phrase strip that
  * cycles through what 지구 is doing, giving non-developers a sense of agency
  * ("생각 정리 중 → 맥락 확인 중 → 답변 구성 중") instead of a dead wait.
  */
@@ -42,8 +42,8 @@ export function ThinkingRibbon({ tool }: { tool?: string | null }) {
       if (!reduce && dotsRef.current) {
         const dots = dotsRef.current.children;
         gsap.to(dots, {
-          y: -4,
-          duration: 0.45,
+          opacity: 0.32,
+          duration: 0.6,
           ease: 'sine.inOut',
           stagger: { each: 0.12, yoyo: true, repeat: -1 },
         });
@@ -86,7 +86,6 @@ export function ThinkingRibbon({ tool }: { tool?: string | null }) {
       <span className={s.text} ref={textRef}>
         {PHASES[0]}
       </span>
-      <span className={s.shimmer} aria-hidden />
     </div>
   );
 }

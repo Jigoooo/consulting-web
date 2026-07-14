@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid, index, unique } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, uuid, index, unique, uniqueIndex } from 'drizzle-orm/pg-core';
 import { entityStatus, systemRole, authProvider } from './enums';
 import { primaryId, timestamps, softDelete } from './_shared';
 
@@ -51,5 +51,8 @@ export const sessions = pgTable(
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     ...timestamps,
   },
-  (t) => [index('sessions_user_idx').on(t.userId)],
+  (t) => [
+    index('sessions_user_idx').on(t.userId),
+    uniqueIndex('sessions_refresh_token_hash_unique').on(t.refreshTokenHash),
+  ],
 );

@@ -1,10 +1,11 @@
 import 'reflect-metadata';
+import { randomUUID } from 'node:crypto';
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { Pool } from 'pg';
 import { schema } from '@consulting/db-schema';
 import {
@@ -25,8 +26,10 @@ import {
   OkResponseSchema,
 } from '@consulting/contracts';
 import { AppModule } from '../src/app.module.js';
+import { artifactContentHash } from '../src/artifacts/artifact-export-preflight-audit.js';
+import { artifactVerificationPolicyPrefix } from '../src/artifacts/artifact-verification.service.js';
 
-const url = process.env.DATABASE_URL;
+const url = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const d = url ? describe : describe.skip;
 
 let app: INestApplication;
@@ -35,14 +38,29 @@ let db: NodePgDatabase<typeof schema>;
 const createdUsers: string[] = [];
 const createdWorkspaces: string[] = [];
 
+async function waitForValue<T>(
+  label: string,
+  load: () => Promise<T>,
+  ready: (value: T) => boolean,
+): Promise<T> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const value = await load();
+    if (ready(value)) return value;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`timed out waiting for ${label}`);
+}
+
 /** Hermes mock that emits tool.started/completed around deltas (Phase 2-A). */
 function installHermesToolEventFetchMock() {
   const body = [
-    'data: {"event":"tool.started","run_id":"run_p2","tool":"web_search","preview":"창원시 인구 추이 https://kosis.kr/stat"}',
+    'data: {"event":"tool.started","run_id":"run_p2","tool":"web_search","preview":"창원시 인구 추이"}',
     '',
-    'data: {"event":"tool.completed","run_id":"run_p2","tool":"web_search","duration":"1.2","error":"False"}',
+    'data: {"event":"tool.completed","run_id":"run_p2","tool":"web_search","preview":"창원시 인구 추이 공식 통계 https://kosis.kr/stat"}',
     '',
-    'data: {"event":"tool.started","run_id":"run_p2","tool":"gbrain_query","preview":"창원 공공시설 적정성"}',
+    'data: {"event":"tool.started","run_id":"run_p2","tool":"web_extract","preview":"https://example.go.kr/facility"}',
+    '',
+    'data: {"event":"tool.completed","run_id":"run_p2","tool":"web_extract","preview":"공공시설 적정성 공식 자료 https://example.go.kr/facility"}',
     '',
     'data: {"event":"message.delta","run_id":"run_p2","delta":"근거 기반 "}',
     '',
@@ -51,16 +69,20 @@ function installHermesToolEventFetchMock() {
     'data: {"event":"run.completed","run_id":"run_p2","output":"근거 기반 답변"}',
     '',
   ].join('\n');
-  const fetchMock = vi.fn(async (input: string | URL | Request) => {
+  const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const u = input instanceof Request ? input.url : String(input);
     if (u.endsWith('/v1/toolsets')) {
-      return new Response(JSON.stringify({ data: [{ name: 'web', enabled: true }, { name: 'file', enabled: true }] }), {
+      return new Response(JSON.stringify({ object: 'list', platform: 'api_server', inventory_complete: true, inventory_hash: 'a'.repeat(64), effective_toolsets: ['file', 'web'], effective_tools: ['read_file', 'web_search'], data: [{ name: 'web', enabled: true }, { name: 'file', enabled: true }] }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       });
     }
+    if (u.endsWith('/v1/capabilities')) {
+      return new Response(JSON.stringify({ features: { run_client_idempotency: true, run_tool_inventory_binding: true } }), { status: 200 });
+    }
     if (u.endsWith('/v1/runs')) {
-      return new Response(JSON.stringify({ run_id: 'run_p2', status: 'started' }), {
+      const payload = JSON.parse(String(init?.body ?? '{}')) as { client_run_id?: string; tool_inventory_hash?: string };
+      return new Response(JSON.stringify({ run_id: payload.client_run_id, status: 'started', tool_inventory_hash: payload.tool_inventory_hash }), {
         status: 202,
         headers: { 'content-type': 'application/json' },
       });
@@ -83,15 +105,18 @@ function installHermesPlainFetchMock() {
   const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const u = input instanceof Request ? input.url : String(input);
     if (u.endsWith('/v1/toolsets')) {
-      return new Response(JSON.stringify({ data: [{ name: 'web', enabled: true }, { name: 'file', enabled: true }] }), {
+      return new Response(JSON.stringify({ object: 'list', platform: 'api_server', inventory_complete: true, inventory_hash: 'a'.repeat(64), effective_toolsets: ['file', 'web'], effective_tools: ['read_file', 'web_search'], data: [{ name: 'web', enabled: true }, { name: 'file', enabled: true }] }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       });
     }
+    if (u.endsWith('/v1/capabilities')) {
+      return new Response(JSON.stringify({ features: { run_client_idempotency: true, run_tool_inventory_binding: true } }), { status: 200 });
+    }
     if (u.endsWith('/v1/runs')) {
-      const payload = JSON.parse(String(init?.body ?? '{}')) as { input?: string };
+      const payload = JSON.parse(String(init?.body ?? '{}')) as { client_run_id?: string; input?: string; tool_inventory_hash?: string };
       expect(payload.input).toBeTruthy();
-      return new Response(JSON.stringify({ run_id: 'run_attachment', status: 'started' }), {
+      return new Response(JSON.stringify({ run_id: payload.client_run_id, status: 'started', tool_inventory_hash: payload.tool_inventory_hash }), {
         status: 202,
         headers: { 'content-type': 'application/json' },
       });
@@ -169,26 +194,42 @@ d('Phase 2 — evidence, artifacts, notifications', () => {
     await request(app.getHttpServer())
       .post('/chat/stream')
       .set('authorization', owner.bearer)
-      .send({ threadId: thread.id, message: '근거를 찾아줘' })
+      .send({ threadId: thread.id, message: '근거를 찾아줘', clientMessageId: randomUUID() })
       .expect(200);
 
-    const evidence = ListEvidenceResponseSchema.parse(
-      (await request(app.getHttpServer())
-        .get(`/chat/threads/${thread.id}/evidence`)
-        .set('authorization', owner.bearer)
-        .expect(200)).body,
-    );
+    const evidence = await waitForValue(
+      'settled tool evidence',
+      async () => ListEvidenceResponseSchema.parse(
+        (await request(app.getHttpServer())
+          .get(`/chat/threads/${thread.id}/evidence`)
+          .set('authorization', owner.bearer)
+          .expect(200)).body,
+      ),
+      (value) => value.evidence.length === 2,
+    ).catch(async (error: unknown) => {
+      const settlements = await db
+        .select({
+          status: schema.chatTurnSettlements.status,
+          evidenceStatus: schema.chatTurnSettlements.evidenceStatus,
+          stepErrors: schema.chatTurnSettlements.stepErrors,
+          toolUses: schema.chatTurnSettlements.toolUses,
+        })
+        .from(schema.chatTurnSettlements)
+        .where(eq(schema.chatTurnSettlements.threadId, thread.id));
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`${message}; settlements=${JSON.stringify(settlements)}`);
+    });
     expect(evidence.evidence.length).toBe(2);
-    const bySource = Object.fromEntries(evidence.evidence.map((e) => [e.sourceType, e]));
-    expect(bySource.web).toBeDefined();
-    expect(bySource.web!.ref).toBe('web_search');
-    expect(bySource.web!.url).toContain('https://kosis.kr');
-    expect(bySource.gbrain).toBeDefined();
-    expect(bySource.gbrain!.excerpt).toContain('적정성');
+    const byRef = Object.fromEntries(evidence.evidence.map((e) => [e.ref, e]));
+    expect(byRef.web_search).toBeDefined();
+    expect(byRef.web_search!.sourceType).toBe('web');
+    expect(byRef.web_search!.url).toContain('https://kosis.kr');
+    expect(byRef.web_extract).toBeDefined();
+    expect(byRef.web_extract!.excerpt).toContain('적정성');
     // Both linked to the settled assistant message.
     expect(evidence.evidence.every((e) => e.messageId !== null)).toBe(true);
-    expect(evidence.evidence.every((e) => e.runId === 'run_p2')).toBe(true);
-  });
+    expect(evidence.evidence.every((e) => /^run_[0-9a-f]{32}$/.test(e.runId ?? ''))).toBe(true);
+  }, 15_000);
 
   it('E-3: manual evidence attach + membership isolation on evidence reads', async () => {
     installHermesToolEventFetchMock();
@@ -312,6 +353,8 @@ d('Phase 2 — evidence, artifacts, notifications', () => {
       answerInstruction: 'export 금지',
     });
 
+    const governingMessage = '핵심 결론은 정원 증가가 인건비 부담을 줄인다는 주장입니다.';
+    const soWhat = '따라서 검증이 통과하기 전에는 정원 확대 결정을 집행해서는 안 됩니다.';
     const created = CreateArtifactResponseSchema.parse(
       (await request(app.getHttpServer())
         .post('/artifacts')
@@ -321,11 +364,68 @@ d('Phase 2 — evidence, artifacts, notifications', () => {
           title: '검증 실패 산출물',
           content: '# 검증 실패 산출물\n\n정원 증가는 인건비 부담을 줄입니다.',
           note: '검증 실패 소스에서 저장',
+          structure: { governingMessage, soWhat },
           sourceThreadId: thread.id,
           sourceMessageId: assistant!.id,
         })
         .expect(201)).body,
     );
+
+    const [artifactVersion] = await db
+      .select({
+        id: schema.artifactVersions.id,
+        content: schema.artifactVersions.content,
+        governingMessage: schema.artifactVersions.governingMessage,
+        soWhat: schema.artifactVersions.soWhat,
+        versionNo: schema.artifactVersions.versionNo,
+        sourceThreadId: schema.artifactVersions.sourceThreadId,
+        sourceMessageId: schema.artifactVersions.sourceMessageId,
+      })
+      .from(schema.artifactVersions)
+      .where(eq(schema.artifactVersions.artifactId, created.id))
+      .limit(1);
+    expect(artifactVersion).toBeDefined();
+    const verificationTarget = {
+      artifactId: created.id,
+      artifactVersionId: artifactVersion!.id,
+      workspaceId: owner.personalWorkspaceId,
+      projectId: project.id,
+      title: '검증 실패 산출물',
+      versionNo: artifactVersion!.versionNo,
+      content: artifactVersion!.content,
+      governingMessage: artifactVersion!.governingMessage,
+      soWhat: artifactVersion!.soWhat,
+      sourceThreadId: artifactVersion!.sourceThreadId,
+      sourceMessageId: artifactVersion!.sourceMessageId,
+    };
+    const blockedGate = {
+      decision: 'BLOCKED' as const,
+      blockers: [
+        { code: 'exactness_blocked' as const, severity: 'blocker' as const, message: '수치 검증이 차단됐습니다.' },
+        { code: 'high_impact_refute' as const, severity: 'blocker' as const, message: '핵심 주장이 반박됐습니다.', claimId: 'CL-EXPORT-1' },
+      ],
+      warnings: [],
+    };
+    await db.insert(schema.artifactVersionVerifications).values({
+      workspaceId: owner.personalWorkspaceId,
+      projectId: project.id,
+      artifactId: created.id,
+      artifactVersionId: artifactVersion!.id,
+      contentHash: artifactContentHash(
+        artifactVersion!.content,
+        artifactVersion!.governingMessage,
+        artifactVersion!.soWhat,
+      ),
+      sourceThreadId: thread.id,
+      sourceMessageId: assistant!.id,
+      status: 'blocked',
+      exactness: { status: 'blocked' },
+      verdicts: [{ claimId: 'CL-EXPORT-1', verdict: 'refutes' }],
+      gate: blockedGate,
+      verifier: `${artifactVerificationPolicyPrefix(verificationTarget)}:fixture`,
+      evidenceCount: 1,
+      verifiedByUserId: owner.userId,
+    });
 
     const response = await request(app.getHttpServer())
       .get(`/artifacts/${created.id}/export?format=pdf`)
@@ -449,11 +549,15 @@ d('Phase 2 — evidence, artifacts, notifications', () => {
     await request(app.getHttpServer())
       .post('/chat/stream')
       .set('authorization', owner.bearer)
-      .send({ threadId: thread.id, message: '알림 테스트' })
+      .send({ threadId: thread.id, message: '알림 테스트', clientMessageId: randomUUID() })
       .expect(200);
 
-    const memberFeed = ListNotificationsResponseSchema.parse(
-      (await request(app.getHttpServer()).get('/notifications').set('authorization', member.bearer).expect(200)).body,
+    const memberFeed = await waitForValue(
+      'assistant reply notification',
+      async () => ListNotificationsResponseSchema.parse(
+        (await request(app.getHttpServer()).get('/notifications').set('authorization', member.bearer).expect(200)).body,
+      ),
+      (value) => value.notifications.some((notification) => notification.type === 'assistant_reply'),
     );
     const reply = memberFeed.notifications.find((n) => n.type === 'assistant_reply');
     expect(reply).toBeDefined();
@@ -477,7 +581,7 @@ d('Phase 2 — evidence, artifacts, notifications', () => {
       (await request(app.getHttpServer()).get('/notifications').set('authorization', member.bearer).expect(200)).body,
     );
     expect(memberFeed2.unreadCount).toBe(0);
-  });
+  }, 15_000);
 
   it('G-3: upload/list/send/download attachment as message attachment without auto-evidence', async () => {
     installHermesPlainFetchMock();
@@ -530,7 +634,7 @@ d('Phase 2 — evidence, artifacts, notifications', () => {
     await request(app.getHttpServer())
       .post('/chat/stream')
       .set('authorization', owner.bearer)
-      .send({ threadId: thread.id, message: '', attachmentIds: [uploaded.id] })
+      .send({ threadId: thread.id, message: '', clientMessageId: randomUUID(), attachmentIds: [uploaded.id] })
       .expect(200);
 
     const draftAfterSend = ListAttachmentsResponseSchema.parse(

@@ -4,9 +4,10 @@ import { ApiClientError } from '@consulting/api-client';
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useAuth } from '../../../lib/useAuth';
 import {
+  spaceKeys,
   useWorkspaces,
   useWorkspaceTree,
-  useCreateChannel,
+  useCreateChannelBundle,
   useCreateTopic,
   useCreateWorkspace,
   useRenameNode,
@@ -199,8 +200,9 @@ function Rail() {
         destructive
         onConfirm={() => {
           setLogoutOpen(false);
-          logout();
-          void router.navigate({ to: '/login', search: { redirect: '/' } });
+          void logout().finally(() => {
+            void router.navigate({ to: '/login', search: { redirect: '/' } });
+          });
         }}
       />
       <DialogRoot open={wsCreateOpen} onOpenChange={(open) => { setWsCreateOpen(open); if (!open) setWsName(''); }}>
@@ -347,7 +349,7 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
     // 좌측 선택 채널 하이라이트가 깜빡인다. 이전 값을 유지해 깜빡임을 없앤다.
     placeholderData: keepPreviousData,
   });
-  const createChannel = useCreateChannel(selected ?? undefined);
+  const createChannelBundle = useCreateChannelBundle(selected ?? undefined);
   const createTopic = useCreateTopic(selected ?? undefined);
   const renameNode = useRenameNode(selected ?? undefined);
   const archiveNode = useArchiveNode(selected ?? undefined);
@@ -382,8 +384,11 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
   const showTreeSkeleton = useDelayedFlag(isLoading, 300, 260);
 
   const ws = wsData?.workspaces.find((w) => w.id === selected);
+  const canCreateProject = tree?.permissions?.includes('project.create') ?? false;
   const wsName = ws?.name ?? user?.displayName ?? '…';
-  const settingsProject = tree?.projects.find((project) => project.id === settingsProjectId) ?? null;
+  const settingsProject = tree?.projects.find((project) =>
+    project.id === settingsProjectId && project.permissions?.includes('project.update'),
+  ) ?? null;
 
   async function onRename(kind: 'projects' | 'channels' | 'topics', id: string, current: string) {
     const name = await prompt('새 이름을 입력하세요', current);
@@ -411,7 +416,13 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
 
   async function openChannel(channel: { id: string; name: string; topics: Array<{ id: string; name: string }> }) {
     try {
-      const topicId = channel.topics[0]?.id ?? (await createTopic.mutateAsync({ channelId: channel.id, name: '대화' })).id;
+      const existingTopicId = channel.topics[0]?.id;
+      const ensured = existingTopicId ? null : await api.ensureChannelConversation(channel.id);
+      const topicId = existingTopicId ?? ensured!.topicId;
+      const ensuredThreadId = ensured?.threadId;
+      if (ensured) {
+        void qc.invalidateQueries({ queryKey: spaceKeys.tree(selected ?? '') });
+      }
       lastClickedTopicRef.current = topicId;
       if (topicId === currentTopicId) {
         tailScrollRequestStore.request();
@@ -433,7 +444,12 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
           try {
             // A newer click won the race — abandon this navigation.
             if (lastClickedTopicRef.current !== topicId) return;
-            const thread = await resolveTopicThreadForNavigation({ queryClient: qc, topicId, workspaceId: selected ?? undefined });
+            const thread = ensuredThreadId
+              ? await qc.ensureQueryData({
+                  queryKey: ['thread', ensuredThreadId],
+                  queryFn: () => api.threadDetail(ensuredThreadId),
+                })
+              : await resolveTopicThreadForNavigation({ queryClient: qc, topicId, workspaceId: selected ?? undefined });
             if (lastClickedTopicRef.current !== topicId) return;
             void qc.prefetchQuery({
               queryKey: messageWindowKeys.latest(thread.id),
@@ -457,10 +473,8 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
 
   async function createChannelWithDefaultTopic(projectId: string, name: string) {
     try {
-      const channel = await createChannel.mutateAsync({ projectId, name });
-      const topic = await createTopic.mutateAsync({ channelId: channel.id, name: '대화' });
-      const thread = await resolveTopicThreadForNavigation({ queryClient: qc, topicId: topic.id, workspaceId: selected ?? undefined });
-      await router.navigate({ to: '/th/$threadId', params: { threadId: thread.id } });
+      const bundle = await createChannelBundle.mutateAsync({ projectId, name });
+      await router.navigate({ to: '/th/$threadId', params: { threadId: bundle.threadId } });
     } catch {
       toast('error', '채널 생성에 실패했어요.');
     }
@@ -492,7 +506,8 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
     }
   }
 
-  async function restoreArchiveItem(item: { kind: 'project' | 'channel' | 'topic' | 'thread'; id: string; name: string }) {
+  async function restoreArchiveItem(item: { kind: 'project' | 'channel' | 'topic' | 'thread'; id: string; name: string; canRestore?: boolean | undefined }) {
+    if (item.canRestore !== true) return;
     try {
       await restoreArchived.mutateAsync({ kind: item.kind, id: item.id });
       toast('success', `"${item.name}" 복원했어요.`);
@@ -520,8 +535,8 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
       <DialogRoot open={archiveOpen} onOpenChange={setArchiveOpen}>
         <DialogContent
           className={s.archiveDialog}
-          title="숨긴 항목"
-          description="목록에서 숨긴 프로젝트·채널·대화는 지식으로 보존됩니다. 필요하면 여기서 다시 표시할 수 있어요."
+          title="보관한 항목"
+          description="목록에서 보관한 프로젝트·채널·대화는 지식으로 보존됩니다. 필요하면 여기서 다시 표시할 수 있어요."
         >
           <div className={s.archiveList} aria-busy={archivedScopes.isFetching || undefined}>
             {archivedScopes.isLoading ? (
@@ -547,9 +562,13 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
                     </div>
                     <div className={s.archivePath}>{item.parentPath.length ? item.parentPath.join(' › ') : '워크스페이스 바로 아래'}</div>
                   </div>
-                  <Button size="xs" variant="secondary" loading={restoreArchived.isPending} onClick={() => void restoreArchiveItem(item)}>
-                    복원
-                  </Button>
+                  {item.canRestore ? (
+                    <Button size="xs" variant="secondary" loading={restoreArchived.isPending} onClick={() => void restoreArchiveItem(item)}>
+                      복원
+                    </Button>
+                  ) : (
+                    <span className={s.archiveKind}>읽기 전용</span>
+                  )}
                 </div>
               ))
             ) : (
@@ -630,7 +649,10 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
         className={s.workspaceTool}
         disabled={!selected}
         onClick={() => {
-          void router.navigate({ to: '/observability' });
+          void router.navigate({
+            to: '/observability',
+            search: activeThread ? { threadId: activeThread } : {},
+          });
           onNavigate?.();
         }}
       >
@@ -643,8 +665,8 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
       <button type="button" className={s.workspaceTool} onClick={() => setArchiveOpen(true)} disabled={!selected}>
         <Icon name="library" size="sm" decorative />
         <span>
-          <strong>숨긴 항목</strong>
-          <small>목록에서 숨긴 프로젝트·채널·대화 복원</small>
+          <strong>보관한 항목</strong>
+          <small>목록에서 보관한 프로젝트·채널·대화 복원</small>
         </span>
       </button>
       <div className={s.tree}>
@@ -659,6 +681,8 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
         {tree?.projects.map((p) => {
           const collapsed = collapsedProjects.has(p.id);
           const createResetSignal = `${selected ?? ''}:${location.pathname}:${currentTopicId ?? ''}`;
+          const canUpdateProject = p.permissions?.includes('project.update') ?? false;
+          const canCreateChannel = p.permissions?.includes('channel.create') ?? false;
           return (
             <div key={p.id} className={`${s.projectBlock} ${collapsed ? s.projectBlockCollapsed : s.projectBlockOpen}`}>
               <div
@@ -684,10 +708,12 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
                 </span>
                 <RowMenu
                   actions={[
-                    { label: '프로젝트 설정', onSelect: () => setSettingsProjectId(p.id) },
                     { label: '산출물 보기', onSelect: () => workspaceModalStore.open('artifacts', { projectId: p.id }) },
-                    { label: '이름 변경', onSelect: () => void onRename('projects', p.id, p.name) },
-                    { label: '보관하기', onSelect: () => void onArchive('projects', p.id, p.name) },
+                    ...(canUpdateProject ? [
+                      { label: '프로젝트 설정', onSelect: () => setSettingsProjectId(p.id) },
+                      { label: '이름 변경', onSelect: () => void onRename('projects', p.id, p.name) },
+                      { label: '보관하기', onSelect: () => void onArchive('projects', p.id, p.name) },
+                    ] : []),
                   ]}
                 />
               </div>
@@ -697,6 +723,7 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
                     {p.channels.map((c) => {
                       const channelActive = c.topics.some((t) => t.id === currentTopicId);
                       const channelPending = navSpinner && c.topics.some((t) => t.id === pendingTopicId);
+                      const canUpdateChannel = c.permissions?.includes('channel.update') ?? false;
                       return (
                       <div key={c.id} className={s.channelBlock}>
                         <div
@@ -717,39 +744,45 @@ function Sidebar({ className = '', onNavigate }: { className?: string | undefine
                             {c.name}
                             {channelPending ? <Icon name="loader" size="xs" tone="muted" decorative className="cwSpin" /> : null}
                           </span>
-                          <RowMenu
-                            actions={[
-                              { label: '이름 변경', onSelect: () => void onRename('channels', c.id, c.name) },
-                              { label: '보관하기', onSelect: () => void onArchive('channels', c.id, c.name) },
-                            ]}
-                          />
+                          {canUpdateChannel ? (
+                            <RowMenu
+                              actions={[
+                                { label: '이름 변경', onSelect: () => void onRename('channels', c.id, c.name) },
+                                { label: '보관하기', onSelect: () => void onArchive('channels', c.id, c.name) },
+                              ]}
+                            />
+                          ) : null}
                         </div>
                       </div>
                       );
                     })}
-                    <InlineCreate
-                      level="channel"
-                      placeholder="채널 추가"
-                      busy={createChannel.isPending || createTopic.isPending}
-                      resetSignal={createResetSignal}
-                      onSubmit={(name) => void createChannelWithDefaultTopic(p.id, name)}
-                    />
+                    {canCreateChannel ? (
+                      <InlineCreate
+                        level="channel"
+                        placeholder="채널 추가"
+                        busy={createChannelBundle.isPending || createTopic.isPending}
+                        resetSignal={createResetSignal}
+                        onSubmit={(name) => void createChannelWithDefaultTopic(p.id, name)}
+                      />
+                    ) : null}
                   </div>
                 </div>
               </div>
             </div>
           );
         })}
-        <button
-          type="button"
-          className={s.newProj}
-          onClick={() => setProjectWizardOpen(true)}
-          disabled={!selected}
-        >
-          <span className={`${s.createTrigger} ${s.createProject}`}>
-            <Icon name="plus" size="xs" decorative /> 프로젝트 추가
-          </span>
-        </button>
+        {canCreateProject ? (
+          <button
+            type="button"
+            className={s.newProj}
+            onClick={() => setProjectWizardOpen(true)}
+            disabled={!selected}
+          >
+            <span className={`${s.createTrigger} ${s.createProject}`}>
+              <Icon name="plus" size="xs" decorative /> 프로젝트 추가
+            </span>
+          </button>
+        ) : null}
       </div>
     </div>
   );
@@ -772,7 +805,9 @@ const roleLabel: Record<string, string> = {
 
 function WorkspaceMembersPanel() {
   const selected = useSelectedWorkspace();
+  const { data: tree } = useWorkspaceTree(selected ?? undefined);
   const { data: members } = useMembers(selected ?? undefined);
+  const canInvite = tree?.permissions?.includes('workspace.invite') ?? false;
   const toast = useToast();
   const [inviteRole, setInviteRole] = useState<'editor' | 'viewer' | 'admin'>('editor');
   const [inviteBusy, setInviteBusy] = useState(false);
@@ -780,7 +815,7 @@ function WorkspaceMembersPanel() {
   const inviteRoleIndex = inviteRole === 'editor' ? 0 : inviteRole === 'viewer' ? 1 : 2;
 
   async function createInvite() {
-    if (!selected || inviteBusy) return;
+    if (!selected || inviteBusy || !canInvite) return;
     setInviteBusy(true);
     setInviteLink(null);
     try {
@@ -822,44 +857,51 @@ function WorkspaceMembersPanel() {
         )}
       </div>
 
-      <div className={s.ctxSection}>
-        <div className={s.ctxTitle}>초대</div>
-        <div
-          className={s.roleSeg}
-          role="radiogroup"
-          aria-label="초대 권한 선택"
-          style={{ '--role-index': inviteRoleIndex } as CSSProperties}
-        >
-          <span className={s.roleSegThumb} aria-hidden="true" />
-          {(['editor', 'viewer', 'admin'] as const).map((r) => (
-            <button
-              key={r}
-              type="button"
-              role="radio"
-              aria-checked={inviteRole === r}
-              className={`${s.roleSegItem} ${inviteRole === r ? s.roleSegOn : ''}`}
-              onClick={() => setInviteRole(r)}
-            >
-              {roleLabel[r]}
-            </button>
-          ))}
-        </div>
-        <Button type="button" variant="primary" size="sm" className={s.inviteBtn} disabled={inviteBusy || !selected} onClick={() => void createInvite()}>
-          {inviteBusy ? '생성 중…' : '초대 링크 생성'}
-        </Button>
-        {inviteLink ? (
+      {canInvite ? (
+        <div className={s.ctxSection}>
+          <div className={s.ctxTitle}>초대</div>
           <div
-            className={s.inviteLink}
-            title="클릭하여 복사"
-            onClick={() => {
-              void navigator.clipboard.writeText(inviteLink).then(() => toast('success', '복사했어요.'));
-            }}
+            className={s.roleSeg}
+            role="radiogroup"
+            aria-label="초대 권한 선택"
+            style={{ '--role-index': inviteRoleIndex } as CSSProperties}
           >
-            {inviteLink}
+            <span className={s.roleSegThumb} aria-hidden="true" />
+            {(['editor', 'viewer', 'admin'] as const).map((r) => (
+              <button
+                key={r}
+                type="button"
+                role="radio"
+                aria-checked={inviteRole === r}
+                className={`${s.roleSegItem} ${inviteRole === r ? s.roleSegOn : ''}`}
+                onClick={() => setInviteRole(r)}
+              >
+                {roleLabel[r]}
+              </button>
+            ))}
           </div>
-        ) : null}
-        <div className={s.ctxHint}>링크를 받은 사람은 가입/로그인 후 이 워크스페이스에 참여합니다. 7일 후 만료.</div>
-      </div>
+          <Button type="button" variant="primary" size="sm" className={s.inviteBtn} disabled={inviteBusy || !selected} onClick={() => void createInvite()}>
+            {inviteBusy ? '생성 중…' : '초대 링크 생성'}
+          </Button>
+          {inviteLink ? (
+            <div
+              className={s.inviteLink}
+              title="클릭하여 복사"
+              onClick={() => {
+                void navigator.clipboard.writeText(inviteLink).then(() => toast('success', '복사했어요.'));
+              }}
+            >
+              {inviteLink}
+            </div>
+          ) : null}
+          <div className={s.ctxHint}>링크를 받은 사람은 가입/로그인 후 이 워크스페이스에 참여합니다. 7일 후 만료.</div>
+        </div>
+      ) : (
+        <div className={s.ctxSection}>
+          <div className={s.ctxTitle}>초대</div>
+          <div className={s.ctxHint}>워크스페이스 소유자 또는 관리자만 초대 링크를 만들 수 있습니다.</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -924,7 +966,11 @@ function ContextPanel({ collapsed, onToggle }: { collapsed: boolean; onToggle: (
             ) : (
               <div className={s.ctxSection}>
                 <div className={s.ctxTitle}>근거 자료</div>
-                <EvidencePanel threadId={activeThread} {...(activeProjectId ? { projectId: activeProjectId } : {})} />
+                <EvidencePanel
+                  threadId={activeThread}
+                  {...(activeProjectId ? { projectId: activeProjectId } : {})}
+                  {...(activeThreadDetail.data?.topicId ? { topicId: activeThreadDetail.data.topicId } : {})}
+                />
               </div>
             )}
           </>

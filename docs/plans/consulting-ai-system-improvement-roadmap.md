@@ -122,6 +122,177 @@ current baseline:
 
 2026-07-09 RAPTOR-lite read-only spike는 global-summary 질문에서 coverage_delta=-0.0333, precision_delta=-0.0197이라 HOLD다. 제품 경로는 변경하지 않았다.
 
+## 0.4 2026-07-11 확장 목표 — 완성형 production까지 전면 구축·반복 검증
+
+사용자 확장 지시를 이 문서의 최상위 완료 계약으로 반영한다.
+
+```text
+W2 잔여만 끝내는 것이 목표가 아니다.
+W2 → W3 → P3~P6 전체 계획과 Consulting Web의 실사용 UX·UI·API·DB·검증 가시화·
+운영 안정성까지 하나의 production 완결 트랙으로 수행한다.
+사용자가 예시로 든 증상만 보지 않고, 전 화면·전 핵심 흐름·전 데이터 경계를 반복 감사한다.
+```
+
+### 확정 실행 순서
+
+```text
+1. W2 게이트 활성화 완결
+   - retrieval relevance feedback
+   - source freshness warning
+   - refuted/mixed → shared-brain CONTRADICTS provenance edge
+   - governing_message / so_what artifact preflight
+   - artifactVersionId + contentHash 결박 red-team shadow→warning gate
+
+2. W2 통합·배포 검증
+   - global outbox event-type routing fail-closed
+   - processing lease/heartbeat/만료 재claim
+   - chat answer/evidence/verifier/brain/notification durable settlement
+   - 전체 회귀, 실제 App PG + brain PG18 readback, 실브라우저 핵심 흐름
+   - 독립 적대 리뷰, 문서/커밋/이미지/마이그레이션 정합, post-deploy smoke
+
+3. Consulting Web production discovery + remediation
+   - workspace/project/channel/topic/thread 생성·수정·삭제·재진입·실패복구
+   - 채널 대화, 스트리밍, 장문, 검색, 스크롤, 캐시, 첨부, 런타임 상태
+   - 근거·자료실·보관함·산출물·Review Queue·Trace/Evidence 정보구조
+   - DB/API에는 있으나 UI에 노출되지 않는 데이터와 dead/placeholder UI 전수 감사
+   - loading/empty/error/stale/collecting/unsupported 상태의 계약·문구·다음 행동
+   - overlay/modal/popover/z-index/clip/hit-target 및 확대·축소·소멸처럼 보이는 모션
+   - keyboard/focus/WCAG/reduced-motion/responsive/한국어 가독성
+   - 검증 진행상태와 결과를 비개발자에게 실시간·사후 설명 가능한 UI
+
+4. W3
+   - ReportGenerationWorkflow LangGraph.js shadow spike (채팅 경로 제외)
+   - kill/resume, pointer-state, trace 연속성, 동일입력 결정 재현성
+   - MCDA 5축+민감도, Monte Carlo 파급액 구간 도구 및 UI 연결
+
+5. P3~P6
+   - trace/eval dashboard, RAG metrics, 실패→fixture, CI regression, versioning
+   - Evidence/Review/Trace v2와 report/document/batch/human-review workflow
+   - Tool Registry, MCP allowlist/승인, injection/PII/tenant/immutable audit/red-team
+   - community/PPR/LightRAG 및 causal/optimization/org-network/scenario analytics
+```
+
+### Production QA 반복 루프
+
+각 수직 슬라이스는 아래 루프를 통과해야 한다.
+
+```text
+실브라우저/DB/API 증거 수집
+→ 계약·상태·UI·모션 원인 분류
+→ RED 테스트 또는 재현 fixture
+→ 최소 근본수정
+→ narrow test + typecheck/lint/build
+→ 동일 실브라우저 흐름 재현
+→ API/DB readback + console/network 확인
+→ 독립 spec review
+→ 독립 quality/security/UX review
+→ 인접 위험 1회 스캔
+```
+
+종료 조건:
+
+```text
+- 구현 source가 tracked diff/commit에 실제 존재한다.
+- API/DB 성공만으로 UI 완료를 선언하지 않고, 실제 사용 흐름에서 데이터가 보인다.
+- UI 성공만으로 영속성 완료를 선언하지 않고, 새로고침/재기동 후 readback이 유지된다.
+- blocker/high 결함 0인 독립 QA 라운드를 최종 diff에서 2회 연속 통과한다.
+- 마지막 수정 뒤 전체 브라우저 QA를 다시 실행한다(수정 전 영상/스크린샷 재사용 금지).
+- post-deploy health/API/DB/browser readback과 QA marker 정리까지 끝나야 production 완료다.
+```
+
+병렬 실행 규칙:
+
+```text
+- active model은 gpt-5.6-sol을 유지하고, single-writer / multi-reader 구조로 운영한다.
+- 구현 파일은 한 writer만 소유하며 병렬 에이전트는 UX·계약·보안·회복성·성능을 독립 검토한다.
+- 서로 같은 파일을 동시 수정하지 않는다. reviewer timeout은 통과로 세지 않고 좁혀 재검토한다.
+- P6 고급 retrieval은 목표에서 제외하지 않지만, 현재 baseline을 이긴 실측 결과 없이 live 기본값으로 승격하지 않는다.
+```
+
+## 0.5 2026-07-12 W2-5 red-team gate — production warning 완료
+
+```text
+구현 완료:
+  - artifactVersionId + SHA-256(content + governing_message + so_what) + tenant scope 결박
+  - artifact_red_team_jobs durable state machine: transactional outbox, idempotent enqueue,
+    lease/heartbeat/fencing, bounded retry, expired-lease recovery, monotonic sequence_no
+  - artifact_red_team_runs immutable terminal ledger: append-only UPDATE/DELETE guard,
+    job_id NOT NULL 1:1, job/run status 일치 및 workspace/project/artifact/version scope trigger
+  - worker가 현재 content+governing_message+so_what hash를 재계산하며 불일치 시 fail-closed
+  - reviewer 사용자 삭제 시 FK UPDATE 없이 감사 UUID를 immutable run에 보존
+  - main chat Hermes와 분리된 reviewer URL/key 및 run 시작 전 `/v1/toolsets` zero-enabled 검사
+  - Hermes endpoint가 숨기는 default MCP까지 막도록 전용 profile `no_mcp` + resolved tool set=∅ 운영 불변식
+  - reviewer endpoint가 `inventory_complete=true`, `effective_toolsets=[]`, `effective_tools=[]`를
+    positive attestation하지 않으면 `/v1/runs` 이전 fail-closed
+  - 전용 no-tool reviewer context와 감사원·의회·노조 3-persona completeness 검증
+  - prompt-injection 문구는 generic retry 실패 대신 3-persona deterministic BLOCKED run으로 원장화
+  - terminal run 부모 FK RESTRICT + 무조건 append-only + trigger search_path 고정
+  - cached export PASS는 background red-team polling 중에도 non-blocking 유지
+  - 안전 기본값 off; 승인된 shadow→warning 명시적 승격, pending/processing polling,
+    stale/missing/failed/non-pass warning 계약
+  - warning 단계는 내보내기를 막지 않으며 reviewer 장애도 verifier 결과를 뒤집지 않음
+
+검증:
+  - API 352 passed / 2 skipped
+  - Web 116 passed, Contracts 51 passed
+  - 실 PostgreSQL job/ledger 및 PostgreSQL→outbox→Redis→Bull worker E2E 통과
+  - main Hermes `/v1/toolsets` readback: enabled 13개로 reviewer 재사용 금지 조건 확인
+  - Hermes `/v1/toolsets`를 profile-aware complete attestation으로 보강하고 pure resolver TDD와
+    update-safe patch hash 재보존을 완료
+  - 최신 독립 closure review: BLOCKER 0 / HIGH 0 / MEDIUM 0
+  - workspace 전체 typecheck, lint, production build 통과
+  - 0036 migration을 로컬 테스트 DB에서 제거 후 fresh re-apply 검증
+  - production snapshot backup 생성 후 복원본 migration rehearsal 2회 및 candidate image migration 1회 통과
+
+production readback:
+  - 전용 `consultingreviewer` Gateway(127.0.0.1:8643): systemd active, restart 0,
+    `inventory_complete=true`, `effective_toolsets=[]`, `effective_tools=[]`, enabled row 0
+  - App PG migration `0036_artifact_red_team_runs.sql` 적용, tables 2개와 scope/append-only trigger 3개 확인
+  - API image `sha256:44c1c18a3622...` healthy, DB/Redis/BullMQ/Hermes readiness 모두 ok
+  - 실제 durable E2E: outbox published 1회 → Redis/Bull worker attempt 1 → reviewer run completed,
+    verdict BLOCKED, 공격 6/방어 6, 감사원·의회·노조 각 2, blocker 3, last_error 없음
+  - reviewer poll status `completed`, last_event `run.completed`, output present, error 없음
+  - immutable run UPDATE 공격은 SQLSTATE P0001로 거부되고 기존 BLOCKED 원장이 보존됨
+  - shadow preflight: canExport=true, red-team BLOCKED이나 message 0
+  - warning 승격 후 preflight: canExport=true, message 6, 공격/방어 6/6
+  - warning 상태 실제 PDF export: HTTP 200, `application/pdf`, PDF magic 정상
+
+결론:
+  - W2-5는 production warning 단계까지 완료했다.
+  - red-team은 현재 비차단 경고 계층이며 verifier PASS를 뒤집지 않는다.
+  - 향후 export 강제차단 승격은 별도 운영 지표와 오탐률 gate를 통과할 때만 검토한다.
+```
+
+## 0.6 2026-07-12 W2 최종 통합·production 완료
+
+```text
+회귀·정합:
+  - empty PG18 + Redis 전체 integration 355/355, skip 0
+  - 최신 source에서 root typecheck/lint/test/build 통과
+  - artifact/tenant/negative-security focused PG18 integration 25/25, skip 0
+  - App PG, brain PG18, Redis/BullMQ, Hermes settlement/outbox readback 정상
+
+실브라우저·산출물:
+  - QA signup → workspace → project/channel → chat → durable settlement → brain/evidence/notification 완료
+  - native window.prompt를 접근 가능한 app dialog로 교체하고 TypeScript AST 기반 native-dialog 회귀 정책 적용
+  - artifact v3: source thread/message 결박, evidence 2건, verifier PASS,
+    red-team BLOCKED warning 6건, 공격/방어 6/6, PDF/DOCX 실제 binary 200 및 magic/hash 확인
+  - 새 version editor는 개방 시 source를 snapshot으로 고정한다.
+    v3 editor 개방 → source-null v2 timeline 전환 → v4/v5 제출 적대 E2E에서도
+    App PG source thread/message가 v1/v3와 동일하게 보존됐다.
+
+배포·독립 판정:
+  - native dialog/source snapshot 수정 focused 11/11 및 Web 전체 gate 통과
+  - fresh 독립 closure review BLOCKER/HIGH/MEDIUM 0/0/0
+  - Web image `sha256:3281843134c4...` production 승격
+  - post-deploy image identity, health 200, CSP, HTML no-store, hashed asset immutable,
+    browser console 0, API/Web suspicious log 0, BullMQ 전 queue backlog/failed 0
+
+결론:
+  - W2 구현·durability·실데이터·실브라우저·독립 리뷰·배포 gate는 완료했다.
+  - 다음 실행 단계는 Consulting Web production discovery + remediation이다.
+```
+
 ---
 
 ## 1. 현재 구조 진단 요약

@@ -64,6 +64,8 @@ export const ChatStreamApprovalEventSchema = z.object({
   runId: RunIdSchema,
   /** Product-side durable approval ledger id. Server-generated for UI approval responses. */
   approvalId: UuidSchema.optional(),
+  /** Upstream action/rule identity. Missing identity is treated as high blast radius. */
+  toolId: z.string().min(1).max(120).optional(),
   command: z.string().max(2_000).optional(),
   message: z.string().max(2_000).optional(),
   risk: z.string().max(120).optional(),

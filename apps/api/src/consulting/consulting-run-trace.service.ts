@@ -97,7 +97,7 @@ export class ConsultingRunTraceService {
         input: span.input,
         output: span.output,
         metadata: span.metadata,
-      });
+      }).onConflictDoNothing();
     } catch (error) {
       if (!isMissingTraceTable(error)) throw error;
     }

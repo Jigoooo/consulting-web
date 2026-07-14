@@ -16,7 +16,11 @@ describe('chat stream contracts', () => {
   it('accepts strict chat stream requests', () => {
     const clean = { threadId: uuid, message: '안녕하세요', clientMessageId: uuid, model: 'gpt-5.5', attachmentIds: [uuid] };
     expect(ChatStreamRequestSchema.parse(clean)).toEqual(clean);
-    expect(ChatStreamRequestSchema.parse({ threadId: uuid, message: '', attachmentIds: [uuid] })).toEqual({ threadId: uuid, message: '', attachmentIds: [uuid] });
+    expect(ChatStreamRequestSchema.parse({ threadId: uuid, message: '', clientMessageId: uuid, attachmentIds: [uuid] })).toEqual({ threadId: uuid, message: '', clientMessageId: uuid, attachmentIds: [uuid] });
+    expect(ChatStreamRequestSchema.parse({ threadId: uuid, message: 'legacy request' })).toEqual({
+      threadId: uuid,
+      message: 'legacy request',
+    });
     expect(() => ChatStreamRequestSchema.parse({ ...clean, extra: true })).toThrow();
     expect(() => ChatStreamRequestSchema.parse({ threadId: uuid, message: '' })).toThrow();
   });

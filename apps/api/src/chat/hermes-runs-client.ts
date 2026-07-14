@@ -1,6 +1,7 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { Inject, Injectable } from '@nestjs/common';
+import { setTimeout as delay } from 'node:timers/promises';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import type {
   ChatApprovalChoice,
   ChatRunActionResponse,
@@ -14,10 +15,15 @@ import type {
 } from '@consulting/contracts';
 import { ENV_TOKEN } from '../config/config.module.js';
 import type { Env } from '../config/env.schema.js';
+import { redactPii } from '../security/pii-redaction.js';
+import { redactSensitiveText } from '../security/redact-sensitive-text.js';
+import { buildToolPolicyAudit, evaluateToolPolicy, type ToolPolicyResult } from '../security/tool-policy.js';
+import { ToolPolicyAuditStore } from '../security/tool-policy-audit.store.js';
 
 interface HermesRunStartResponse {
   readonly run_id?: unknown;
   readonly status?: unknown;
+  readonly tool_inventory_hash?: unknown;
 }
 
 interface HermesRunSseEvent {
@@ -35,6 +41,8 @@ interface HermesRunSseEvent {
   readonly message?: unknown;
   readonly reason?: unknown;
   readonly risk?: unknown;
+  readonly tool_id?: unknown;
+  readonly pattern_key?: unknown;
 }
 
 interface HermesRunStatusResponse {
@@ -54,6 +62,12 @@ interface HermesCapabilitiesResponse {
 }
 
 interface HermesToolsetsResponse {
+  readonly object?: unknown;
+  readonly platform?: unknown;
+  readonly inventory_complete?: unknown;
+  readonly inventory_hash?: unknown;
+  readonly effective_toolsets?: unknown;
+  readonly effective_tools?: unknown;
   readonly data?: unknown;
 }
 
@@ -73,13 +87,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object';
 }
 
-const APPROVAL_CHOICES: ChatApprovalChoice[] = ['once', 'session', 'deny'];
+function normalizeUniqueStringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || item.trim().length === 0)) {
+    return null;
+  }
+  const normalized = value.map((item) => String(item).trim().toLowerCase());
+  return new Set(normalized).size === normalized.length ? normalized.sort() : null;
+}
+
+
+const HERMES_STOP_RETRY_DELAYS_MS = [100, 250, 500, 1_000] as const;
+
+class HermesRunStartError extends Error {
+  constructor(message: string, readonly mayHaveStarted: boolean) {
+    super(message);
+    this.name = 'HermesRunStartError';
+  }
+}
+
 const HERMES_AGENT_BRAND_RE = /^hermes(?:[\s_-]+agent)?$/i;
 const DEFAULT_ALLOWED_HERMES_TOOLSETS = [
   // Explicit allowlist for the current consulting-web API-server chat path.
   // Dynamic/high-blast-radius toolsets (MCP, messaging, Discord/admin,
-  // Home Assistant, TTS, X search) stay denied unless an operator adds them
-  // to HERMES_ALLOWED_TOOLSETS.
+  // Home Assistant, TTS, X search) stay denied; config allowlisting alone is
+  // insufficient and a dedicated per-action approval path is required.
   'web',
   'search',
   'terminal',
@@ -266,8 +297,8 @@ function mergeModelRoutes(configured: ChatRuntimeModel[], upstream: ChatRuntimeM
 function normalizeToolsetStatus(item: unknown): HermesToolsetStatus | null {
   if (!isRecord(item)) return null;
   const name = stringField(item, ['name', 'id']);
-  if (!name) return null;
-  return { name, enabled: item.enabled === true };
+  if (!name || typeof item.enabled !== 'boolean') return null;
+  return { name: name.toLowerCase(), enabled: item.enabled };
 }
 
 /**
@@ -292,17 +323,40 @@ const CONSULTING_RESPONSE_FORMAT = [
 
 @Injectable()
 export class HermesRunsClient {
-  constructor(@Inject(ENV_TOKEN) private readonly env: Env) {}
+  private readonly logger = new Logger(HermesRunsClient.name);
 
-  async *streamChat(cmd: ChatStreamRequest, scope?: { workspaceId: string; projectId: string; memoryContext?: string }): AsyncGenerator<ChatStreamEvent> {
+  constructor(
+    @Inject(ENV_TOKEN) private readonly env: Env,
+    @Optional() private readonly toolPolicyAudits?: ToolPolicyAuditStore,
+  ) {}
+
+  async *streamChat(
+    cmd: ChatStreamRequest,
+    scope?: { workspaceId: string; projectId: string; memoryContext?: string },
+    signal?: AbortSignal,
+  ): AsyncGenerator<ChatStreamEvent> {
     let runId: string | undefined;
+    let runSubmissionAttempted = false;
+    let terminalObserved = false;
+    let cleanupAttempted = false;
     try {
-      runId = await this.startRun(cmd, scope);
-      const status = await this.getRunStatus(runId).catch(() => null);
+      runId = `run_${randomUUID().replaceAll('-', '')}`;
+      const toolInventoryHash = await this.enforceHermesToolPolicy(scope?.workspaceId, runId, signal);
+      await this.enforceHermesRunClientIdentity(signal);
+      runSubmissionAttempted = true;
+      try {
+        await this.startRun(cmd, scope, runId, toolInventoryHash, signal);
+      } catch (error) {
+        if (error instanceof HermesRunStartError && !error.mayHaveStarted) {
+          runSubmissionAttempted = false;
+        }
+        throw error;
+      }
+      const status = await this.getRunStatus(runId, signal).catch(() => null);
       const model = typeof status?.model === 'string' ? status.model : undefined;
       yield { type: 'start', runId, threadId: cmd.threadId, ts: new Date().toISOString(), ...(model ? { model } : {}) };
 
-      for await (const upstream of this.readRunEvents(runId)) {
+      for await (const upstream of this.readRunEvents(runId, signal)) {
         const eventType = typeof upstream.event === 'string' ? upstream.event : '';
         if (eventType === 'message.delta') {
           const text = typeof upstream.delta === 'string' ? upstream.delta : '';
@@ -312,7 +366,9 @@ export class HermesRunsClient {
         if (eventType === 'tool.started' || eventType === 'tool.completed') {
           const tool = typeof upstream.tool === 'string' ? upstream.tool : '';
           if (tool) {
-            const preview = typeof upstream.preview === 'string' ? upstream.preview.slice(0, 500) : undefined;
+            const preview = typeof upstream.preview === 'string'
+              ? redactPii(redactSensitiveText(upstream.preview)).slice(0, 500)
+              : undefined;
             yield {
               type: 'tool',
               runId,
@@ -324,7 +380,9 @@ export class HermesRunsClient {
           continue;
         }
         if (eventType === 'reasoning.available') {
-          const text = typeof upstream.text === 'string' ? upstream.text.slice(0, 2_000) : '';
+          const text = typeof upstream.text === 'string'
+            ? redactPii(redactSensitiveText(upstream.text)).slice(0, 2_000)
+            : '';
           yield { type: 'reasoning', runId, text };
           continue;
         }
@@ -333,11 +391,13 @@ export class HermesRunsClient {
           continue;
         }
         if (eventType === 'run.completed') {
+          terminalObserved = true;
           const usage = this.normalizeUsage(upstream.usage);
           yield { type: 'done', runId, ...(usage ? { usage } : {}) };
           return;
         }
         if (eventType === 'run.failed') {
+          terminalObserved = true;
           yield {
             type: 'error',
             runId,
@@ -347,88 +407,234 @@ export class HermesRunsClient {
           return;
         }
         if (eventType === 'run.cancelled') {
+          terminalObserved = true;
           yield { type: 'error', runId, code: 'HERMES_RUN_CANCELLED', message: 'Hermes run was cancelled' };
           return;
         }
       }
 
-      yield { type: 'done', runId };
+      if (signal?.aborted) return;
+      const terminalStatus = await this.getRunStatus(runId).catch(() => null);
+      if (terminalStatus?.status === 'completed') {
+        terminalObserved = true;
+        const usage = this.normalizeUsage(terminalStatus.usage);
+        yield { type: 'done', runId, ...(usage ? { usage } : {}) };
+        return;
+      }
+      if (terminalStatus?.status === 'failed') {
+        terminalObserved = true;
+        yield { type: 'error', runId, code: 'HERMES_RUN_FAILED', message: 'Hermes run failed' };
+        return;
+      }
+      if (terminalStatus?.status === 'cancelled') {
+        terminalObserved = true;
+        yield { type: 'error', runId, code: 'HERMES_RUN_CANCELLED', message: 'Hermes run was cancelled' };
+        return;
+      }
+      cleanupAttempted = true;
+      await this.stopSubmittedRun(runId).catch((error: unknown) => {
+        this.logger.warn(`Hermes run stop after incomplete stream failed: ${this.safeErrorMessage(error, 'stop failed')}`);
+      });
+      yield {
+        type: 'error',
+        runId,
+        code: 'HERMES_STREAM_INCOMPLETE',
+        message: 'Hermes event stream ended without a terminal run state',
+      };
     } catch (error) {
+      if (signal?.aborted) return;
       yield {
         type: 'error',
         ...(runId ? { runId } : {}),
         code: 'HERMES_PROXY_ERROR',
         message: this.safeErrorMessage(error, 'Hermes proxy failed'),
       };
+    } finally {
+      if (runSubmissionAttempted && runId && !terminalObserved && !cleanupAttempted) {
+        await this.stopSubmittedRun(runId).catch((error: unknown) => {
+          this.logger.warn(`Hermes run cleanup before terminal state failed: ${this.safeErrorMessage(error, 'stop failed')}`);
+        });
+      }
     }
   }
 
-  private async startRun(cmd: ChatStreamRequest, scope?: { workspaceId: string; projectId: string; memoryContext?: string }): Promise<string> {
-    await this.enforceHermesToolPolicy();
-    // #3 (B1): share Hermes dialogue memory across ALL channels of a project so
-    // 지구 remembers context from sibling channels. Session is scoped by
-    // workspace+project so other projects/workspaces stay fully isolated
-    // ("★듀얼스토어" isolation). Falls back to thread scope when project is
-    // unknown. NOTE: the on-screen transcript is still per-thread (chat_messages
-    // is threadId-scoped) — only 지구's memory is project-wide.
+  private async startRun(
+    cmd: ChatStreamRequest,
+    scope?: { workspaceId: string; projectId: string; memoryContext?: string },
+    clientRunId?: string,
+    toolInventoryHash?: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    // Scope isolation: Hermes dialogue state follows the exact web thread.
+    // Sharing a project-scoped session leaks sibling channel/topic conversations even
+    // when GraphRAG retrieval itself is exact-scope. Cross-scope evidence is handled
+    // separately through an explicit, provenance-bearing retrieval allow-list.
     const sessionId = scope
-      ? this.stableSessionId('project', scope.workspaceId, scope.projectId)
+      ? this.stableSessionId('thread', scope.workspaceId, scope.projectId, cmd.threadId)
       : this.stableSessionId('thread', cmd.threadId);
     const payload: Record<string, unknown> = {
       input: cmd.message,
       session_id: sessionId,
+      ...(clientRunId ? { client_run_id: clientRunId } : {}),
+      ...(toolInventoryHash ? { tool_inventory_hash: toolInventoryHash } : {}),
       // 답변 포맷 규약 + 기존 consulting GraphRAG 참고 기억을 ephemeral_system_prompt로 주입한다.
       instructions: this.instructions(scope?.memoryContext),
     };
     if (cmd.model) payload.model = cmd.model;
-    const response = await fetch(this.url('/v1/runs'), {
-      method: 'POST',
-      headers: this.headers({ 'content-type': 'application/json' }),
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) {
-      throw new Error(`Hermes run start failed (${response.status})`);
+    let response: Response;
+    try {
+      response = await fetch(this.url('/v1/runs'), {
+        method: 'POST',
+        headers: this.headers({ 'content-type': 'application/json' }),
+        body: JSON.stringify(payload),
+        ...(signal ? { signal } : {}),
+      });
+    } catch (error) {
+      throw new HermesRunStartError(this.safeErrorMessage(error, 'Hermes run start transport failed'), true);
     }
-    const body = await response.json() as HermesRunStartResponse;
+    if (!response.ok) {
+      throw new HermesRunStartError(`Hermes run start failed (${response.status})`, response.status >= 500);
+    }
+    let body: HermesRunStartResponse;
+    try {
+      body = await response.json() as HermesRunStartResponse;
+    } catch (error) {
+      throw new HermesRunStartError(this.safeErrorMessage(error, 'Hermes run start returned invalid JSON'), true);
+    }
     if (typeof body.run_id !== 'string' || body.run_id.length === 0) {
-      throw new Error('Hermes run start returned invalid run_id');
+      throw new HermesRunStartError('Hermes run start returned invalid run_id', true);
+    }
+    if (clientRunId && body.run_id !== clientRunId) {
+      await this.stopRun(body.run_id).catch(() => undefined);
+      throw new HermesRunStartError('Hermes run start did not honor client_run_id', true);
+    }
+    if (toolInventoryHash && body.tool_inventory_hash !== toolInventoryHash) {
+      await this.stopRun(body.run_id).catch(() => undefined);
+      throw new HermesRunStartError('Hermes run start did not honor tool_inventory_hash', true);
     }
     return body.run_id;
   }
 
-  private async enforceHermesToolPolicy(): Promise<void> {
-    if (this.env.HERMES_TOOL_POLICY_ENFORCED === false) return;
-    const allowed = new Set(parseCommaList(this.env.HERMES_ALLOWED_TOOLSETS));
-    if (allowed.size === 0) {
-      for (const name of DEFAULT_ALLOWED_HERMES_TOOLSETS) allowed.add(name);
+  private async enforceHermesToolPolicy(workspaceId: string | undefined, runId: string, signal?: AbortSignal): Promise<string> {
+    const baseAllowlist = parseCommaList(this.env.HERMES_ALLOWED_TOOLSETS);
+    if (baseAllowlist.length === 0) baseAllowlist.push(...DEFAULT_ALLOWED_HERMES_TOOLSETS);
+    if (this.env.APP_ENV === 'production' && !this.toolPolicyAudits) {
+      throw new Error('Hermes tool policy audit store is required in production');
     }
 
-    const response = await fetch(this.url('/v1/toolsets'), {
-      method: 'GET',
-      headers: this.headers({ accept: 'application/json' }),
-    });
+    let response: Response;
+    try {
+      response = await fetch(this.url('/v1/toolsets'), {
+        method: 'GET',
+        headers: this.headers({ accept: 'application/json' }),
+        ...(signal ? { signal } : {}),
+      });
+    } catch (error) {
+      await this.recordToolPolicyAudit(workspaceId, runId, evaluateToolPolicy({
+        enabledToolsets: ['__policy_check_unavailable__'], baseAllowlist, enforced: true,
+      }), []);
+      throw error;
+    }
     if (!response.ok) {
+      await this.recordToolPolicyAudit(workspaceId, runId, evaluateToolPolicy({
+        enabledToolsets: ['__policy_check_unavailable__'], baseAllowlist, enforced: true,
+      }), []);
       throw new Error(`Hermes tool policy check failed (${response.status})`);
     }
 
-    const body = await response.json() as HermesToolsetsResponse;
-    const statuses = Array.isArray(body.data)
-      ? body.data.flatMap((item) => {
+    let body: HermesToolsetsResponse;
+    try {
+      body = await response.json() as HermesToolsetsResponse;
+    } catch (error) {
+      const incomplete = evaluateToolPolicy({
+        enabledToolsets: ['__policy_inventory_incomplete__'], baseAllowlist, enforced: true,
+      });
+      await this.recordToolPolicyAudit(workspaceId, runId, incomplete, ['__policy_inventory_incomplete__']);
+      throw error;
+    }
+    const rawStatuses = Array.isArray(body.data) ? body.data : [];
+    const statuses = rawStatuses
+      .flatMap((item) => {
         const status = normalizeToolsetStatus(item);
         return status ? [status] : [];
-      })
-      : [];
-    const enabled = statuses.filter((toolset) => toolset.enabled).map((toolset) => toolset.name);
-    const blocked = enabled.filter((name) => !allowed.has(name));
-    if (blocked.length > 0) {
-      throw new Error(`Hermes tool policy blocked enabled toolsets: ${blocked.sort().join(', ')}`);
+      });
+    const statusNames = statuses.map((status) => status.name);
+    const effectiveToolsets = normalizeUniqueStringArray(body.effective_toolsets);
+    const effectiveTools = normalizeUniqueStringArray(body.effective_tools);
+    const inventoryHash = typeof body.inventory_hash === 'string' && /^[0-9a-f]{64}$/.test(body.inventory_hash)
+      ? body.inventory_hash
+      : null;
+    const enabled = statuses.filter((toolset) => toolset.enabled).map((toolset) => toolset.name).sort();
+    const inventoryComplete = body.object === 'list'
+      && body.platform === 'api_server'
+      && body.inventory_complete === true
+      && rawStatuses.length > 0
+      && statuses.length === rawStatuses.length
+      && new Set(statusNames).size === statusNames.length
+      && effectiveToolsets !== null
+      && effectiveToolsets.length > 0
+      && effectiveTools !== null
+      && effectiveTools.length > 0
+      && inventoryHash !== null
+      && JSON.stringify(effectiveToolsets) === JSON.stringify(enabled);
+    if (!inventoryComplete) {
+      const incomplete = evaluateToolPolicy({
+        enabledToolsets: ['__policy_inventory_incomplete__'], baseAllowlist, enforced: true,
+      });
+      await this.recordToolPolicyAudit(workspaceId, runId, incomplete, ['__policy_inventory_incomplete__']);
+      throw new Error('Hermes tool policy inventory is incomplete');
+    }
+    const result = evaluateToolPolicy({
+      enabledToolsets: enabled,
+      baseAllowlist,
+      enforced: this.env.APP_ENV === 'production' || this.env.HERMES_TOOL_POLICY_ENFORCED !== false,
+    });
+
+    await this.recordToolPolicyAudit(workspaceId, runId, result, enabled);
+    if (result.decision === 'deny') {
+      throw new Error(`Hermes tool policy blocked enabled toolsets: ${result.blockedToolsets.join(', ')}`);
+    }
+    return inventoryHash;
+  }
+
+  private async recordToolPolicyAudit(
+    workspaceId: string | undefined,
+    runId: string,
+    result: ToolPolicyResult,
+    enabled: string[],
+  ): Promise<void> {
+    if (!this.toolPolicyAudits) return;
+    if (!workspaceId) throw new Error('Hermes tool policy audit requires workspace scope');
+    const audit = buildToolPolicyAudit(
+      { workspaceId, runId, decidedAtIso: new Date().toISOString() },
+      result,
+      enabled,
+      (payload) => createHash('sha256').update(payload).digest('hex'),
+    );
+    await this.toolPolicyAudits.record(audit);
+  }
+
+  private async enforceHermesRunClientIdentity(signal?: AbortSignal): Promise<void> {
+    const response = await fetch(this.url('/v1/capabilities'), {
+      method: 'GET',
+      headers: this.headers({ accept: 'application/json' }),
+      ...(signal ? { signal } : {}),
+    });
+    if (!response.ok) {
+      throw new Error(`Hermes capabilities failed (${response.status})`);
+    }
+    const body = await response.json() as HermesCapabilitiesResponse;
+    const features = isRecord(body.features) ? body.features : {};
+    if (features.run_client_idempotency !== true || features.run_tool_inventory_binding !== true) {
+      throw new Error('Hermes client run idempotency and tool inventory binding capabilities are required');
     }
   }
 
-  private async getRunStatus(runId: string): Promise<HermesRunStatusResponse> {
+  private async getRunStatus(runId: string, signal?: AbortSignal): Promise<HermesRunStatusResponse> {
     const response = await fetch(this.url(`/v1/runs/${encodeURIComponent(runId)}`), {
       method: 'GET',
       headers: this.headers({ accept: 'application/json' }),
+      ...(signal ? { signal } : {}),
     });
     if (!response.ok) return {};
     const body: unknown = await response.json();
@@ -500,14 +706,41 @@ export class HermesRunsClient {
   }
 
   async stopRun(runId: string): Promise<ChatRunActionResponse> {
-    const response = await fetch(this.url(`/v1/runs/${encodeURIComponent(runId)}/stop`), {
-      method: 'POST',
-      headers: this.headers({ accept: 'application/json' }),
-    });
-    if (!response.ok) throw new Error(`Hermes stop failed (${response.status})`);
-    const body: unknown = await response.json();
-    const status = isRecord(body) && typeof body.status === 'string' ? body.status : 'stopping';
-    return { ok: true, runId, status };
+    return await this.stopRunWithRetry(runId, false);
+  }
+
+  private async stopSubmittedRun(runId: string): Promise<ChatRunActionResponse> {
+    return await this.stopRunWithRetry(runId, true);
+  }
+
+  private async stopRunWithRetry(runId: string, retryNotFound: boolean): Promise<ChatRunActionResponse> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= HERMES_STOP_RETRY_DELAYS_MS.length; attempt += 1) {
+      try {
+        const response = await fetch(this.url(`/v1/runs/${encodeURIComponent(runId)}/stop`), {
+          method: 'POST',
+          headers: this.headers({ accept: 'application/json' }),
+        });
+        if (response.ok) {
+          const body: unknown = await response.json().catch(() => ({}));
+          const status = isRecord(body) && typeof body.status === 'string' ? body.status : 'stopping';
+          return { ok: true, runId, status };
+        }
+        lastError = new Error(`Hermes stop failed (${response.status})`);
+        const retryable = response.status >= 500 || (retryNotFound && response.status === 404);
+        if (!retryable) throw lastError;
+      } catch (error) {
+        lastError = error;
+        const message = error instanceof Error ? error.message : String(error);
+        const statusMatch = message.match(/\((\d{3})\)$/);
+        const status = statusMatch ? Number(statusMatch[1]) : null;
+        if (status !== null && status < 500 && !(retryNotFound && status === 404)) throw error;
+      }
+      const retryDelay = HERMES_STOP_RETRY_DELAYS_MS[attempt];
+      if (retryDelay === undefined) break;
+      await delay(retryDelay);
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 
   async respondApproval(runId: string, choice: ChatApprovalChoice, resolveAll?: boolean): Promise<ChatRunActionResponse> {
@@ -516,6 +749,9 @@ export class HermesRunsClient {
     }
     if (resolveAll) {
       throw new Error('Hermes approval resolveAll requires a durable product approval policy');
+    }
+    if (choice !== 'deny') {
+      throw new Error('Hermes positive approval requires an action-bound upstream approval protocol');
     }
     const response = await fetch(this.url(`/v1/runs/${encodeURIComponent(runId)}/approval`), {
       method: 'POST',
@@ -526,7 +762,7 @@ export class HermesRunsClient {
     return { ok: true, runId, status: choice === 'deny' ? 'denied' : 'approved' };
   }
 
-  private stableSessionId(kind: 'project' | 'thread', ...parts: string[]): string {
+  private stableSessionId(kind: 'thread', ...parts: string[]): string {
     const hash = createHash('sha256').update(parts.join(':')).digest('hex').slice(0, 40);
     // Hermes prompt_cache_key/session key limit is 64 chars; keep a readable prefix + stable hash.
     return `cw-${kind}:${hash}`;
@@ -560,31 +796,33 @@ export class HermesRunsClient {
   }
 
   private normalizeApprovalEvent(runId: string, upstream: HermesRunSseEvent): ChatStreamEvent {
-    const choices = Array.isArray(upstream.choices)
-      ? upstream.choices.filter((c): c is ChatApprovalChoice => APPROVAL_CHOICES.includes(c as ChatApprovalChoice))
-      : APPROVAL_CHOICES;
-    const command = typeof upstream.command === 'string' ? upstream.command.slice(0, 2_000) : undefined;
-    const message =
-      typeof upstream.message === 'string'
-        ? upstream.message.slice(0, 2_000)
-        : typeof upstream.reason === 'string'
-          ? upstream.reason.slice(0, 2_000)
-          : undefined;
+    const toolId = [upstream.tool_id, upstream.tool, upstream.pattern_key]
+      .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      ?.trim().slice(0, 120);
     const risk = typeof upstream.risk === 'string' ? upstream.risk.slice(0, 120) : undefined;
+    const choices: ChatApprovalChoice[] = ['deny'];
+    const publicText = (value: unknown): string | undefined => {
+      if (typeof value !== 'string') return undefined;
+      return redactPii(redactSensitiveText(value)).slice(0, 2_000) || undefined;
+    };
+    const command = publicText(upstream.command);
+    const message = publicText(upstream.message) ?? publicText(upstream.reason);
     return {
       type: 'approval',
       runId,
-      choices: choices.length > 0 ? choices : APPROVAL_CHOICES,
+      choices: choices.length > 0 ? choices : ['deny'],
+      ...(toolId ? { toolId } : {}),
       ...(command ? { command } : {}),
       ...(message ? { message } : {}),
       ...(risk ? { risk } : {}),
     };
   }
 
-  private async *readRunEvents(runId: string): AsyncGenerator<HermesRunSseEvent> {
+  private async *readRunEvents(runId: string, signal?: AbortSignal): AsyncGenerator<HermesRunSseEvent> {
     const response = await fetch(this.url(`/v1/runs/${encodeURIComponent(runId)}/events`), {
       method: 'GET',
       headers: this.headers({ accept: 'text/event-stream' }),
+      ...(signal ? { signal } : {}),
     });
     if (!response.ok) {
       throw new Error(`Hermes run events failed (${response.status})`);
@@ -646,9 +884,10 @@ export class HermesRunsClient {
 
   private safeErrorMessage(error: unknown, fallback: string): string {
     const raw = error instanceof Error ? error.message : typeof error === 'string' ? error : fallback;
-    return raw
-      .split(this.env.HERMES_API_KEY).join('[redacted]')
-      .replace(/Bearer\s+[^\s]+/gi, 'Bearer [redacted]')
-      .slice(0, 500);
+    return redactPii(redactSensitiveText(
+      raw
+        .split(this.env.HERMES_API_KEY).join('[redacted]')
+        .replace(/Bearer\s+[^\s]+/gi, 'Bearer [redacted]'),
+    )).slice(0, 500);
   }
 }

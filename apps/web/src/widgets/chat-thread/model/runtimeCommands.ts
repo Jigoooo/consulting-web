@@ -65,3 +65,19 @@ export function resolveModelCommand(raw: string, models: ChatRuntimeModel[]): Mo
   });
   return match ? { action: 'select', route: match.route } : { action: 'open-picker', query };
 }
+
+export function resolveRuntimeModelLabel({
+  loaded,
+  loading,
+  activeRoute,
+  models,
+}: {
+  loaded: boolean;
+  loading: boolean;
+  activeRoute: string;
+  models: ChatRuntimeModel[];
+}): string {
+  if (loading || !loaded) return '모델 확인 중';
+  if (!activeRoute) return '기본 모델';
+  return models.find((model) => model.route === activeRoute)?.label ?? activeRoute;
+}

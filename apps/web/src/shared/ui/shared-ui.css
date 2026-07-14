@@ -17,10 +17,10 @@
   user-select: none;
   white-space: nowrap;
 }
-.cwButton:hover:not(:disabled):not([data-disabled='true']) { transform: translateY(-1px); }
 .cwButton:active:not(:disabled):not([data-disabled='true']) { transform: translateY(0) scale(0.985); }
 .cwButton:focus-visible {
-  outline: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
   box-shadow: none;
 }
 .cwButton:disabled,
@@ -50,11 +50,10 @@
 .cwButton--primary {
   background: var(--accent);
   color: var(--primary-foreground);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent), 0 8px 18px -12px var(--accent-glow);
+  box-shadow: none;
 }
 .cwButton--primary:hover:not(:disabled):not([data-disabled='true']) {
   background: var(--accent-hi);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-hi) 55%, transparent), 0 10px 22px -12px var(--accent-glow);
 }
 .cwButton--secondary { background: var(--surface-hover); border-color: var(--border-whisper); color: var(--text-primary); }
 .cwButton--secondary:hover:not(:disabled):not([data-disabled='true']) { background: color-mix(in srgb, var(--surface-hover) 60%, var(--border-whisper)); }

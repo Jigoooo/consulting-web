@@ -11,11 +11,38 @@ const target = {
   title: '대화 — 지구 답변',
   versionNo: 1,
   content: '조직 진단 결과는 현행 인력 배치가 업무량 근거와 일치합니다.',
+  governingMessage: '핵심 결론은 현행 인력 배치가 조사된 업무량과 일치한다는 것입니다.',
+  soWhat: '따라서 조직 개편보다 현재 배치의 근거를 정기적으로 재검증해야 합니다.',
   sourceThreadId: null,
   sourceMessageId: null,
 };
 
 describe('ArtifactVerificationService', () => {
+  it('blocks an unstructured draft before evidence, verifier, or exactness work', async () => {
+    const store = { loadEvidence: vi.fn(), record: vi.fn(), latest: vi.fn() };
+    const verifier = { verify: vi.fn() };
+    const exactness = { evaluateAnswer: vi.fn() };
+    const service = new (ArtifactVerificationService as any)(
+      store,
+      verifier,
+      exactness,
+      new VerifierGatePolicyService(),
+    ) as ArtifactVerificationService;
+
+    const result = await (service as any).verifyVersion({
+      ...target,
+      governingMessage: null,
+      soWhat: null,
+      verifiedByUserId: '66666666-6666-4666-8666-666666666666',
+    });
+
+    expect(result).toMatchObject({ canExport: false, reason: 'ARTIFACT_STRUCTURE_REQUIRED', gate: null });
+    expect(store.loadEvidence).not.toHaveBeenCalled();
+    expect(store.record).not.toHaveBeenCalled();
+    expect(verifier.verify).not.toHaveBeenCalled();
+    expect(exactness.evaluateAnswer).not.toHaveBeenCalled();
+  });
+
   it('verifies the exact manual artifact content and records a version-bound content hash', async () => {
     const store = {
       loadEvidence: vi.fn().mockResolvedValue([
@@ -38,27 +65,25 @@ describe('ArtifactVerificationService', () => {
       latest: vi.fn(),
     };
     const verifier = {
-      verify: vi.fn().mockResolvedValue({
+      verify: vi.fn(async ({ claims }: any) => ({
         verifier: 'fixture_verifier',
         lattice: {
-          verdicts: [
-            {
-              claimId: 'ART-22222222-1',
-              claimText: target.content,
+          verdicts: claims.map((claim: any) => ({
+              claimId: claim.id,
+              claimText: claim.text,
               evidenceId: '55555555-5555-4555-8555-555555555555',
               verdict: 'supports',
               confidence: 0.96,
               matchedTerms: ['인력', '업무량'],
               contradictedTerms: [],
               rationale: 'supported',
-              decisionImpact: 0.62,
-            },
-          ],
-          summary: { supports: 1, refutes: 0, mixed: 0, notEnoughInfo: 0, claimCount: 1 },
+              decisionImpact: claim.decisionImpact,
+            })),
+          summary: { supports: claims.length, refutes: 0, mixed: 0, notEnoughInfo: 0, claimCount: claims.length },
         },
         strictJson: { verdicts: [] },
         metrics: { totalLatencyMs: 1, providerCalls: {}, providerLatencies: {} },
-      }),
+      })),
     };
     const exactness = {
       evaluateAnswer: vi.fn().mockReturnValue({
@@ -88,9 +113,9 @@ describe('ArtifactVerificationService', () => {
       sourceMessageId: null,
       sourceThreadId: null,
       exactness: expect.objectContaining({ status: 'skipped' }),
-      verdicts: [expect.objectContaining({ verdict: 'supports', claimText: target.content })],
+      verdicts: expect.arrayContaining([expect.objectContaining({ verdict: 'supports', claimText: target.content })]),
       gate: expect.objectContaining({ decision: 'PASS' }),
-      verifier: expect.stringMatching(/^artifact_claim_coverage_v4:[a-f0-9]{64}:/u),
+      verifier: expect.stringMatching(/^artifact_claim_coverage_v5:[a-f0-9]{64}:/u),
       verifiedByUserId: '66666666-6666-4666-8666-666666666666',
     }));
   });
@@ -143,14 +168,14 @@ describe('ArtifactVerificationService', () => {
     });
 
     expect(verifier.verify).toHaveBeenCalledWith(expect.objectContaining({
-      claims: [expect.objectContaining({ text: '내부 메모' })],
+      claims: expect.arrayContaining([expect.objectContaining({ text: '내부 메모' })]),
     }));
     expect(result).toMatchObject({
       canExport: false,
       reason: 'VERIFIER_GATE_BLOCKED',
       gate: {
         decision: 'BLOCKED',
-        blockers: [expect.objectContaining({ code: 'high_impact_unsupported' })],
+        blockers: expect.arrayContaining([expect.objectContaining({ code: 'high_impact_unsupported' })]),
       },
     });
   });
@@ -261,7 +286,7 @@ describe('ArtifactVerificationService', () => {
     const claims = verifier.verify.mock.calls[0]![0].claims as Array<{ text: string }>;
     expect(claims.map((claim) => claim.text)).toContain(factualTitleTarget.title);
     expect(store.record).toHaveBeenCalledWith(expect.objectContaining({
-      verifier: expect.stringMatching(/^artifact_claim_coverage_v4:[a-f0-9]{64}:fixture_verifier$/u),
+      verifier: expect.stringMatching(/^artifact_claim_coverage_v5:[a-f0-9]{64}:fixture_verifier$/u),
     }));
   });
 
@@ -414,5 +439,118 @@ describe('ArtifactVerificationService', () => {
     await Promise.all([first, duplicate, second]);
     expect(verifier.verify).toHaveBeenCalledTimes(2);
     expect(store.record).toHaveBeenCalledTimes(2);
+  });
+
+  it('records an isolated red-team review and surfaces warning mode without blocking export', async () => {
+    const evidence = [{
+      id: '55555555-5555-4555-8555-555555555555',
+      text: '단계적 전환 비용은 추가 검토가 필요합니다.',
+      qualityScore: 90,
+    }];
+    const store = {
+      loadEvidence: vi.fn().mockResolvedValue(evidence),
+      latest: vi.fn(),
+      record: vi.fn(async (input: any) => ({
+        artifactId: input.target.artifactId,
+        artifactVersionId: input.target.artifactVersionId,
+        workspaceId: input.target.workspaceId,
+        projectId: input.target.projectId,
+        contentHash: input.contentHash,
+        gate: input.gate,
+      })),
+    };
+    const verifier = {
+      verify: vi.fn(async ({ claims }: any) => ({
+        verifier: 'red-team-fixture-verifier',
+        lattice: {
+          verdicts: claims.map((claim: any) => ({
+            claimId: claim.id,
+            claimText: claim.text,
+            evidenceId: evidence[0]!.id,
+            verdict: 'supports',
+            confidence: 0.95,
+            matchedTerms: [],
+            contradictedTerms: [],
+            rationale: 'fixture support',
+            decisionImpact: claim.decisionImpact,
+          })),
+          summary: { supports: claims.length, refutes: 0, mixed: 0, notEnoughInfo: 0, claimCount: claims.length },
+        },
+        strictJson: { verdicts: [] },
+        metrics: { totalLatencyMs: 1, providerCalls: {}, providerLatencies: {} },
+      })),
+    };
+    const exactness = { evaluateAnswer: vi.fn().mockReturnValue({
+      gate: 'exactness_gate_v1', required: false, status: 'skipped', checks: [], summary: 'exactness_not_required', answerInstruction: '정성 요청',
+    }) };
+    const attack = { persona: '감사원', severity: 'warning', category: 'cost', message: '전환 비용 상한의 반대 근거가 없습니다.' } as const;
+    const redTeam: any = {
+      mode: vi.fn().mockReturnValue('warning'),
+      latest: vi.fn(),
+      enqueue: vi.fn(async (input: any) => ({
+        artifactId: input.target.artifactId,
+        artifactVersionId: input.target.artifactVersionId,
+        workspaceId: input.target.workspaceId,
+        projectId: input.target.projectId,
+        contentHash: input.contentHash,
+        status: 'completed',
+        verdict: 'PASS_WITH_WARNINGS',
+        policyVersion: 'artifact_red_team_v1',
+        reviewedAt: '2026-07-11T12:00:00.000Z',
+        attacks: [attack],
+        defenses: [],
+      })),
+    };
+    const service = new (ArtifactVerificationService as any)(
+      store,
+      verifier,
+      exactness,
+      new VerifierGatePolicyService(),
+      redTeam,
+    ) as ArtifactVerificationService;
+
+    const result = await (service as any).verifyVersion({
+      ...target,
+      verifiedByUserId: '66666666-6666-4666-8666-666666666666',
+    });
+
+    expect(result).toMatchObject({ canExport: true, reason: 'OK' });
+    expect(result.messages).toContain('감사원: 전환 비용 상한의 반대 근거가 없습니다.');
+    expect(redTeam.enqueue).toHaveBeenCalledWith(expect.objectContaining({
+      target,
+      contentHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      evidence,
+      reviewedByUserId: '66666666-6666-4666-8666-666666666666',
+    }));
+
+    redTeam.enqueue.mockImplementationOnce(async (input: any) => ({
+      artifactId: input.target.artifactId,
+      artifactVersionId: input.target.artifactVersionId,
+      workspaceId: input.target.workspaceId,
+      projectId: input.target.projectId,
+      contentHash: input.contentHash,
+      status: 'pending',
+      verdict: null,
+      policyVersion: 'artifact_red_team_v1',
+      reviewedAt: null,
+      attacks: [],
+      defenses: [],
+    }));
+    const queued = await (service as any).verifyVersion({
+      ...target,
+      artifactVersionId: '77777777-7777-4777-8777-777777777771',
+      verifiedByUserId: '66666666-6666-4666-8666-666666666666',
+    });
+    expect(queued).toMatchObject({ canExport: true, redTeam: { mode: 'warning', status: 'pending', verdict: null } });
+    expect(queued.messages).toContain('현재 산출물 버전의 적대 검토가 진행 중입니다. 내보내기는 허용되며 완료 후 결과를 다시 확인할 수 있습니다.');
+
+    redTeam.enqueue.mockRejectedValueOnce(new Error('red-team ledger unavailable'));
+    const degraded = await (service as any).verifyVersion({
+      ...target,
+      artifactVersionId: '77777777-7777-4777-8777-777777777777',
+      verifiedByUserId: '66666666-6666-4666-8666-666666666666',
+    });
+    expect(degraded).toMatchObject({ canExport: true, reason: 'OK' });
+    expect(degraded.messages).toContain('현재 산출물 버전에 대한 적대 검토가 아직 없습니다. 내보내기는 허용되지만 검토를 권장합니다.');
   });
 });

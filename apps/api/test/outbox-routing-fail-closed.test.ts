@@ -9,6 +9,8 @@ describe('outbox event routing fail-closed', () => {
     expect(routeOutboxEvent('TopicCreated')).toBe('generic-audit');
     expect(routeOutboxEvent('ThreadCreated')).toBe('generic-audit');
     expect(routeOutboxEvent('ConsultingWebTurnCompleted')).toBe('consulting-web-ingest');
+    expect(routeOutboxEvent('ChatTurnSettlementRequested')).toBe('chat-turn-settlement');
+    expect(routeOutboxEvent('NotificationPushRequested')).toBe('notification-push');
     expect(() => routeOutboxEvent('UnknownEvent')).toThrow(/unsupported outbox event type/i);
   });
 

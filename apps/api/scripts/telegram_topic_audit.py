@@ -16,9 +16,19 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 DEFAULT_CHAT_ID = "-1004453868195"
 DEFAULT_TOPIC_SLUG = "changwon-org-mgmt-diagnosis"
 DEFAULT_EXPECTED_THREADS = ["12", "524", "533", "356", "1", "1060"]
+DEFAULT_THREAD_TOPIC_SLUGS = {
+    "12": "changwon-consulting",
+    "524": "changwon-pay-system",
+    "533": "changwon-tenure-promotion",
+    "356": "changwon-agency-business",
+    "1060": "changwon-budget-standards",
+    "1": "changwon-general-review",
+}
 DEFAULT_STATE_DB = Path("/home/jigoo/.hermes/state.db")
 DEFAULT_CONSULTING_DB = Path("/home/jigoo/.hermes/workspace/consulting/db/consulting.db")
 DEFAULT_CONFIG = Path("/home/jigoo/.hermes/config.yaml")
@@ -49,6 +59,15 @@ class ExactThreadBindingRow:
     chat_id: str
     thread_id: str
     status: str
+
+
+@dataclass(frozen=True)
+class PromptScopeRow:
+    thread_id: str
+    topic_args: list[str]
+    recall: bool
+    ingest: bool
+    session_bound: bool
 
 
 @dataclass(frozen=True)
@@ -116,13 +135,39 @@ def load_exact_thread_bindings(path: Path, topic_slug: str) -> list[ExactThreadB
     return [ExactThreadBindingRow(str(r[0]), str(r[1]), str(r[2]), str(r[3]), str(r[4])) for r in rows]
 
 
-def parse_config_prompt_threads(path: Path, chat_id: str) -> list[str]:
+def load_config_prompt_scopes(path: Path, chat_id: str) -> tuple[list[PromptScopeRow], set[str]]:
     if not path.exists():
-        return []
-    text = path.read_text(encoding="utf-8")
-    escaped = re.escape(chat_id)
-    pattern = re.compile(rf"[\'\"]?{escaped}:(\d+)[\'\"]?\s*:")
-    return sorted(set(pattern.findall(text)), key=lambda x: int(x))
+        return [], set()
+    config = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    telegram = config.get("telegram") if isinstance(config, dict) else None
+    telegram = telegram if isinstance(telegram, dict) else {}
+    prompts = telegram.get("channel_prompts")
+    prompts = prompts if isinstance(prompts, dict) else {}
+    rows: list[PromptScopeRow] = []
+    prefix = f"{chat_id}:"
+    for key, value in prompts.items():
+        key = str(key)
+        if not key.startswith(prefix):
+            continue
+        thread_id = key[len(prefix):]
+        if not thread_id:
+            continue
+        prompt = str(value)
+        rows.append(PromptScopeRow(
+            thread_id=thread_id,
+            topic_args=sorted(set(re.findall(r"--topic\s+([^\s]+)", prompt))),
+            recall="dialogue_memory_cli.py recall" in prompt,
+            ingest="dialogue_memory_cli.py ingest" in prompt,
+            session_bound="HERMES_SESSION_ID" in prompt,
+        ))
+    allowed_raw = telegram.get("allowed_topics")
+    if isinstance(allowed_raw, str):
+        allowed_topics = {item.strip() for item in allowed_raw.split(",") if item.strip()}
+    elif isinstance(allowed_raw, list):
+        allowed_topics = {str(item).strip() for item in allowed_raw if str(item).strip()}
+    else:
+        allowed_topics = set()
+    return sorted(rows, key=lambda row: int(row.thread_id) if row.thread_id.isdigit() else 10**9), allowed_topics
 
 
 def summarize_by_thread(sessions: list[SessionRow]) -> list[dict[str, Any]]:
@@ -147,10 +192,55 @@ def build_issues(
     sessions: list[SessionRow],
     bound_sessions: list[BoundSessionRow],
     exact_thread_bindings: list[ExactThreadBindingRow],
+    prompt_scopes: list[PromptScopeRow],
+    allowed_topics: set[str],
     chat_id: str,
 ) -> list[Issue]:
     by_id = {row.id: row for row in sessions}
     issues: list[Issue] = []
+
+    if allowed_topics != expected_threads:
+        issues.append(Issue(
+            code="ALLOWED_TOPICS_SCOPE_MISMATCH",
+            severity="blocker_for_scope_isolation",
+            detail="telegram.allowed_topics must equal the exact configured Changwon forum-thread set.",
+            evidence={"expected": sorted(expected_threads), "actual": sorted(allowed_topics)},
+        ))
+
+    prompt_by_thread = {row.thread_id: row for row in prompt_scopes}
+    for thread_id in sorted(expected_threads, key=lambda value: int(value) if value.isdigit() else 10**9):
+        row = prompt_by_thread.get(thread_id)
+        if row is None:
+            continue
+        expected_slug = DEFAULT_THREAD_TOPIC_SLUGS.get(thread_id)
+        if expected_slug and row.topic_args != [expected_slug]:
+            issues.append(Issue(
+                code="PROMPT_TOPIC_NAMESPACE_MISMATCH",
+                severity="blocker_for_scope_isolation",
+                detail="Exact Telegram thread prompt must use only its registered evidence namespace.",
+                evidence={"thread_id": thread_id, "expected": expected_slug, "actual": row.topic_args},
+            ))
+        if not row.ingest or not row.session_bound:
+            issues.append(Issue(
+                code="PROMPT_SESSION_INGEST_GUARD_MISSING",
+                severity="blocker_for_scope_isolation",
+                detail="Exact Telegram prompt must ingest with HERMES_SESSION_ID into its namespace.",
+                evidence={"thread_id": thread_id, "ingest": row.ingest, "session_bound": row.session_bound},
+            ))
+        if thread_id == "1" and row.recall:
+            issues.append(Issue(
+                code="GENERAL_AUTO_RECALL_ENABLED",
+                severity="blocker_for_scope_isolation",
+                detail="General/검토필요 is a quarantine queue and must not auto-recall evidence.",
+                evidence={"thread_id": thread_id},
+            ))
+        if thread_id != "1" and not row.recall:
+            issues.append(Issue(
+                code="EXACT_TOPIC_RECALL_MISSING",
+                severity="warning",
+                detail="An exact non-General topic prompt has no dialogue recall command.",
+                evidence={"thread_id": thread_id},
+            ))
 
     observed_threads = {row.thread_id for row in sessions if row.thread_id is not None and row.message_count > 0}
     missing_prompt_threads = sorted(
@@ -231,13 +321,16 @@ def audit(args: argparse.Namespace) -> dict[str, Any]:
     sessions = load_state_sessions(Path(args.state_db), args.chat_id)
     bound = load_bound_sessions(Path(args.consulting_db), args.topic_slug)
     exact = load_exact_thread_bindings(Path(args.consulting_db), args.topic_slug)
-    configured = set(parse_config_prompt_threads(Path(args.config), args.chat_id))
+    prompt_scopes, allowed_topics = load_config_prompt_scopes(Path(args.config), args.chat_id)
+    configured = {row.thread_id for row in prompt_scopes}
     issues = build_issues(
         expected_threads=expected_threads,
         configured_prompt_threads=configured,
         sessions=sessions,
         bound_sessions=bound,
         exact_thread_bindings=exact,
+        prompt_scopes=prompt_scopes,
+        allowed_topics=allowed_topics,
         chat_id=args.chat_id,
     )
     return {
@@ -246,6 +339,8 @@ def audit(args: argparse.Namespace) -> dict[str, Any]:
         "topic_slug": args.topic_slug,
         "expected_threads": sorted(expected_threads, key=lambda x: int(x)),
         "configured_prompt_threads": sorted(configured, key=lambda x: int(x)),
+        "allowed_topics": sorted(allowed_topics, key=lambda x: int(x) if x.isdigit() else 10**9),
+        "prompt_scopes": [asdict(row) for row in prompt_scopes],
         "state_sessions_by_thread": summarize_by_thread(sessions),
         "bound_sessions": [asdict(row) for row in bound],
         "exact_thread_bindings": [asdict(row) for row in exact],

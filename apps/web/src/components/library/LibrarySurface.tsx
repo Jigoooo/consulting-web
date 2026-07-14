@@ -13,6 +13,7 @@ import { Icon } from '../../shared/icons/Icon';
 import type { IconName } from '../../shared/icons/registry';
 import { EmptyState, Spinner } from '../../shared/ui/feedback/EmptyState';
 import { useDelayedFlag } from '../../shared/lib/useDelayedFlag';
+import { resolveAsyncCollectionState } from '../../shared/lib/asyncCollectionState';
 import { formatDateLabel, formatFullDateTime } from '../../shared/lib/formatDate';
 import { FileViewer, type FileViewerTarget } from '../../widgets/file-viewer/ui/FileViewer';
 import s from './Library.module.css';
@@ -51,11 +52,12 @@ export function LibrarySurface({
   const [projectFilter, setProjectFilter] = useState(initialProjectId ?? '');
   const [typeFilter, setTypeFilter] = useState('');
   const [query, setQuery] = useState('');
-  const { data, isLoading } = useLibrarySources(workspaceId ?? undefined, {
+  const libraryQuery = useLibrarySources(workspaceId ?? undefined, {
     ...(projectFilter ? { projectId: projectFilter } : {}),
     ...(typeFilter ? { type: typeFilter } : {}),
     ...(query.trim() ? { q: query.trim() } : {}),
   });
+  const { data, isLoading } = libraryQuery;
   const [viewer, setViewer] = useState<FileViewerTarget | null>(null);
   const showLoading = useDelayedFlag(isLoading, 300, 260);
 
@@ -67,6 +69,11 @@ export function LibrarySurface({
   // 자료실 = 근거·업로드 문서 참고자료 전용. 산출물(편집·버전·PDF 내보내기가 있는
   // 능동 작업물)은 사이드바 "산출물 보관함"으로 분리했으므로 여기서는 제외한다.
   const sources = (data?.sources ?? []).filter((item) => item.kind !== 'artifact');
+  const collectionState = resolveAsyncCollectionState({
+    isLoading,
+    isError: libraryQuery.isError,
+    itemCount: sources.length,
+  });
   const isModal = variant === 'modal';
 
   function openItem(item: LibrarySourceItem) {
@@ -147,7 +154,15 @@ export function LibrarySurface({
             <Spinner label="자료 불러오는 중" /> 불러오는 중…
           </div>
         ) : null}
-        {!isLoading && sources.length === 0 ? (
+        {collectionState === 'error' ? (
+          <EmptyState
+            icon="info"
+            title="자료를 불러오지 못했어요"
+            description="연결 상태를 확인한 뒤 다시 시도해주세요."
+            action={<Button type="button" variant="outline" size="sm" onClick={() => void libraryQuery.refetch()}>다시 시도</Button>}
+          />
+        ) : null}
+        {collectionState === 'empty' ? (
           <EmptyState icon="files" title="자료가 없어요" description="대화에서 근거가 쌓이거나 문서를 업로드하면 여기에 모입니다." />
         ) : null}
 

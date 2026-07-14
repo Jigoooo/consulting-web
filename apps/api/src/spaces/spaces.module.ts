@@ -7,6 +7,7 @@ import { SpaceReadService } from './space-read.service.js';
 import { SpaceMutateService } from './space-mutate.service.js';
 import { SpacesController } from './spaces.controller.js';
 import { CreateChannelUseCase } from './create-channel.usecase.js';
+import { CreateChannelBundleUseCase } from './create-channel-bundle.usecase.js';
 import { CreateProjectUseCase } from './create-project.usecase.js';
 import { CreateWorkspaceUseCase } from './create-workspace.usecase.js';
 import { CreateTopicUseCase } from './create-topic.usecase.js';
@@ -20,7 +21,7 @@ import { ScopeProfileService } from './scope-profile.service.js';
 @Module({
   imports: [DrizzleModule, AuthModule],
   controllers: [SpacesController],
-  providers: [ScopeRepository, SpaceAccessService, SpaceReadService, SpaceMutateService, CreateChannelUseCase, CreateProjectUseCase, CreateWorkspaceUseCase, CreateTopicUseCase, CreateThreadUseCase, ScopeTagSeedService, ContextGraphService, ProjectProvisioningReportService, ProjectTemplateService, ScopeProfileService],
-  exports: [ScopeRepository, SpaceAccessService, SpaceReadService, SpaceMutateService, CreateChannelUseCase, CreateProjectUseCase, CreateWorkspaceUseCase, CreateTopicUseCase, CreateThreadUseCase, ScopeTagSeedService, ContextGraphService, ProjectProvisioningReportService, ProjectTemplateService, ScopeProfileService],
+  providers: [ScopeRepository, SpaceAccessService, SpaceReadService, SpaceMutateService, CreateChannelUseCase, CreateChannelBundleUseCase, CreateProjectUseCase, CreateWorkspaceUseCase, CreateTopicUseCase, CreateThreadUseCase, ScopeTagSeedService, ContextGraphService, ProjectProvisioningReportService, ProjectTemplateService, ScopeProfileService],
+  exports: [ScopeRepository, SpaceAccessService, SpaceReadService, SpaceMutateService, CreateChannelUseCase, CreateChannelBundleUseCase, CreateProjectUseCase, CreateWorkspaceUseCase, CreateTopicUseCase, CreateThreadUseCase, ScopeTagSeedService, ContextGraphService, ProjectProvisioningReportService, ProjectTemplateService, ScopeProfileService],
 })
 export class SpacesModule {}

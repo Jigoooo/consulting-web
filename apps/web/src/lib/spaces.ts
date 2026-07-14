@@ -19,7 +19,7 @@ export function useWorkspaces() {
 export function useWorkspaceTree(workspaceId: string | undefined) {
   return useQuery({
     queryKey: spaceKeys.tree(workspaceId ?? ''),
-    queryFn: () => api.workspaceTree(workspaceId!),
+    queryFn: () => api.workspaceTree(workspaceId!, true),
     enabled: Boolean(workspaceId),
   });
 }
@@ -84,6 +84,15 @@ export function useCreateChannel(workspaceId: string | undefined) {
   return useMutation({
     mutationFn: (input: { projectId: string; name: string }) =>
       api.createChannel({ projectId: input.projectId, name: input.name, slug: toSlug(input.name) }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: spaceKeys.tree(workspaceId ?? '') }),
+  });
+}
+
+export function useCreateChannelBundle(workspaceId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { projectId: string; name: string }) =>
+      api.createChannelBundle({ projectId: input.projectId, name: input.name, slug: toSlug(input.name) }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: spaceKeys.tree(workspaceId ?? '') }),
   });
 }

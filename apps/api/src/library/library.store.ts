@@ -62,10 +62,16 @@ export class LibraryStore {
   private async evidence(q: LibraryQuery): Promise<LibrarySourceItem[]> {
     const conds: SQL[] = [
       eq(schema.channels.workspaceId, q.workspaceId),
+      eq(schema.threads.status, 'active'),
+      eq(schema.topics.status, 'active'),
+      eq(schema.channels.status, 'active'),
+      eq(schema.projects.status, 'active'),
       isNull(schema.evidenceItems.deletedAt),
       isNull(schema.threads.deletedAt),
       isNull(schema.topics.deletedAt),
       isNull(schema.channels.deletedAt),
+      isNull(schema.projects.deletedAt),
+      isNull(schema.workspaces.deletedAt),
     ];
     if (q.projectId) conds.push(eq(schema.channels.projectId, q.projectId));
     if (q.type && ['gbrain', 'web', 'file', 'tool', 'manual'].includes(q.type)) {
@@ -91,9 +97,23 @@ export class LibraryStore {
         createdAt: schema.evidenceItems.createdAt,
       })
       .from(schema.evidenceItems)
-      .innerJoin(schema.threads, eq(schema.evidenceItems.threadId, schema.threads.id))
-      .innerJoin(schema.topics, eq(schema.threads.topicId, schema.topics.id))
-      .innerJoin(schema.channels, eq(schema.topics.channelId, schema.channels.id))
+      .innerJoin(schema.threads, and(
+        eq(schema.evidenceItems.threadId, schema.threads.id),
+        eq(schema.evidenceItems.workspaceId, schema.threads.workspaceId),
+      ))
+      .innerJoin(schema.topics, and(
+        eq(schema.threads.topicId, schema.topics.id),
+        eq(schema.threads.workspaceId, schema.topics.workspaceId),
+      ))
+      .innerJoin(schema.channels, and(
+        eq(schema.topics.channelId, schema.channels.id),
+        eq(schema.topics.workspaceId, schema.channels.workspaceId),
+      ))
+      .innerJoin(schema.projects, and(
+        eq(schema.channels.projectId, schema.projects.id),
+        eq(schema.channels.workspaceId, schema.projects.workspaceId),
+      ))
+      .innerJoin(schema.workspaces, eq(schema.projects.workspaceId, schema.workspaces.id))
       .where(and(...conds))
       .orderBy(desc(schema.evidenceItems.createdAt))
       .limit(200);
@@ -120,10 +140,16 @@ export class LibraryStore {
   private async attachments(q: LibraryQuery): Promise<LibrarySourceItem[]> {
     const conds: SQL[] = [
       eq(schema.channels.workspaceId, q.workspaceId),
+      eq(schema.threads.status, 'active'),
+      eq(schema.topics.status, 'active'),
+      eq(schema.channels.status, 'active'),
+      eq(schema.projects.status, 'active'),
       isNull(schema.fileAttachments.deletedAt),
       isNull(schema.threads.deletedAt),
       isNull(schema.topics.deletedAt),
       isNull(schema.channels.deletedAt),
+      isNull(schema.projects.deletedAt),
+      isNull(schema.workspaces.deletedAt),
     ];
     if (q.projectId) conds.push(eq(schema.channels.projectId, q.projectId));
     if (q.q) {
@@ -149,9 +175,23 @@ export class LibraryStore {
         textContent: schema.documentExtractions.textContent,
       })
       .from(schema.fileAttachments)
-      .innerJoin(schema.threads, eq(schema.fileAttachments.threadId, schema.threads.id))
-      .innerJoin(schema.topics, eq(schema.threads.topicId, schema.topics.id))
-      .innerJoin(schema.channels, eq(schema.topics.channelId, schema.channels.id))
+      .innerJoin(schema.threads, and(
+        eq(schema.fileAttachments.threadId, schema.threads.id),
+        eq(schema.fileAttachments.workspaceId, schema.threads.workspaceId),
+      ))
+      .innerJoin(schema.topics, and(
+        eq(schema.threads.topicId, schema.topics.id),
+        eq(schema.threads.workspaceId, schema.topics.workspaceId),
+      ))
+      .innerJoin(schema.channels, and(
+        eq(schema.topics.channelId, schema.channels.id),
+        eq(schema.topics.workspaceId, schema.channels.workspaceId),
+      ))
+      .innerJoin(schema.projects, and(
+        eq(schema.channels.projectId, schema.projects.id),
+        eq(schema.channels.workspaceId, schema.projects.workspaceId),
+      ))
+      .innerJoin(schema.workspaces, eq(schema.projects.workspaceId, schema.workspaces.id))
       .leftJoin(schema.documentExtractions, eq(schema.documentExtractions.attachmentId, schema.fileAttachments.id))
       .where(and(...conds))
       .orderBy(desc(schema.fileAttachments.createdAt))
@@ -179,8 +219,10 @@ export class LibraryStore {
   private async artifacts(q: LibraryQuery): Promise<LibrarySourceItem[]> {
     const conds: SQL[] = [
       eq(schema.artifacts.workspaceId, q.workspaceId),
+      eq(schema.projects.status, 'active'),
       isNull(schema.artifacts.deletedAt),
       isNull(schema.projects.deletedAt),
+      isNull(schema.workspaces.deletedAt),
     ];
     if (q.projectId) conds.push(eq(schema.artifacts.projectId, q.projectId));
     if (q.q) conds.push(ilike(schema.artifacts.title, `%${escapeLike(q.q)}%`));
@@ -195,7 +237,11 @@ export class LibraryStore {
         createdAt: schema.artifacts.updatedAt,
       })
       .from(schema.artifacts)
-      .innerJoin(schema.projects, eq(schema.artifacts.projectId, schema.projects.id))
+      .innerJoin(schema.projects, and(
+        eq(schema.artifacts.projectId, schema.projects.id),
+        eq(schema.artifacts.workspaceId, schema.projects.workspaceId),
+      ))
+      .innerJoin(schema.workspaces, eq(schema.projects.workspaceId, schema.workspaces.id))
       .where(and(...conds))
       .orderBy(desc(schema.artifacts.updatedAt))
       .limit(200);

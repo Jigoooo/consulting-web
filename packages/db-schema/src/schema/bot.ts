@@ -1,4 +1,4 @@
-import { pgTable, text, uuid, jsonb, timestamp, index, unique } from 'drizzle-orm/pg-core';
+import { bigserial, boolean, pgTable, text, uuid, jsonb, timestamp, index, unique } from 'drizzle-orm/pg-core';
 import { scopeType, botInvokePolicy, riskLevel, approvalStatus } from './enums';
 import { workspaces } from './organization';
 import { users } from './identity';
@@ -110,4 +110,30 @@ export const approvalRequests = pgTable(
     ...timestamps,
   },
   (t) => [index('approval_requests_workspace_idx').on(t.workspaceId)],
+);
+
+export const toolPolicyAuditEvents = pgTable(
+  'tool_policy_audit_events',
+  {
+    id: primaryId,
+    sequenceNo: bigserial('sequence_no', { mode: 'number' }).notNull(),
+    workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+    runId: text('run_id').notNull(),
+    decision: text('decision').notNull(),
+    enabledToolsets: jsonb('enabled_toolsets').$type<string[]>().notNull().default([]),
+    allowedToolsets: jsonb('allowed_toolsets').$type<string[]>().notNull().default([]),
+    blockedToolsets: jsonb('blocked_toolsets').$type<string[]>().notNull().default([]),
+    rejectedHighBlastGrants: jsonb('rejected_high_blast_grants').$type<string[]>().notNull().default([]),
+    enforced: boolean('enforced').notNull(),
+    policyHash: text('policy_hash').notNull(),
+    previousHash: text('previous_hash'),
+    eventHash: text('event_hash').notNull(),
+    decidedAt: timestamp('decided_at', { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    unique('tool_policy_audit_workspace_run_unique').on(t.workspaceId, t.runId),
+    unique('tool_policy_audit_event_hash_unique').on(t.eventHash),
+    index('tool_policy_audit_workspace_sequence_idx').on(t.workspaceId, t.sequenceNo),
+  ],
 );

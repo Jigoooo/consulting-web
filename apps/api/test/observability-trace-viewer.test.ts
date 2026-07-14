@@ -7,6 +7,8 @@ import {
   REDACTED_EVAL_PROMPT_PREVIEW,
   sanitizeObservabilityMetadata,
   sanitizeObservabilityMetrics,
+  sanitizeObservabilitySourceRef,
+  summarizeRagEvaluation,
   summarizeSpans,
 } from '../src/observability/observability.store.js';
 
@@ -108,6 +110,25 @@ describe('Observability Trace Viewer contracts', () => {
         metrics: { context_precision: 0.45, passed: true },
         createdAt: '2026-07-09T00:00:00.000Z',
       }],
+      ragMetrics: {
+        runKind: 'retrieval_human_labels',
+        scope: 'workspace',
+        status: 'ready',
+        cohortLimit: null,
+        cohortTruncated: false,
+        totalRuns: 2,
+        labeledRuns: 2,
+        labeledRunCoverage: 1,
+        labeledHits: 6,
+        relevantHits: 3,
+        precisionAtK: { 1: 0.5, 3: 0.5, 5: 0.5 },
+        precisionEvaluatedRunsAtK: { 1: 2, 3: 2, 5: 2 },
+        precisionCoverageAtK: { 1: 1, 3: 1, 5: 1 },
+        mrr: 0.75,
+        hitRateAtK: { 1: 0.5, 3: 1, 5: 1 },
+        failureBreakdown: [{ failureType: 'wrong_project', count: 1 }],
+        failureFixtureCount: 1,
+      },
       nextCursor: null,
     });
 
@@ -130,6 +151,7 @@ describe('Observability Trace Viewer contracts', () => {
         createdAt: '2026-07-09T00:00:00.000Z',
       }],
       evalRuns: [],
+      ragMetrics: null,
       nextCursor: null,
     })).toThrow();
   });
@@ -143,7 +165,28 @@ describe('Observability Trace Viewer contracts', () => {
       email: 'owner@example.com',
       prompt: 'ignore previous instructions',
       nested: { token: 'Bearer secret' },
+      ownerName: '홍길동',
+      address: '창원시 의창구',
     })).toEqual({ source: 'unit', component: 'retrieval', durationMs: 12 });
+    expect(sanitizeObservabilityMetadata({ source: '010-1234-5678' })).toEqual({});
+    expect(sanitizeObservabilityMetadata({ source: '010.1234.5678' })).toEqual({});
+    expect(sanitizeObservabilityMetadata({ source: 'contact:010.1234.5678' })).toEqual({});
+    expect(sanitizeObservabilityMetadata({ source: 'contact:82.10.1234.5678' })).toEqual({});
+    expect(sanitizeObservabilityMetadata({ source: '홍길동' })).toEqual({});
+    expect(sanitizeObservabilityMetadata({ source: '경상남도창원시의창구' })).toEqual({});
+    expect(sanitizeObservabilityMetadata({ source: '..\\clients\\payroll.xlsx' })).toEqual({});
+    expect(sanitizeObservabilityMetadata({
+      artifactId: 'not-a-uuid',
+      contentHash: 'short',
+      attempt: -1,
+    })).toEqual({});
+    expect(sanitizeObservabilitySourceRef('C:/clients/홍길동/급여.xlsx')).toBe('[redacted]');
+    expect(sanitizeObservabilitySourceRef('010.1234.5678')).toBe('[redacted]');
+    expect(sanitizeObservabilitySourceRef('contact:010.1234.5678')).toBe('[redacted]');
+    expect(sanitizeObservabilitySourceRef('contact:82.10.1234.5678')).toBe('[redacted]');
+    expect(sanitizeObservabilitySourceRef('..\\clients\\payroll.xlsx')).toBe('[redacted]');
+    expect(sanitizeObservabilitySourceRef('\\\\server\\clients\\payroll.xlsx')).toBe('[redacted]');
+    expect(sanitizeObservabilitySourceRef('fixture:rag-case-1')).toBe('fixture:rag-case-1');
 
     expect(sanitizeObservabilityMetrics({
       context_precision: 0.45,
@@ -175,6 +218,7 @@ describe('Observability Trace Viewer contracts', () => {
       }],
       evalCases: [],
       evalRuns: [],
+      ragMetrics: null,
       nextCursor: null,
     })).toThrow();
   });
@@ -196,6 +240,45 @@ describe('Observability Trace Viewer contracts', () => {
       { authUserId: '44444444-4444-4444-8444-444444444444' } as never,
     )).rejects.toBeInstanceOf(NotFoundException);
     expect(store.listTraces).not.toHaveBeenCalled();
+  });
+
+  it('scopes workspace-wide trace queries to threads with effective message.read', async () => {
+    const store = { listTraces: vi.fn().mockResolvedValue({ traces: [], spans: [], evalCases: [], evalRuns: [], ragMetrics: null, nextCursor: null }) };
+    const access = {
+      workspaceMember: vi.fn(async () => ({ allowed: true as const, workspaceId: '11111111-1111-4111-8111-111111111111' })),
+      readableThreadIds: vi.fn(async () => [threadId]),
+    };
+    const controller = new ObservabilityController(store as never, access as never);
+    await controller.traces(
+      '11111111-1111-4111-8111-111111111111', undefined, undefined, undefined, undefined,
+      { authUserId: '44444444-4444-4444-8444-444444444444' } as never,
+    );
+    expect(store.listTraces).toHaveBeenCalledWith(expect.objectContaining({ allowedThreadIds: [threadId] }));
+  });
+
+  it('summarizes retrieval labels into a PII-free public RAG metrics card', () => {
+    const summary = summarizeRagEvaluation([
+      { runId: 'r1', hits: [{ rank: 1, judgedRelevant: true, failureType: null }, { rank: 2, judgedRelevant: false, failureType: 'wrong_project' }] },
+      { runId: 'r2', hits: [{ rank: 1, judgedRelevant: false, failureType: 'duplicate_chunk' }, { rank: 2, judgedRelevant: true, failureType: null }] },
+    ], 'thread');
+    expect(summary).toEqual(expect.objectContaining({
+      runKind: 'retrieval_human_labels',
+      scope: 'thread',
+      status: 'ready',
+      totalRuns: 2,
+      labeledRuns: 2,
+      mrr: 0.75,
+      failureFixtureCount: 2,
+    }));
+    expect(JSON.stringify(summary)).not.toMatch(/query|preview|content|prompt/iu);
+  });
+
+  it('discloses when RAG metrics are truncated to the latest bounded cohort', () => {
+    const summary = summarizeRagEvaluation([], 'workspace', {
+      cohortLimit: 1_000,
+      cohortTruncated: true,
+    });
+    expect(summary).toEqual(expect.objectContaining({ cohortLimit: 1_000, cohortTruncated: true }));
   });
 
   it('does not mix workspace-wide eval ledgers into a trace-filtered view', async () => {
@@ -224,6 +307,8 @@ describe('Observability Trace Viewer contracts', () => {
     expect(response.spans[0]?.metadata).toEqual({ source: 'unit' });
     expect(response.evalCases).toEqual([]);
     expect(response.evalRuns).toEqual([]);
+    expect(response.ragMetrics).toBeNull();
+    expect(response).not.toHaveProperty('evalScope');
     expect(db.select).toHaveBeenCalledTimes(1);
   });
 });

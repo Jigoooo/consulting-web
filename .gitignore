@@ -42,3 +42,8 @@ graphify-out/
 
 # TanStack Router transient generation cache
 apps/web/.tanstack/tmp/
+
+# agent tooling & operational recovery artifacts (never source; keep repo clean)
+.omc/
+.hermes/live-exports/
+.hermes/live-recovery/

@@ -1,5 +1,6 @@
 import {
   AuthSessionResponseSchema,
+  LogoutResponseSchema,
   SignUpBootstrapResponseSchema,
   CreateInvitationResponseSchema,
   InvitationPreviewResponseSchema,
@@ -7,11 +8,13 @@ import {
   CreateProjectResponseSchema,
   CreateWorkspaceResponseSchema,
   CreateChannelResponseSchema,
+  CreateChannelBundleResponseSchema,
   CreateTopicResponseSchema,
   CreateThreadResponseSchema,
   type SignUpRequest,
   type LoginRequest,
   type AuthSessionResponse,
+  type LogoutResponse,
   type SignUpBootstrapResponse,
   type CreateInvitationRequest,
   type CreateInvitationResponse,
@@ -20,11 +23,13 @@ import {
   type CreateProjectRequest,
   type CreateWorkspaceRequest,
   type CreateChannelRequest,
+  type CreateChannelBundleRequest,
   type CreateTopicRequest,
   type CreateThreadRequest,
   type CreateProjectResponse,
   type CreateWorkspaceResponse,
   type CreateChannelResponse,
+  type CreateChannelBundleResponse,
   type CreateTopicResponse,
   type CreateThreadResponse,
   type ChatStreamRequest,
@@ -72,16 +77,22 @@ import {
   type OkResponse,
   ListEvidenceResponseSchema,
   EvidenceDecisionSummaryResponseSchema,
+  EvidenceDecisionSummaryV2ResponseSchema,
   ListRetrievalHitFeedbackResponseSchema,
   ReviewQueueResponseSchema,
+  ArtifactContractCapabilitiesResponseSchema,
   ListArtifactsResponseSchema,
   ArtifactDetailResponseSchema,
+  ArtifactDetailV1ResponseSchema,
   CreateArtifactResponseSchema,
   ArtifactExportPreflightResponseSchema,
+  ArtifactBatchReviewPlanResponseSchema,
+  ArtifactReviewDecisionResponseSchema,
   ListNotificationsResponseSchema,
   type AddEvidenceRequest,
   type ListEvidenceResponse,
   type EvidenceDecisionSummaryResponse,
+  type EvidenceDecisionSummaryV2Response,
   type ListRetrievalHitFeedbackResponse,
   type RecordRetrievalHitFeedbackRequest,
   type ReviewQueueResponse,
@@ -94,6 +105,9 @@ import {
   type ListArtifactsResponse,
   type ArtifactDetailResponse,
   type ArtifactExportPreflightResponse,
+  type ArtifactBatchReviewPlanResponse,
+  type ArtifactReviewDecisionRequest,
+  type ArtifactReviewDecisionResponse,
   type ListNotificationsResponse,
   UploadAttachmentResponseSchema,
   ListAttachmentsResponseSchema,
@@ -110,7 +124,7 @@ import {
   ObservabilityTraceListResponseSchema,
   type ObservabilityTraceListResponse,
 } from '@consulting/contracts';
-import { HttpCore, type ApiClientOptions } from './http-core.js';
+import { ApiClientError, HttpCore, type ApiClientOptions } from './http-core.js';
 import { readChatSseStream } from './sse.js';
 
 /**
@@ -121,6 +135,7 @@ import { readChatSseStream } from './sse.js';
  */
 export class ConsultingApiClient {
   private readonly http: HttpCore;
+  private artifactContractV2Promise: Promise<boolean> | null = null;
 
   constructor(options: ApiClientOptions) {
     this.http = new HttpCore(options);
@@ -143,6 +158,13 @@ export class ConsultingApiClient {
   refresh(refreshToken: string): Promise<AuthSessionResponse> {
     return this.http.request('/auth/refresh', { method: 'POST', body: { refreshToken }, auth: false }, (d) =>
       AuthSessionResponseSchema.parse(d),
+    );
+  }
+
+  /** Revoke the presented refresh session. Idempotent and access-token independent. */
+  logout(refreshToken: string): Promise<LogoutResponse> {
+    return this.http.request('/auth/logout', { method: 'POST', body: { refreshToken }, auth: false }, (d) =>
+      LogoutResponseSchema.parse(d),
     );
   }
 
@@ -173,8 +195,9 @@ export class ConsultingApiClient {
     );
   }
 
-  workspaceTree(workspaceId: string): Promise<WorkspaceTreeResponse> {
-    return this.http.request(`/spaces/workspaces/${workspaceId}/tree`, { method: 'GET' }, (d) =>
+  workspaceTree(workspaceId: string, includePermissions = false): Promise<WorkspaceTreeResponse> {
+    const query = includePermissions ? '?includePermissions=true' : '';
+    return this.http.request(`/spaces/workspaces/${workspaceId}/tree${query}`, { method: 'GET' }, (d) =>
       WorkspaceTreeResponseSchema.parse(d),
     );
   }
@@ -226,7 +249,7 @@ export class ConsultingApiClient {
   }
 
   listArchivedScopes(workspaceId: string): Promise<ListArchivedScopesResponse> {
-    return this.http.request(`/spaces/workspaces/${workspaceId}/archive`, { method: 'GET' }, (d) =>
+    return this.http.request(`/spaces/workspaces/${workspaceId}/archive?includePermissions=true`, { method: 'GET' }, (d) =>
       ListArchivedScopesResponseSchema.parse(d),
     );
   }
@@ -327,6 +350,18 @@ export class ConsultingApiClient {
     );
   }
 
+  createChannelBundle(body: CreateChannelBundleRequest): Promise<CreateChannelBundleResponse> {
+    return this.http.request('/spaces/channel-bundles', { method: 'POST', body }, (d) =>
+      CreateChannelBundleResponseSchema.parse(d),
+    );
+  }
+
+  ensureChannelConversation(channelId: string): Promise<CreateChannelBundleResponse> {
+    return this.http.request(`/spaces/channels/${channelId}/ensure-conversation`, { method: 'POST' }, (d) =>
+      CreateChannelBundleResponseSchema.parse(d),
+    );
+  }
+
   createTopic(body: CreateTopicRequest): Promise<CreateTopicResponse> {
     return this.http.request('/spaces/topics', { method: 'POST', body }, (d) =>
       CreateTopicResponseSchema.parse(d),
@@ -404,10 +439,16 @@ export class ConsultingApiClient {
     return this.http.request('/chat/evidence', { method: 'POST', body }, (d) => OkResponseSchema.parse(d));
   }
 
-  evidenceDecisionSummary(threadId: string): Promise<EvidenceDecisionSummaryResponse> {
-    return this.http.request(`/chat/threads/${threadId}/evidence-decision/summary`, { method: 'GET' }, (d) =>
-      EvidenceDecisionSummaryResponseSchema.parse(d),
-    );
+  evidenceDecisionSummary(threadId: string): Promise<EvidenceDecisionSummaryV2Response> {
+    return this.http.request(`/chat/threads/${threadId}/evidence-decision/summary?includeJudgment=1`, { method: 'GET' }, (d) => {
+      const v2 = EvidenceDecisionSummaryV2ResponseSchema.safeParse(d);
+      if (v2.success) return v2.data;
+      const v1: EvidenceDecisionSummaryResponse = EvidenceDecisionSummaryResponseSchema.parse(d);
+      return {
+        ...v1,
+        judgment: { latestRun: null, blockedCount: 0 },
+      };
+    });
   }
 
   listRetrievalHits(threadId: string): Promise<ListRetrievalHitFeedbackResponse> {
@@ -440,34 +481,94 @@ export class ConsultingApiClient {
   }
 
   // --- artifacts (Phase 2-B) ---
-  listArtifacts(workspaceId: string, projectId?: string): Promise<ListArtifactsResponse> {
-    const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
-    return this.http.request(`/artifacts/workspaces/${workspaceId}${qs}`, { method: 'GET' }, (d) =>
+  supportsArtifactContractV2(): Promise<boolean> {
+    if (this.artifactContractV2Promise) return this.artifactContractV2Promise;
+    const tracked = this.probeArtifactContractV2().then(
+      (supported) => {
+        if (!supported && this.artifactContractV2Promise === tracked) this.artifactContractV2Promise = null;
+        return supported;
+      },
+      (error: unknown) => {
+        if (this.artifactContractV2Promise === tracked) this.artifactContractV2Promise = null;
+        throw error;
+      },
+    );
+    this.artifactContractV2Promise = tracked;
+    return tracked;
+  }
+
+  private async probeArtifactContractV2(): Promise<boolean> {
+    try {
+      await this.http.request('/artifact-contract', { method: 'GET' }, (d) => ArtifactContractCapabilitiesResponseSchema.parse(d));
+      return true;
+    } catch (error) {
+      if (error instanceof ApiClientError && error.status === 404) return false;
+      throw error;
+    }
+  }
+
+  listArtifacts(workspaceId: string, projectId?: string, offset = 0): Promise<ListArtifactsResponse> {
+    const params = new URLSearchParams();
+    if (projectId) params.set('projectId', projectId);
+    if (offset > 0) params.set('offset', String(offset));
+    const query = params.size > 0 ? `?${params.toString()}` : '';
+    return this.http.request(`/artifacts/workspaces/${workspaceId}${query}`, { method: 'GET' }, (d) =>
       ListArtifactsResponseSchema.parse(d),
     );
   }
 
   artifactDetail(id: string): Promise<ArtifactDetailResponse> {
-    return this.http.request(`/artifacts/${id}`, { method: 'GET' }, (d) =>
-      ArtifactDetailResponseSchema.parse(d),
-    );
+    return this.http.request(`/artifacts/${id}?includeStructure=1`, { method: 'GET' }, (d) => {
+      const v2 = ArtifactDetailResponseSchema.safeParse(d);
+      if (v2.success) return v2.data;
+      const v1 = ArtifactDetailV1ResponseSchema.parse(d);
+      return {
+        ...v1,
+        versions: v1.versions.map((version) => ({ ...version, governingMessage: null, soWhat: null })),
+      };
+    });
   }
 
-  createArtifact(body: CreateArtifactRequest): Promise<CreateArtifactResponse> {
-    return this.http.request('/artifacts', { method: 'POST', body }, (d) =>
-      CreateArtifactResponseSchema.parse(d),
-    );
+  async createArtifact(body: CreateArtifactRequest): Promise<CreateArtifactResponse> {
+    const v2 = await this.supportsArtifactContractV2();
+    if (!v2) throw new ApiClientError(409, { code: 'CONFLICT', message: '서버 업데이트 후 구조화 산출물을 저장할 수 있습니다.' });
+    return this.http.request('/artifacts?includeStructure=1', {
+      method: 'POST',
+      body,
+    }, (d) => CreateArtifactResponseSchema.parse(d));
   }
 
-  addArtifactVersion(id: string, body: AddArtifactVersionRequest): Promise<CreateArtifactResponse> {
-    return this.http.request(`/artifacts/${id}/versions`, { method: 'POST', body }, (d) =>
-      CreateArtifactResponseSchema.parse(d),
-    );
+  async addArtifactVersion(id: string, body: AddArtifactVersionRequest): Promise<CreateArtifactResponse> {
+    const v2 = await this.supportsArtifactContractV2();
+    if (!v2) throw new ApiClientError(409, { code: 'CONFLICT', message: '서버 업데이트 후 구조화 버전을 저장할 수 있습니다.' });
+    return this.http.request(`/artifacts/${id}/versions?includeStructure=1`, {
+      method: 'POST',
+      body,
+    }, (d) => CreateArtifactResponseSchema.parse(d));
   }
 
   verifyArtifactVersion(id: string, body: VerifyArtifactVersionRequest): Promise<ArtifactExportPreflightResponse> {
-    return this.http.request(`/artifacts/${id}/verify`, { method: 'POST', body }, (d) =>
+    return this.http.request(`/artifacts/${id}/verify?includeReview=1`, { method: 'POST', body }, (d) =>
       ArtifactExportPreflightResponseSchema.parse(d),
+    );
+  }
+
+  artifactReviewPlan(projectId: string, offset = 0): Promise<ArtifactBatchReviewPlanResponse> {
+    const query = offset > 0 ? `?offset=${encodeURIComponent(String(offset))}` : '';
+    return this.http.request(`/artifacts/projects/${encodeURIComponent(projectId)}/review-plan${query}`, { method: 'GET' }, (d) =>
+      ArtifactBatchReviewPlanResponseSchema.parse(d),
+    );
+  }
+
+  recordArtifactReviewDecision(
+    id: string,
+    versionNo: number,
+    body: ArtifactReviewDecisionRequest,
+  ): Promise<ArtifactReviewDecisionResponse> {
+    return this.http.request(
+      `/artifacts/${encodeURIComponent(id)}/versions/${versionNo}/review-decision`,
+      { method: 'POST', body },
+      (d) => ArtifactReviewDecisionResponseSchema.parse(d),
     );
   }
 
@@ -573,7 +674,7 @@ export class ConsultingApiClient {
 
   /** Authenticated artifact export preflight — same verifier gate as final export, no rendering. */
   exportArtifactPreflight(id: string, format: 'pdf' | 'docx', version?: number): Promise<ArtifactExportPreflightResponse> {
-    const params = new URLSearchParams({ format });
+    const params = new URLSearchParams({ format, includeReview: '1' });
     if (version) params.set('version', String(version));
     return this.http.request(`/artifacts/${id}/export-preflight?${params.toString()}`, { method: 'GET' }, (d) =>
       ArtifactExportPreflightResponseSchema.parse(d),

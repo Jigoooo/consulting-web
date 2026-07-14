@@ -8,6 +8,7 @@ import { VisualDocumentSearchService } from '../consulting/visual-document-searc
 import { VerifierGatePolicyService } from '../consulting/verifier-gate-policy.service.js';
 import type { ClaimVerdict } from '../consulting/evidence-to-decision.service.js';
 import type { ExactnessRunStatus } from '../consulting/exactness-gate.service.js';
+import { sanitizePublicChatText } from './public-chat-content.js';
 
 export type FinishState = 'complete' | 'cancelled' | 'error';
 
@@ -24,11 +25,7 @@ type DbMessageRow = {
 
 type MessageRow = ChatMessage & { createdAtDate: Date };
 
-/**
- * Persistence for chat transcripts (N-1). The stream controller writes here:
- * user row before proxying, assistant row after the stream settles (done /
- * client abort / upstream error) so a refresh always reproduces the dialogue.
- */
+/** Persistence and read models for chat transcripts. New streamed turns are created atomically by ChatTurnSettlementStore. */
 @Injectable()
 export class ChatMessageStore {
   constructor(
@@ -36,44 +33,6 @@ export class ChatMessageStore {
     @Inject(VisualDocumentSearchService) private readonly visualSearch: VisualDocumentSearchService,
     @Inject(VerifierGatePolicyService) private readonly gatePolicy: VerifierGatePolicyService,
   ) {}
-
-  async saveUserMessage(input: {
-    workspaceId: string;
-    threadId: string;
-    authorUserId: string;
-    content: string;
-  }): Promise<string> {
-    const [row] = await this.db.insert(schema.chatMessages).values({
-      workspaceId: input.workspaceId,
-      threadId: input.threadId,
-      role: 'user',
-      authorUserId: input.authorUserId,
-      content: input.content,
-      finishState: 'complete',
-    }).returning({ id: schema.chatMessages.id });
-    return row!.id;
-  }
-
-  async bindAttachmentsToMessage(input: {
-    workspaceId: string;
-    threadId: string;
-    messageId: string;
-    attachmentIds: string[];
-    uploaderUserId: string;
-  }): Promise<void> {
-    if (input.attachmentIds.length === 0) return;
-    await this.db
-      .update(schema.fileAttachments)
-      .set({ messageId: input.messageId })
-      .where(and(
-        eq(schema.fileAttachments.workspaceId, input.workspaceId),
-        eq(schema.fileAttachments.threadId, input.threadId),
-        eq(schema.fileAttachments.uploaderUserId, input.uploaderUserId),
-        isNull(schema.fileAttachments.messageId),
-        isNull(schema.fileAttachments.deletedAt),
-        inArray(schema.fileAttachments.id, input.attachmentIds),
-      ));
-  }
 
   async saveAssistantMessage(input: {
     workspaceId: string;
@@ -125,13 +84,14 @@ export class ChatMessageStore {
     const messages: SearchMessagesResponse['messages'] = [];
     const isCho = isChosungQuery(q);
     for (const row of rows) {
-      if (!hangulMatch(row.content, q)) continue;
-      const ranges = highlightRanges(row.content, q);
+      const publicContent = sanitizePublicChatText(row.content);
+      if (!hangulMatch(publicContent, q)) continue;
+      const ranges = highlightRanges(publicContent, q);
       const matchKind = ranges.length > 0 ? 'text' : isCho ? 'chosung' : 'jamo';
       messages.push({
         id: row.id,
         role: row.role,
-        snippet: this.snippet(row.content, q, ranges[0]?.[0] ?? -1),
+        snippet: this.snippet(publicContent, q, ranges[0]?.[0] ?? -1),
         createdAt: row.createdAt.toISOString(),
         matchKind,
       });
@@ -162,14 +122,15 @@ export class ChatMessageStore {
       .limit(2000);
     const results: SearchMessagesResponse['files'] = [];
     for (const row of rows) {
-      const haystack = `${row.fileName}\n${row.textContent ?? ''}`;
+      const publicTextContent = sanitizePublicChatText(row.textContent ?? '');
+      const haystack = `${row.fileName}\n${publicTextContent}`;
       if (!hangulMatch(haystack, q)) continue;
-      const ranges = highlightRanges(row.textContent ?? '', q);
+      const ranges = highlightRanges(publicTextContent, q);
       results.push({
         id: row.id,
         fileName: row.fileName,
         mimeType: row.mimeType,
-        snippet: ranges.length > 0 ? this.snippet(row.textContent ?? '', q, ranges[0]?.[0] ?? -1) : row.fileName,
+        snippet: ranges.length > 0 ? this.snippet(publicTextContent, q, ranges[0]?.[0] ?? -1) : row.fileName,
         messageId: row.messageId,
         status: row.status as 'processing' | 'indexed' | 'skipped' | 'failed' | null,
         createdAt: row.createdAt.toISOString(),
@@ -259,16 +220,18 @@ export class ChatMessageStore {
     for (const ranked of rankedRows) {
       const row = rowByUnitId.get(ranked.id);
       if (!row) continue;
-      const ranges = highlightRanges(row.textContent, q);
+      const publicTextContent = sanitizePublicChatText(row.textContent);
+      const publicLocator = sanitizePublicChatText(row.locator);
+      const ranges = highlightRanges(publicTextContent, q);
       results.push({
         id: row.attachmentId,
         fileName: row.fileName,
         mimeType: row.mimeType,
-        snippet: `${row.modality} · ${ranges.length > 0 ? this.snippet(row.textContent, q, ranges[0]?.[0] ?? -1) : row.locator}`,
+        snippet: `${row.modality} · ${ranges.length > 0 ? this.snippet(publicTextContent, q, ranges[0]?.[0] ?? -1) : publicLocator}`,
         messageId: row.messageId,
         status: row.status as 'processing' | 'indexed' | 'skipped' | 'failed' | null,
         modality: row.modality as 'text' | 'table' | 'page_visual',
-        locator: row.locator,
+        locator: publicLocator,
         createdAt: row.createdAt.toISOString(),
       });
       if (results.length >= cap) break;
@@ -294,15 +257,17 @@ export class ChatMessageStore {
       .limit(2000);
     const results: SearchMessagesResponse['evidence'] = [];
     for (const row of rows) {
-      const haystack = `${row.ref}\n${row.excerpt}`;
+      const publicRef = sanitizePublicChatText(row.ref);
+      const publicExcerpt = sanitizePublicChatText(row.excerpt);
+      const haystack = `${publicRef}\n${publicExcerpt}`;
       if (!hangulMatch(haystack, q)) continue;
-      const ranges = highlightRanges(row.excerpt, q);
+      const ranges = highlightRanges(publicExcerpt, q);
       results.push({
         id: row.id,
         sourceType: row.sourceType,
-        ref: row.ref,
-        snippet: ranges.length > 0 ? this.snippet(row.excerpt, q, ranges[0]?.[0] ?? -1) : row.excerpt.slice(0, 140),
-        url: row.url,
+        ref: publicRef,
+        snippet: ranges.length > 0 ? this.snippet(publicExcerpt, q, ranges[0]?.[0] ?? -1) : publicExcerpt.slice(0, 140),
+        url: publicEvidenceUrl(row.url),
         messageId: row.messageId,
         runId: row.runId,
         createdAt: row.createdAt.toISOString(),
@@ -447,7 +412,7 @@ export class ChatMessageStore {
     return {
       id: r.id,
       role: r.role,
-      content: r.content,
+      content: sanitizePublicChatText(r.content),
       authorUserId: r.authorUserId,
       authorName: r.authorName,
       runId: r.runId,
@@ -623,6 +588,11 @@ export class ChatMessageStore {
     const suffix = end < content.length ? '…' : '';
     return `${prefix}${content.slice(start, end)}${suffix}`;
   }
+}
+
+function publicEvidenceUrl(value: string | null): string | null {
+  if (!value) return value;
+  return /^(?:MEDIA:\s*)?(?:file:\/\/|\/|~[\\/]|[A-Za-z]:[\\/]|\\\\)/i.test(value.trim()) ? null : value;
 }
 
 function clamp01(value: number): number {

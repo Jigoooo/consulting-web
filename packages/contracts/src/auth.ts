@@ -60,3 +60,12 @@ export const RefreshRequestSchema = z.object({
   refreshToken: z.string().min(10),
 }).strict();
 export type RefreshRequest = z.infer<typeof RefreshRequestSchema>;
+
+/** Explicit logout revokes the presented refresh session server-side. */
+export const LogoutRequestSchema = RefreshRequestSchema;
+export type LogoutRequest = z.infer<typeof LogoutRequestSchema>;
+
+export const LogoutResponseSchema = z.object({
+  revoked: z.boolean(),
+}).strict();
+export type LogoutResponse = z.infer<typeof LogoutResponseSchema>;

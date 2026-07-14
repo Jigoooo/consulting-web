@@ -1,7 +1,7 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, Logger } from '@nestjs/common';
 import webPush from 'web-push';
 import { schema } from '@consulting/db-schema';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 import { ENV_TOKEN } from '../config/config.module.js';
 import type { Env } from '../config/env.schema.js';
@@ -13,8 +13,9 @@ import type { Env } from '../config/env.schema.js';
  * recipients registered. When VAPID keys are absent it degrades to a no-op —
  * the in-app bell remains fully functional.
  *
- * Failure policy: push is best-effort. Errors are logged, never thrown into
- * the calling domain flow. 404/410 responses prune the dead subscription.
+ * Failure policy: notification creation is isolated by a transactional outbox.
+ * 404/410 responses prune dead subscriptions; transient errors throw so the
+ * dedicated BullMQ worker retries without rolling back the notification feed.
  */
 @Injectable()
 export class PushService {
@@ -38,7 +39,7 @@ export class PushService {
   }
 
   async subscribe(userId: string, input: { endpoint: string; p256dh: string; auth: string; userAgent?: string | undefined }): Promise<void> {
-    await this.db
+    const inserted = await this.db
       .insert(schema.pushSubscriptions)
       .values({
         userId,
@@ -47,10 +48,26 @@ export class PushService {
         auth: input.auth,
         userAgent: input.userAgent?.slice(0, 300) ?? null,
       })
-      .onConflictDoUpdate({
-        target: schema.pushSubscriptions.endpoint,
-        set: { userId, p256dh: input.p256dh, auth: input.auth, updatedAt: new Date() },
-      });
+      .onConflictDoNothing({ target: schema.pushSubscriptions.endpoint })
+      .returning({ id: schema.pushSubscriptions.id });
+    if (inserted.length > 0) return;
+
+    const refreshed = await this.db
+      .update(schema.pushSubscriptions)
+      .set({
+        p256dh: input.p256dh,
+        auth: input.auth,
+        userAgent: input.userAgent?.slice(0, 300) ?? null,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(schema.pushSubscriptions.endpoint, input.endpoint),
+        eq(schema.pushSubscriptions.userId, userId),
+      ))
+      .returning({ id: schema.pushSubscriptions.id });
+    if (refreshed.length > 0) return;
+
+    throw new ConflictException('push subscription endpoint belongs to another user');
   }
 
   async unsubscribe(userId: string, endpoint: string): Promise<void> {
@@ -65,45 +82,41 @@ export class PushService {
     }
   }
 
-  /** Best-effort push to every subscription of the given users. Never throws. */
-  async sendToUsers(
-    userIds: string[],
+  /** Push to one durable subscription; transient delivery failures throw for that subscription's queue retry. */
+  async sendToSubscription(
+    subscriptionId: string,
+    expectedUserId: string,
     payload: { title: string; body: string; url?: string; tag?: string },
   ): Promise<void> {
-    if (!this.enabled || userIds.length === 0) return;
-    try {
-      const subs = await this.db
-        .select()
-        .from(schema.pushSubscriptions)
-        .where(inArray(schema.pushSubscriptions.userId, userIds));
-      if (subs.length === 0) return;
+    if (!this.enabled) return;
+    const [subscription] = await this.db
+      .select()
+      .from(schema.pushSubscriptions)
+      .where(and(
+        eq(schema.pushSubscriptions.id, subscriptionId),
+        eq(schema.pushSubscriptions.userId, expectedUserId),
+      ))
+      .limit(1);
+    if (!subscription) return;
 
-      const body = JSON.stringify(payload);
-      const dead: string[] = [];
-      await Promise.allSettled(
-        subs.map(async (sub) => {
-          try {
-            await webPush.sendNotification(
-              { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-              body,
-              { TTL: 3600 },
-            );
-          } catch (err) {
-            const status = (err as { statusCode?: number }).statusCode;
-            if (status === 404 || status === 410) {
-              dead.push(sub.id);
-            } else {
-              this.logger.warn(`push send failed (status=${status ?? 'unknown'})`);
-            }
-          }
-        }),
+    try {
+      await webPush.sendNotification(
+        {
+          endpoint: subscription.endpoint,
+          keys: { p256dh: subscription.p256dh, auth: subscription.auth },
+        },
+        JSON.stringify(payload),
+        { TTL: 3600 },
       );
-      if (dead.length > 0) {
-        await this.db.delete(schema.pushSubscriptions).where(inArray(schema.pushSubscriptions.id, dead));
-        this.logger.log(`pruned ${dead.length} dead push subscription(s)`);
+    } catch (error) {
+      const status = (error as { statusCode?: number }).statusCode;
+      if (status === 404 || status === 410) {
+        await this.db.delete(schema.pushSubscriptions).where(eq(schema.pushSubscriptions.id, subscription.id));
+        this.logger.log('pruned 1 dead push subscription');
+        return;
       }
-    } catch (err) {
-      this.logger.warn(`push fan-out failed: ${(err as Error).message}`);
+      this.logger.warn(`push send failed (status=${status ?? 'unknown'})`);
+      throw new Error('push delivery failed for subscription', { cause: error });
     }
   }
 }

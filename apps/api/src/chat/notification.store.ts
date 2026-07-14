@@ -1,9 +1,10 @@
+import { createHash, randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { schema } from '@consulting/db-schema';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { ListNotificationsResponse, NotificationType } from '@consulting/contracts';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
-import { PushService } from './push.service.js';
+import { NOTIFICATION_PUSH_REQUESTED_EVENT } from '../queues/outbox-routing.js';
 
 /** Per-user notification feed (Phase 2-C). Fan-out on write: domain services
  * call notifyWorkspace() which inserts one row per recipient. Reads are a
@@ -11,22 +12,23 @@ import { PushService } from './push.service.js';
  * 2026-07-06: additionally fans out via Web Push (best-effort, non-blocking). */
 @Injectable()
 export class NotificationStore {
-  constructor(
-    @Inject(DRIZZLE) private readonly db: Db,
-    @Inject(PushService) private readonly push: PushService,
-  ) {}
+  constructor(@Inject(DRIZZLE) private readonly db: Db) {}
 
   /** Insert a notification for every workspace member except `excludeUserId`. */
   async notifyWorkspace(input: {
     workspaceId: string;
     excludeUserId?: string;
+    dedupKey?: string;
     type: NotificationType;
     title: string;
     body: string;
     refType: 'thread' | 'artifact' | 'workspace';
     refId: string;
-  }): Promise<number> {
-    const members = await this.db
+  }, db?: Db): Promise<number> {
+    if (!db) {
+      return this.db.transaction((tx) => this.notifyWorkspace(input, tx));
+    }
+    const members = await db
       .select({ userId: schema.memberships.userId })
       .from(schema.memberships)
       .where(eq(schema.memberships.workspaceId, input.workspaceId));
@@ -36,7 +38,8 @@ export class NotificationStore {
     );
     if (recipients.length === 0) return 0;
 
-    await this.db.insert(schema.notifications).values(
+    const dedupKey = input.dedupKey?.trim().slice(0, 200) || null;
+    const inserted = await db.insert(schema.notifications).values(
       recipients.map((userId) => ({
         workspaceId: input.workspaceId,
         userId,
@@ -45,19 +48,43 @@ export class NotificationStore {
         body: input.body.slice(0, 500),
         refType: input.refType,
         refId: input.refId,
+        dedupKey,
       })),
-    );
+    ).onConflictDoNothing().returning({ userId: schema.notifications.userId });
+    const insertedRecipients = inserted.map((row) => row.userId);
+    if (insertedRecipients.length === 0) return 0;
 
-    // Web Push fan-out — best-effort, must never delay or fail the domain flow.
     const url = input.refType === 'thread' ? `/th/${input.refId}` : '/';
-    void this.push.sendToUsers(recipients, {
-      title: input.title.slice(0, 200),
-      body: input.body.slice(0, 500),
-      url,
-      tag: `${input.refType}:${input.refId}`,
-    });
+    const subscriptions = await db
+      .select({ id: schema.pushSubscriptions.id, userId: schema.pushSubscriptions.userId })
+      .from(schema.pushSubscriptions)
+      .where(inArray(schema.pushSubscriptions.userId, insertedRecipients));
+    if (subscriptions.length > 0) {
+      const eventIdentity = dedupKey
+        ? createHash('sha256').update(`${input.workspaceId}:${dedupKey}`).digest('hex')
+        : randomUUID();
+      await db
+        .insert(schema.outboxEvents)
+        .values(subscriptions.map((subscription) => ({
+          workspaceId: input.workspaceId,
+          eventType: NOTIFICATION_PUSH_REQUESTED_EVENT,
+          aggregateType: 'notification',
+          aggregateId: input.refId,
+          payload: {
+            subscriptionId: subscription.id,
+            recipientUserId: subscription.userId,
+            title: input.title.slice(0, 200),
+            body: input.body.slice(0, 500),
+            url,
+            tag: dedupKey ?? `${input.refType}:${input.refId}`,
+          },
+          status: 'pending' as const,
+          idempotencyKey: `notification-push:${eventIdentity}:${subscription.id}`,
+        })))
+        .onConflictDoNothing({ target: schema.outboxEvents.idempotencyKey });
+    }
 
-    return recipients.length;
+    return insertedRecipients.length;
   }
 
   async listForUser(userId: string, limit = 50): Promise<ListNotificationsResponse> {

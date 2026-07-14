@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { randomUUID } from 'node:crypto';
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
@@ -24,7 +25,7 @@ import {
 } from '@consulting/contracts';
 import { AppModule } from '../src/app.module.js';
 
-const url = process.env.DATABASE_URL;
+const url = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const d = url ? describe : describe.skip;
 
 let app: INestApplication;
@@ -47,6 +48,7 @@ function sseEvents(text: string): unknown[] {
 
 function installHermesRunsFetchMock(finalText = 'proxied hello') {
   const calls: string[] = [];
+  let runId: string | undefined;
   const body = [
     'data: {"event":"message.delta","run_id":"run_test_proxy","delta":"proxied "}',
     '',
@@ -58,24 +60,34 @@ function installHermesRunsFetchMock(finalText = 'proxied hello') {
   const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     calls.push(url);
+    if (url.endsWith('/v1/toolsets')) {
+      return new Response(JSON.stringify({ object: 'list', platform: 'api_server', inventory_complete: true, inventory_hash: 'a'.repeat(64), effective_toolsets: ['file', 'web'], effective_tools: ['read_file', 'web_search'], data: [{ name: 'web', enabled: true }, { name: 'file', enabled: true }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (url.endsWith('/v1/capabilities')) {
+      return new Response(JSON.stringify({ features: { run_client_idempotency: true, run_tool_inventory_binding: true } }), { status: 200 });
+    }
     if (url.endsWith('/v1/runs')) {
-      const parsed = JSON.parse(String(init?.body ?? '{}')) as { input?: string; session_id?: string };
+      const parsed = JSON.parse(String(init?.body ?? '{}')) as { client_run_id?: string; input?: string; session_id?: string; tool_inventory_hash?: string };
       expect(parsed.input).toBeTruthy();
       expect(parsed.session_id).toBeTruthy();
+      runId = parsed.client_run_id;
       const headers = init?.headers as Record<string, string> | undefined;
       expect(headers?.authorization).toMatch(/^Bearer\s+.+/);
-      return new Response(JSON.stringify({ run_id: 'run_test_proxy', status: 'started' }), {
+      return new Response(JSON.stringify({ run_id: runId, status: 'started', tool_inventory_hash: parsed.tool_inventory_hash }), {
         status: 202,
         headers: { 'content-type': 'application/json' },
       });
     }
-    if (url.endsWith('/v1/runs/run_test_proxy/events')) {
+    if (runId && url.endsWith(`/v1/runs/${runId}/events`)) {
       return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
     }
     return new Response('not found', { status: 404 });
   });
   vi.stubGlobal('fetch', fetchMock);
-  return { fetchMock, calls };
+  return { fetchMock, calls, runId: () => runId };
 }
 
 d('HTTP API contract adapters', () => {
@@ -260,7 +272,7 @@ d('HTTP API contract adapters', () => {
   });
 
   it('protected chat stream requires bearer access and proxies readable threads through Hermes runs SSE', async () => {
-    const { calls } = installHermesRunsFetchMock('proxied hello');
+    const { calls, runId } = installHermesRunsFetchMock('proxied hello');
     const email = `chat-owner-${Date.now()}@example.com`;
     const password = 'supersecret1';
     const signedUp = await request(app.getHttpServer())
@@ -302,7 +314,7 @@ d('HTTP API contract adapters', () => {
 
     await request(app.getHttpServer())
       .post('/chat/stream')
-      .send({ threadId: thread!.id, message: 'hello' })
+      .send({ threadId: thread!.id, message: 'hello', clientMessageId: randomUUID() })
       .expect(401);
 
     const outsiderEmail = `chat-outsider-${Date.now()}@example.com`;
@@ -322,25 +334,27 @@ d('HTTP API contract adapters', () => {
     await request(app.getHttpServer())
       .post('/chat/stream')
       .set('authorization', `Bearer ${outsiderSession.tokens.accessToken}`)
-      .send({ threadId: thread!.id, message: 'hello' })
+      .send({ threadId: thread!.id, message: 'hello', clientMessageId: randomUUID() })
       .expect(403);
 
     const response = await request(app.getHttpServer())
       .post('/chat/stream')
       .set('authorization', `Bearer ${session.tokens.accessToken}`)
-      .send({ threadId: thread!.id, message: 'hello' })
+      .send({ threadId: thread!.id, message: 'hello', clientMessageId: randomUUID() })
       .expect(200)
       .expect('content-type', /text\/event-stream/);
 
     const events = sseEvents(response.text);
     expect(events.map((e) => (e as { type: string }).type)).toEqual(['start', 'delta', 'done']);
-    expect((events[0] as { runId: string }).runId).toBe('run_test_proxy');
+    expect((events[0] as { runId: string }).runId).toBe(runId());
     expect((events[1] as { text: string }).text).toBe('proxied ');
     const hermesBase = (process.env.HERMES_API_BASE_URL ?? 'http://127.0.0.1:8642').replace(/\/$/, '');
     expect(calls).toEqual([
+      `${hermesBase}/v1/toolsets`,
+      `${hermesBase}/v1/capabilities`,
       `${hermesBase}/v1/runs`,
-      `${hermesBase}/v1/runs/run_test_proxy`,
-      `${hermesBase}/v1/runs/run_test_proxy/events`,
+      `${hermesBase}/v1/runs/${runId()}`,
+      `${hermesBase}/v1/runs/${runId()}/events`,
     ]);
     for (const event of events) {
       expect(ChatStreamEventSchema.parse(event)).toEqual(event);
@@ -424,7 +438,7 @@ d('HTTP API contract adapters', () => {
     const stream = await request(app.getHttpServer())
       .post('/chat/stream')
       .set('authorization', `Bearer ${ownerSession.tokens.accessToken}`)
-      .send({ threadId: threadBody.id, message: 'thread api smoke' })
+      .send({ threadId: threadBody.id, message: 'thread api smoke', clientMessageId: randomUUID() })
       .expect(200)
       .expect('content-type', /text\/event-stream/);
     const events = sseEvents(stream.text);

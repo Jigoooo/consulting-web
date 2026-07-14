@@ -36,9 +36,15 @@ export interface ConsultingRecallScope {
   topicSlug: string;
   topicId: number | null;
   label: string;
-  relation: 'current' | 'cross_project';
+  relation: 'current' | 'same_project' | 'cross_project';
   weight: number;
   archived: boolean;
+}
+
+export function normalizeConsultingRecallRelation(
+  relation: ContextGraphRelatedScope['relation'],
+): Exclude<ConsultingRecallScope['relation'], 'current'> {
+  return relation;
 }
 
 export interface ConsultingResolvedFanout {
@@ -115,7 +121,7 @@ export class ConsultingTopicResolver {
         label: relatedScope.relation === 'cross_project'
           ? `다른 프로젝트: ${relatedScope.projectName}`
           : `관련 범위: ${relatedScope.scopePath}`,
-        relation: relatedScope.relation === 'cross_project' ? 'cross_project' : 'current',
+        relation: normalizeConsultingRecallRelation(relatedScope.relation),
         weight: relatedScope.weight,
         archived: link.status === 'archived',
       });

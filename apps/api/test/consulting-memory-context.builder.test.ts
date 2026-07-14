@@ -30,7 +30,7 @@ describe('ConsultingMemoryContextBuilder', () => {
           threadTitle: '정원 검토',
           consultingTopicSlug: 'changwon-org-mgmt-diagnosis',
           consultingTopicId: 5,
-          linkLevel: 'project' as const,
+          linkLevel: 'topic' as const,
           scopePath: '창원시 컨설팅/분석/시설 적정성 진단/정원 검토',
           archived: false,
           profiles: [
@@ -116,7 +116,32 @@ describe('ConsultingMemoryContextBuilder', () => {
       db as never,
       trace as never,
     );
-    const context = await builder.build({ threadId: 'thread', query: '정원 인건비 조직진단' });
+    const bundle = await builder.buildBundle({
+      threadId: 'thread',
+      query: '정원 인건비 조직진단',
+      explicitCrossScopeTopicSlugs: ['other-consulting-topic'],
+    });
+    const context = bundle.context;
+
+    expect(bundle).toMatchObject({
+      scope: {
+        workspaceId: 'ws',
+        projectId: 'project',
+        channelId: 'channel',
+        topicId: 'topic',
+        threadId: 'thread',
+        consultingTopicSlug: 'changwon-org-mgmt-diagnosis',
+        linkLevel: 'topic',
+      },
+      retrieval: {
+        runId: 'retrieval-run-1',
+        queryHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        hitCount: 3,
+        snapshotHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      },
+      shadowEligible: true,
+      ineligibleReason: null,
+    });
 
     expect(context).toContain('## 기존 컨설팅 GraphRAG 참고 기억');
     expect(context).toContain('changwon-org-mgmt-diagnosis');
@@ -196,7 +221,7 @@ describe('ConsultingMemoryContextBuilder', () => {
         scope: {
           workspaceId: 'ws', projectId: 'project', channelId: 'channel', topicId: 'topic', threadId: 'thread',
           projectName: '창원시 컨설팅', channelName: '분석', topicName: '시설 적정성 진단', threadTitle: '정원 검토',
-          consultingTopicSlug: 'changwon-org-mgmt-diagnosis', consultingTopicId: 5, linkLevel: 'project' as const,
+          consultingTopicSlug: 'changwon-org-mgmt-diagnosis', consultingTopicId: 5, linkLevel: 'topic' as const,
           scopePath: '창원시 컨설팅/분석/시설 적정성 진단/정원 검토', archived: false,
         },
         recallScopes: [{ topicSlug: 'changwon-org-mgmt-diagnosis', topicId: 5, label: '현재 프로젝트: 창원시 컨설팅', relation: 'current' as const, weight: 1, archived: false }],
@@ -236,7 +261,7 @@ describe('ConsultingMemoryContextBuilder', () => {
         scope: {
           workspaceId: 'ws', projectId: 'project', channelId: 'channel', topicId: 'topic', threadId: 'thread',
           projectName: '창원시 컨설팅', channelName: '분석', topicName: '보안 검토', threadTitle: 'P5 검토',
-          consultingTopicSlug: 'changwon-org-mgmt-diagnosis', consultingTopicId: 5, linkLevel: 'project' as const,
+          consultingTopicSlug: 'changwon-org-mgmt-diagnosis', consultingTopicId: 5, linkLevel: 'topic' as const,
           scopePath: '창원시 컨설팅/분석/보안 검토/P5 검토', archived: false,
           profiles: [{
             scopeType: 'topic' as const,
@@ -300,5 +325,104 @@ describe('ConsultingMemoryContextBuilder', () => {
     expect(hitPreview).toContain('[REDACTED_ACCOUNT]');
     expect(hitPreview).not.toContain('sk-test-secret');
     expect(hitPreview).not.toContain('110-123-456789');
+  });
+
+  it('blocks project-wide brain fallback instead of treating the whole customer project as local evidence', async () => {
+    let recallCalls = 0;
+    const resolver = {
+      resolveThreadFanout: async () => ({
+        scope: {
+          workspaceId: 'ws', projectId: 'project', channelId: 'channel', topicId: 'topic', threadId: 'thread',
+          projectName: '창원시 컨설팅', channelName: '텔레그램', topicName: '창원_보수체계', topicSlug: 'changwon-pay-system', threadTitle: '창원_보수체계',
+          consultingTopicSlug: 'changwon-org-mgmt-diagnosis', consultingTopicId: 5, linkLevel: 'project' as const,
+          scopePath: '창원시 컨설팅/텔레그램/창원_보수체계', archived: false,
+        },
+        recallScopes: [{ topicSlug: 'changwon-org-mgmt-diagnosis', topicId: 5, label: '현재 프로젝트', relation: 'current' as const, weight: 1, archived: false }],
+      }),
+    };
+    const bridge = { recallMany: async () => { recallCalls += 1; throw new Error('broad project recall must not run'); } };
+
+    const context = await new ConsultingMemoryContextBuilder(
+      resolver as unknown as ConsultingTopicResolver,
+      bridge as unknown as ConsultingGraphRagBridge,
+      new EvidenceSufficiencyEvaluator(),
+      new EvidenceToDecisionService(),
+    ).build({ threadId: 'thread', query: '보수체계 자료 보여줘' });
+
+    expect(recallCalls).toBe(0);
+    expect(context).toContain('exact scope memory 미연결');
+    expect(context).toContain('프로젝트 전체 brain은 자동 검색하지 않음');
+  });
+
+  it('uses only the current exact namespace unless cross-scope slugs are explicitly selected', async () => {
+    const capturedScopes: Array<Array<{ topicSlug: string }>> = [];
+    const resolver = {
+      resolveThreadFanout: async () => ({
+        scope: {
+          workspaceId: 'ws', projectId: 'project', channelId: 'channel', topicId: 'topic', threadId: 'thread',
+          projectName: '창원시 컨설팅', channelName: '텔레그램', topicName: '창원_보수체계', topicSlug: 'changwon-pay-system', threadTitle: '창원_보수체계',
+          consultingTopicSlug: 'changwon-pay-system', consultingTopicId: 51, linkLevel: 'topic' as const,
+          scopePath: '창원시 컨설팅/텔레그램/창원_보수체계', archived: false,
+        },
+        recallScopes: [
+          { topicSlug: 'changwon-pay-system', topicId: 51, label: '현재 범위', relation: 'current' as const, weight: 1, archived: false },
+          { topicSlug: 'changwon-tenure-promotion', topicId: 53, label: '같은 프로젝트 관련 범위', relation: 'same_project' as const, weight: 0.8, archived: false },
+          { topicSlug: 'changwon-budget-standards', topicId: 52, label: '관련 범위', relation: 'cross_project' as const, weight: 0.6, archived: false },
+        ],
+      }),
+    };
+    const bridge = {
+      recallMany: async ({ scopes }: { scopes: Array<{ topicSlug: string }> }) => {
+        capturedScopes.push(scopes);
+        return { status: 'empty' as const, ok: true, topic: scopes.map((scope) => scope.topicSlug).join(','), query: '보수체계', rerank: null, rerankError: null, signals: null, hits: [] };
+      },
+    };
+    const builder = new ConsultingMemoryContextBuilder(
+      resolver as unknown as ConsultingTopicResolver,
+      bridge as unknown as ConsultingGraphRagBridge,
+      new EvidenceSufficiencyEvaluator(),
+      new EvidenceToDecisionService(),
+    );
+
+    await builder.build({ threadId: 'thread', query: '보수체계' });
+    await builder.build({
+      threadId: 'thread',
+      query: '보수체계',
+      explicitCrossScopeTopicSlugs: ['changwon-tenure-promotion', 'changwon-budget-standards'],
+    });
+
+    expect(capturedScopes[0]?.map((scope) => scope.topicSlug)).toEqual(['changwon-pay-system']);
+    expect(capturedScopes[1]?.map((scope) => scope.topicSlug)).toEqual([
+      'changwon-pay-system',
+      'changwon-tenure-promotion',
+      'changwon-budget-standards',
+    ]);
+  });
+
+  it('keeps General review as a quarantine scope with no automatic brain recall', async () => {
+    let recallCalls = 0;
+    const resolver = {
+      resolveThreadFanout: async () => ({
+        scope: {
+          workspaceId: 'ws', projectId: 'project', channelId: 'channel', topicId: 'general', threadId: 'thread',
+          projectName: '창원시 컨설팅', channelName: '텔레그램', topicName: '일반/검토필요', topicSlug: 'general-review-required', threadTitle: '일반/검토필요',
+          consultingTopicSlug: 'changwon-general-review', consultingTopicId: 56, linkLevel: 'topic' as const,
+          scopePath: '창원시 컨설팅/텔레그램/일반/검토필요', archived: false,
+        },
+        recallScopes: [{ topicSlug: 'changwon-general-review', topicId: 56, label: '현재 범위', relation: 'current' as const, weight: 1, archived: false }],
+      }),
+    };
+    const bridge = { recallMany: async () => { recallCalls += 1; throw new Error('General recall must not run'); } };
+
+    const context = await new ConsultingMemoryContextBuilder(
+      resolver as unknown as ConsultingTopicResolver,
+      bridge as unknown as ConsultingGraphRagBridge,
+      new EvidenceSufficiencyEvaluator(),
+      new EvidenceToDecisionService(),
+    ).build({ threadId: 'thread', query: '이 자료 검토해줘' });
+
+    expect(recallCalls).toBe(0);
+    expect(context).toContain('General/검토필요');
+    expect(context).toContain('자동 검색·차용 금지');
   });
 });

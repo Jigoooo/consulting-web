@@ -7,6 +7,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "telegram_topic_audit.py"
@@ -103,6 +106,82 @@ class TelegramTopicAuditTest(unittest.TestCase):
             self.assertNotIn("BROAD_NULL_THREAD_BINDING", issues)
             self.assertIn("LEGACY_NULL_THREAD_BINDING_SHADOWED", issues)
             self.assertEqual(issues["LEGACY_NULL_THREAD_BINDING_SHADOWED"]["evidence"]["session_ids"], ["s-null"])
+
+    def test_enforces_exact_prompt_namespaces_general_quarantine_and_topic_allowlist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            state = tmpdir / "state.db"
+            consulting = tmpdir / "consulting.db"
+            config = tmpdir / "config.yaml"
+            self._make_state_db(state)
+            self._make_consulting_db(consulting)
+            self._add_exact_bindings(consulting)
+            slugs = {
+                "1": "changwon-general-review",
+                "12": "changwon-consulting",
+                "356": "changwon-agency-business",
+                "524": "changwon-pay-system",
+                "533": "changwon-tenure-promotion",
+                "1060": "changwon-budget-standards",
+            }
+            prompts = {}
+            for thread_id, slug in slugs.items():
+                prompt = f'dialogue_memory_cli.py ingest --topic {slug} --session-id "$HERMES_SESSION_ID"'
+                if thread_id != "1":
+                    prompt += f' dialogue_memory_cli.py recall --topic {slug}'
+                prompts[f"-1004453868195:{thread_id}"] = prompt
+            config.write_text(yaml.safe_dump({
+                "telegram": {
+                    "allowed_topics": "1,12,356,524,533,1060",
+                    "channel_prompts": prompts,
+                },
+            }, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+            clean = self._run_audit(state, consulting, config)
+            clean_codes = {issue["code"] for issue in clean["issues"]}
+            self.assertFalse(clean_codes & {
+                "ALLOWED_TOPICS_SCOPE_MISMATCH",
+                "PROMPT_TOPIC_NAMESPACE_MISMATCH",
+                "PROMPT_SESSION_INGEST_GUARD_MISSING",
+                "GENERAL_AUTO_RECALL_ENABLED",
+            })
+
+            prompts["-1004453868195:1"] += " dialogue_memory_cli.py recall --topic changwon-org-mgmt-diagnosis"
+            prompts["-1004453868195:524"] = prompts["-1004453868195:524"].replace(
+                "changwon-pay-system", "changwon-org-mgmt-diagnosis",
+            )
+            config.write_text(yaml.safe_dump({
+                "telegram": {
+                    "allowed_topics": "1,12,356,524,533",
+                    "channel_prompts": prompts,
+                },
+            }, allow_unicode=True, sort_keys=False), encoding="utf-8")
+            broken = self._run_audit(state, consulting, config)
+            broken_codes = {issue["code"] for issue in broken["issues"]}
+            self.assertTrue({
+                "ALLOWED_TOPICS_SCOPE_MISMATCH",
+                "PROMPT_TOPIC_NAMESPACE_MISMATCH",
+                "GENERAL_AUTO_RECALL_ENABLED",
+            }.issubset(broken_codes))
+
+    def _run_audit(self, state: Path, consulting: Path, config: Path) -> dict[str, Any]:
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--json",
+                "--state-db",
+                str(state),
+                "--consulting-db",
+                str(consulting),
+                "--config",
+                str(config),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return json.loads(proc.stdout)
 
     def _make_state_db(self, path: Path) -> None:
         con = sqlite3.connect(path)

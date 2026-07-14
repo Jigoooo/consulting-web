@@ -17,7 +17,7 @@
 
 /* RAIL */
 .rail {
-  background: linear-gradient(180deg, #141517 0%, #0d0e0f 100%);
+  background: var(--bg-rail);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -46,7 +46,7 @@
 .ws {
   width: 40px;
   height: 40px;
-  border-radius: 13px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -60,15 +60,13 @@
   transition: border-radius var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
 .ws:hover {
-  border-radius: 15px;
   background: rgba(255, 255, 255, 0.13);
-  transform: translateY(-1px);
 }
 .wsWrap.active .ws {
   background: var(--accent);
   border-color: transparent;
-  border-radius: 15px;
-  box-shadow: 0 0 0 3px var(--accent-glow), 0 4px 14px -4px var(--accent-glow);
+  border-radius: 10px;
+  box-shadow: none;
 }
 .grpLabel {
   font-size: 9px;
@@ -100,7 +98,8 @@
   background: rgba(255, 255, 255, 0.07);
 }
 .wsAdd:focus-visible {
-  outline: none;
+  outline: 2px solid #fff;
+  outline-offset: 2px;
 }
 /* 새 워크스페이스 modal 내부 폼 */
 .wsCreateForm {
@@ -155,7 +154,8 @@
   background: rgba(255, 255, 255, 0.08);
 }
 .railAction:focus-visible {
-  outline: none;
+  outline: 2px solid #fff;
+  outline-offset: 2px;
 }
 .railActionLabel {
   font-size: 9px;
@@ -311,7 +311,7 @@
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  box-shadow: var(--shadow-card);
+  box-shadow: none;
 }
 .searchKey {
   margin-left: auto;
@@ -584,7 +584,7 @@
   width: 28px;
   height: 28px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #8b8f98, #6b6f78);
+  background: #676c74;
   color: #fff;
   display: flex;
   align-items: center;
@@ -664,7 +664,7 @@
   background: var(--accent);
   color: var(--primary-foreground);
   cursor: pointer;
-  box-shadow: 0 3px 10px -3px var(--accent-glow);
+  box-shadow: none;
 }
 .inviteBtn:disabled {
   opacity: 0.6;
@@ -700,14 +700,14 @@
   align-items: center;
   gap: 10px;
   border: 1px solid var(--border-hair);
-  border-radius: 11px;
+  border-radius: var(--radius-card);
   background: var(--surface-card);
   color: var(--text-primary);
   text-decoration: none;
   text-align: left;
   font: inherit;
   cursor: pointer;
-  box-shadow: var(--shadow-card);
+  box-shadow: none;
   transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
 }
 .workspaceTool:disabled {
@@ -865,9 +865,9 @@
 .projectBlock {
   margin: 8px 2px 12px;
   border: 1px solid var(--border-hair);
-  border-radius: 12px;
+  border-radius: var(--radius-card);
   background: var(--surface-card);
-  box-shadow: var(--shadow-card);
+  box-shadow: none;
   overflow: hidden;
 }
 .projRow {
@@ -1405,7 +1405,7 @@
   position: fixed;
   top: 10px;
   left: calc(var(--w-rail) + 10px);
-  z-index: 45;
+  z-index: 55;
   width: 34px;
   height: 34px;
   border: 1px solid var(--border-whisper);

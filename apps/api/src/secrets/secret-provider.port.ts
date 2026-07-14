@@ -8,6 +8,7 @@ export type SecretName =
   | 'JWT_ACCESS_SECRET'
   | 'JWT_REFRESH_SECRET'
   | 'HERMES_API_KEY'
+  | 'ARTIFACT_RED_TEAM_API_KEY'
   | 'VOYAGE_API_KEY';
 
 export interface SecretProviderPort {

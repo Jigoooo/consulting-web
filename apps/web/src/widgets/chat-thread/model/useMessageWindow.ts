@@ -143,6 +143,7 @@ export function useMessageWindow(threadId: string) {
     olderCursor: windowState?.olderCursor ?? null,
     newerCursor: windowState?.newerCursor ?? null,
     isLoading: latest.isLoading && !windowState,
+    isError: latest.isError && !windowState,
     isFetchingLatest: latest.isFetching,
     isLoadingOlder,
     isLoadingNewer,

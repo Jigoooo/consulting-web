@@ -8,15 +8,9 @@ import s from './Auth.module.css';
 
 const brandPoints = ['적정성 검토 근거를 한곳에서', '증거 기반 산출물 자동 정리', 'AI와 함께하는 협업 워크스페이스'] as const;
 
-/**
- * AuthShell — split-screen auth frame. Left: aurora brand panel (magicui-style
- * ambient blobs, GSAP drift). Right: the form card with spring stagger entrance.
- * Collapses to a single column under 900px. Fully token-driven → dark-mode safe.
- */
+/** Editorial split-screen auth frame with one restrained entrance transition. */
 export function AuthShell({ children }: { children: ReactNode }) {
   const cardRef = useRef<HTMLDivElement | null>(null);
-  const blob1 = useRef<HTMLDivElement | null>(null);
-  const blob2 = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -30,19 +24,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
           ease: 'power3.out',
         });
       }
-      if (!reduce) {
-        for (const b of [blob1.current, blob2.current]) {
-          if (!b) continue;
-          gsap.to(b, {
-            x: 'random(-40, 40)',
-            y: 'random(-30, 30)',
-            duration: 'random(7, 11)',
-            repeat: -1,
-            yoyo: true,
-            ease: 'sine.inOut',
-          });
-        }
-      }
+
     });
     return () => ctx.revert();
   }, []);
@@ -50,8 +32,6 @@ export function AuthShell({ children }: { children: ReactNode }) {
   return (
     <div className={s.wrap}>
       <aside className={s.brandPanel}>
-        <div className={`${s.blob} ${s.blob1}`} ref={blob1} />
-        <div className={`${s.blob} ${s.blob2}`} ref={blob2} />
         <div className={s.panelTop}>
           <BrandMark size="md" label="Consulting Web" />
           <div>

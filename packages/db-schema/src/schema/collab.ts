@@ -87,6 +87,9 @@ export const artifactVersions = pgTable(
     versionNo: integer('version_no').notNull(),
     /** Markdown body. Immutable once written. */
     content: text('content').notNull(),
+    /** Decision-first structure. Both fields are null for drafts or both populated for exportable versions. */
+    governingMessage: text('governing_message'),
+    soWhat: text('so_what'),
     /** Change note ("초안", "수치 보강" …). */
     note: text('note').notNull().default(''),
     authorUserId: uuid('author_user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -145,6 +148,79 @@ export const artifactVersionVerifications = pgTable(
   ],
 );
 
+/** Mutable delivery/lease state for one exact artifact red-team request. */
+export const artifactRedTeamJobs = pgTable(
+  'artifact_red_team_jobs',
+  {
+    id: primaryId,
+    sequenceNo: bigint('sequence_no', { mode: 'number' }).generatedAlwaysAsIdentity().notNull(),
+    workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+    projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    artifactId: uuid('artifact_id').notNull().references(() => artifacts.id, { onDelete: 'cascade' }),
+    artifactVersionId: uuid('artifact_version_id').notNull().references(() => artifactVersions.id, { onDelete: 'cascade' }),
+    contentHash: text('content_hash').notNull(),
+    mode: text('mode').notNull(),
+    policyVersion: text('policy_version').notNull(),
+    requestedByUserId: uuid('requested_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    status: text('status').notNull().default('pending'),
+    leaseToken: text('lease_token'),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    recoveryCount: integer('recovery_count').notNull().default(0),
+    lastError: text('last_error'),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [
+    index('artifact_red_team_jobs_scope_idx').on(t.workspaceId, t.projectId, t.createdAt),
+    index('artifact_red_team_jobs_status_lease_idx').on(t.status, t.leaseExpiresAt, t.nextAttemptAt),
+    index('artifact_red_team_jobs_version_hash_idx').on(t.artifactVersionId, t.contentHash, t.sequenceNo),
+  ],
+);
+
+/**
+ * Append-only adversarial review result ledger. A review is current only when
+ * tenant, artifact/version identity, and the structured content hash match.
+ */
+export const artifactRedTeamRuns = pgTable(
+  'artifact_red_team_runs',
+  {
+    id: primaryId,
+    jobId: uuid('job_id').notNull().references(() => artifactRedTeamJobs.id, { onDelete: 'restrict' }),
+    sequenceNo: bigint('sequence_no', { mode: 'number' }).generatedAlwaysAsIdentity().notNull(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'restrict' }),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'restrict' }),
+    artifactId: uuid('artifact_id')
+      .notNull()
+      .references(() => artifacts.id, { onDelete: 'restrict' }),
+    artifactVersionId: uuid('artifact_version_id')
+      .notNull()
+      .references(() => artifactVersions.id, { onDelete: 'restrict' }),
+    contentHash: text('content_hash').notNull(),
+    mode: text('mode').notNull(),
+    status: text('status').notNull(),
+    policyVersion: text('policy_version').notNull(),
+    personas: jsonb('personas').$type<Array<'감사원' | '의회' | '노조'>>().notNull().default([]),
+    attacks: jsonb('attacks').$type<Array<Record<string, unknown>>>().notNull().default([]),
+    defenses: jsonb('defenses').$type<Array<Record<string, unknown>>>().notNull().default([]),
+    verdict: text('verdict').notNull(),
+    reviewerRunId: text('reviewer_run_id'),
+    errorMessage: text('error_message'),
+    reviewedByUserId: uuid('reviewed_by_user_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    unique('artifact_red_team_runs_job_unique').on(t.jobId),
+    unique('artifact_red_team_runs_sequence_unique').on(t.sequenceNo),
+    index('artifact_red_team_runs_scope_idx').on(t.workspaceId, t.projectId, t.createdAt),
+    index('artifact_red_team_runs_version_hash_idx').on(t.artifactVersionId, t.contentHash, t.sequenceNo),
+  ],
+);
+
 /**
  * Per-user notification feed (Phase 2-C). Written by domain services
  * (invitation accepted / assistant reply settled / artifact version added).
@@ -167,12 +243,14 @@ export const notifications = pgTable(
     /** Deep-link target: 'thread' | 'artifact' | 'workspace'. */
     refType: text('ref_type').notNull(),
     refId: uuid('ref_id').notNull(),
+    dedupKey: text('dedup_key'),
     readAt: timestamp('read_at', { withTimezone: true }),
     ...timestamps,
   },
   (t) => [
     index('notifications_user_idx').on(t.userId, t.createdAt),
     index('notifications_workspace_idx').on(t.workspaceId),
+    unique('notifications_workspace_user_dedup_unique').on(t.workspaceId, t.userId, t.dedupKey),
   ],
 );
 

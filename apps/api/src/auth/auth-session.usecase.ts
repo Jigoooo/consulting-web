@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { schema } from '@consulting/db-schema';
-import { eq } from 'drizzle-orm';
+import { and, eq, gt, isNull } from 'drizzle-orm';
 import { ok, err, type Result, domainError } from '@consulting/shared';
 import type { PublicUser, AuthSessionResponse } from '@consulting/contracts';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
@@ -94,6 +94,20 @@ export class AuthSessionUseCase {
     return ok({ userId: claims.sub });
   }
 
+  /** Idempotently revoke only the refresh session represented by this token. */
+  async logout(refreshToken: string): Promise<{ revoked: boolean }> {
+    const claims = verifyJwt(refreshToken, this.env.JWT_REFRESH_SECRET, 'refresh');
+    if (!claims) return { revoked: false };
+    const revoked = await this.db
+      .delete(schema.sessions)
+      .where(and(
+        eq(schema.sessions.refreshTokenHash, hashToken(refreshToken)),
+        eq(schema.sessions.userId, claims.sub),
+      ))
+      .returning({ id: schema.sessions.id });
+    return { revoked: revoked.length > 0 };
+  }
+
   /**
    * Refresh rotation (N-3): validate the JWT, confirm the hashed session row
    * still exists (not revoked / expired), delete it, then issue a fresh pair
@@ -105,51 +119,56 @@ export class AuthSessionUseCase {
     if (!claims) return err(domainError('UNAUTHENTICATED', 'invalid refresh token'));
 
     const tokenHash = hashToken(refreshToken);
-    const [session] = await this.db
-      .select({ id: schema.sessions.id, expiresAt: schema.sessions.expiresAt })
-      .from(schema.sessions)
-      .where(eq(schema.sessions.refreshTokenHash, tokenHash))
-      .limit(1);
-    if (!session || session.expiresAt.getTime() < Date.now()) {
-      return err(domainError('UNAUTHENTICATED', 'refresh session not found or expired'));
-    }
+    return this.db.transaction(async (tx) => {
+      // Atomic claim: concurrent/replayed callers cannot both rotate the same
+      // refresh row. Keeping successor insertion in this transaction also
+      // restores the old row if minting/persistence fails.
+      const [claimed] = await tx
+        .delete(schema.sessions)
+        .where(and(
+          eq(schema.sessions.refreshTokenHash, tokenHash),
+          gt(schema.sessions.expiresAt, new Date()),
+          isNull(schema.sessions.revokedAt),
+        ))
+        .returning({ userId: schema.sessions.userId });
+      if (!claimed || claimed.userId !== claims.sub) {
+        return err(domainError('UNAUTHENTICATED', 'refresh session not found or expired'));
+      }
 
-    const [user] = await this.db
-      .select({
-        id: schema.users.id,
-        email: schema.users.email,
-        displayName: schema.users.displayName,
-        status: schema.users.status,
-      })
-      .from(schema.users)
-      .where(eq(schema.users.id, claims.sub))
-      .limit(1);
-    if (!user || user.status !== 'active') {
-      return err(domainError('FORBIDDEN', 'user is not active'));
-    }
+      const [user] = await tx
+        .select({
+          id: schema.users.id,
+          email: schema.users.email,
+          displayName: schema.users.displayName,
+          status: schema.users.status,
+        })
+        .from(schema.users)
+        .where(eq(schema.users.id, claims.sub))
+        .limit(1);
+      if (!user || user.status !== 'active') {
+        return err(domainError('FORBIDDEN', 'user is not active'));
+      }
 
-    // Rotate: revoke the used session, then mint a fresh pair.
-    await this.db.delete(schema.sessions).where(eq(schema.sessions.id, session.id));
+      const issuedAt = nowSec();
+      const accessToken = signJwt(
+        { sub: user.id, typ: 'access', iat: issuedAt, exp: issuedAt + ACCESS_TTL_SEC },
+        this.env.JWT_ACCESS_SECRET,
+      );
+      const nextRefreshToken = signJwt(
+        { sub: user.id, typ: 'refresh', iat: issuedAt, exp: issuedAt + REFRESH_TTL_SEC },
+        this.env.JWT_REFRESH_SECRET,
+      );
+      await tx.insert(schema.sessions).values({
+        userId: user.id,
+        refreshTokenHash: hashToken(nextRefreshToken),
+        ...(userAgent !== undefined ? { userAgent } : {}),
+        expiresAt: new Date((issuedAt + REFRESH_TTL_SEC) * 1000),
+      });
 
-    const issuedAt = nowSec();
-    const accessToken = signJwt(
-      { sub: user.id, typ: 'access', iat: issuedAt, exp: issuedAt + ACCESS_TTL_SEC },
-      this.env.JWT_ACCESS_SECRET,
-    );
-    const nextRefreshToken = signJwt(
-      { sub: user.id, typ: 'refresh', iat: issuedAt, exp: issuedAt + REFRESH_TTL_SEC },
-      this.env.JWT_REFRESH_SECRET,
-    );
-    await this.db.insert(schema.sessions).values({
-      userId: user.id,
-      refreshTokenHash: hashToken(nextRefreshToken),
-      ...(userAgent !== undefined ? { userAgent } : {}),
-      expiresAt: new Date((issuedAt + REFRESH_TTL_SEC) * 1000),
-    });
-
-    return ok({
-      user: toPublicUser(user),
-      tokens: { accessToken, refreshToken: nextRefreshToken, expiresInSec: ACCESS_TTL_SEC },
+      return ok({
+        user: toPublicUser(user),
+        tokens: { accessToken, refreshToken: nextRefreshToken, expiresInSec: ACCESS_TTL_SEC },
+      });
     });
   }
 }

@@ -75,6 +75,14 @@ services:
       HERMES_API_BASE_URL: http://host.docker.internal:38642
       HERMES_API_KEY: ${HERMES_API_KEY:?set in .env.docker}
       HERMES_CONFIG_PATH: /brain/hermes.config.yaml
+      # Explicit rollout only. The reviewer endpoint must expose zero enabled toolsets.
+      ARTIFACT_RED_TEAM_MODE: ${ARTIFACT_RED_TEAM_MODE:-off}
+      ARTIFACT_RED_TEAM_API_BASE_URL: ${ARTIFACT_RED_TEAM_API_BASE_URL:-}
+      ARTIFACT_RED_TEAM_API_KEY: ${ARTIFACT_RED_TEAM_API_KEY:-}
+      CONSULTING_INSIGHT_WEB_SHADOW_MODE: shadow
+      CONSULTING_INSIGHT_WEB_SHADOW_THREAD_IDS: 6b6657a8-2d23-4300-a621-4773ad1117f8
+      CONSULTING_INSIGHT_POLICY_HASH: 3e90693571665bc34d8a964c3ced56e8262469b3e369374e3988424f07b67ed9
+      REPORT_WORKFLOW_SHADOW_MODE: ${REPORT_WORKFLOW_SHADOW_MODE:-observe}
       CONSULTING_BRAIN_ROOT: /brain/consulting
       HERMES_ENV_FILE: /brain/hermes.env
       CONSULTING_PYTHON: python3

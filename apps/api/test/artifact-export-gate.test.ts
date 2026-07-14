@@ -29,7 +29,7 @@ function makeController() {
       ],
     }),
   };
-  const access = { workspaceMember: vi.fn().mockResolvedValue({ allowed: true, workspaceId: WORKSPACE_ID }) };
+  const access = { projectPermission: vi.fn().mockResolvedValue({ allowed: true, workspaceId: WORKSPACE_ID, projectId: PROJECT_ID }) };
   const notifications = { notifyWorkspace: vi.fn() };
   const db = makeSourceDb();
   const exporter = {
@@ -55,6 +55,13 @@ function makeController() {
       messages: [],
     }),
   };
+  const humanReview = {
+    exportDecision: vi.fn(async (_target: unknown, preflight: { canExport: boolean; reason: string }) => ({
+      canExport: preflight.canExport,
+      reason: preflight.reason,
+    })),
+  };
+  const reportWorkflow = { observe: vi.fn().mockResolvedValue({ status: 'paused' }), resume: vi.fn() };
   const controller = new (ArtifactsController as any)(
     artifacts,
     access,
@@ -62,8 +69,10 @@ function makeController() {
     db,
     exporter,
     artifactVerification,
+    humanReview,
+    reportWorkflow,
   ) as ArtifactsController;
-  return { controller, exporter, artifactVerification };
+  return { controller, exporter, artifactVerification, reportWorkflow };
 }
 
 describe('ArtifactsController final export verifier gate', () => {
@@ -83,9 +92,9 @@ describe('ArtifactsController final export verifier gate', () => {
   });
 
   it('preflights the exact artifact version through the shared version verification service', async () => {
-    const { controller, exporter, artifactVerification } = makeController();
+    const { controller, exporter, artifactVerification, reportWorkflow } = makeController();
 
-    const response = await controller.exportPreflight(ARTIFACT_ID, 'pdf', undefined, { authUserId: 'user-1' } as any);
+    const response = await controller.exportPreflight(ARTIFACT_ID, 'pdf', undefined, { authUserId: 'user-1' } as any, '1');
 
     expect(response).toMatchObject({
       canExport: false,
@@ -98,20 +107,33 @@ describe('ArtifactsController final export verifier gate', () => {
       workspaceId: WORKSPACE_ID,
       projectId: PROJECT_ID,
     }));
+    expect(reportWorkflow.observe).toHaveBeenCalledWith(
+      expect.objectContaining({ artifactVersionId: VERSION_ID, contentHash: expect.stringMatching(/^[a-f0-9]{64}$/u) }),
+      expect.objectContaining({ canExport: false }),
+      false,
+      'ARTIFACT_VERIFICATION_REQUIRED',
+    );
     expect(exporter.export).not.toHaveBeenCalled();
   });
 
   it('verifies the current artifact body and binds the result to that version before export', async () => {
     const { controller, artifactVerification } = makeController();
-    (controller as any).requireWriteRole = vi.fn().mockResolvedValue(undefined);
-
+    artifactVerification.preflightVersion.mockResolvedValueOnce({
+      canExport: true,
+      reason: 'OK',
+      versionNo: 1,
+      gate: { decision: 'PASS', blockers: [], warnings: [] },
+      messages: [],
+      redTeam: { mode: 'off', status: 'disabled', verdict: null, contentHash: null, policyVersion: null, attacks: [], defenses: [], reviewedAt: null },
+    });
     const response = await (controller as any).verifyArtifact(
       ARTIFACT_ID,
       { versionNo: 1 },
       { authUserId: 'user-1' },
+      '1',
     );
 
-    expect(response).toMatchObject({ canExport: true, reason: 'OK', versionNo: 1 });
+    expect(response).toMatchObject({ canExport: false, reason: 'ARTIFACT_STRUCTURE_REQUIRED', versionNo: 1 });
     expect(artifactVerification.verifyVersion).toHaveBeenCalledWith(expect.objectContaining({
       artifactId: ARTIFACT_ID,
       artifactVersionId: VERSION_ID,

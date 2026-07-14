@@ -1,5 +1,5 @@
-import { pgTable, text, uuid, index, unique } from 'drizzle-orm/pg-core';
-import { entityStatus, chatRole } from './enums';
+import { pgTable, text, timestamp, uuid, index, unique, uniqueIndex } from 'drizzle-orm/pg-core';
+import { entityStatus, chatRole, scopeType } from './enums';
 import { workspaces } from './organization';
 import { users } from './identity';
 import { primaryId, timestamps, softDelete, optimisticVersion } from './_shared';
@@ -101,6 +101,33 @@ export const threads = pgTable(
 );
 
 /**
+ * Append-only rows describing one recursive archive/soft-delete transition.
+ * Restore replays the latest unresolved event to each scope's exact previous
+ * state, so independent child archives survive parent lifecycle operations.
+ */
+export const scopeLifecycleTransitions = pgTable(
+  'scope_lifecycle_transitions',
+  {
+    id: primaryId,
+    eventId: uuid('event_id').notNull(),
+    rootScopeType: scopeType('root_scope_type').notNull(),
+    rootScopeId: uuid('root_scope_id').notNull(),
+    operation: text('operation').$type<'archive' | 'soft_delete'>().notNull(),
+    scopeType: scopeType('scope_type').notNull(),
+    scopeId: uuid('scope_id').notNull(),
+    previousStatus: entityStatus('previous_status').notNull(),
+    previousDeletedAt: timestamp('previous_deleted_at', { withTimezone: true }),
+    restoredAt: timestamp('restored_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [
+    unique('scope_lifecycle_transition_event_scope_unique').on(t.eventId, t.scopeType, t.scopeId),
+    index('scope_lifecycle_transition_root_idx').on(t.rootScopeType, t.rootScopeId, t.restoredAt, t.createdAt),
+    index('scope_lifecycle_transition_event_idx').on(t.eventId),
+  ],
+);
+
+/**
  * Chat messages persisted per thread (Phase 1.5 N-1). Every row carries
  * workspace_id for tenant filtering (ADR-0001). assistant rows keep the
  * Hermes run id for traceability; author_user_id is null for assistant rows.
@@ -118,6 +145,10 @@ export const chatMessages = pgTable(
     role: chatRole('role').notNull(),
     authorUserId: uuid('author_user_id').references(() => users.id, { onDelete: 'set null' }),
     content: text('content').notNull(),
+    /** Browser-generated logical turn id. User rows only; null for legacy/assistant rows. */
+    clientMessageId: uuid('client_message_id'),
+    /** SHA-256 of the immutable thread/message/model/attachment request identity. */
+    clientRequestHash: text('client_request_hash'),
     runId: text('run_id'),
     /** 'complete' | 'cancelled' | 'error' — assistant rows only, user rows always complete. */
     finishState: text('finish_state').notNull().default('complete'),
@@ -128,5 +159,7 @@ export const chatMessages = pgTable(
     index('chat_messages_thread_idx').on(t.threadId, t.createdAt),
     index('chat_messages_thread_cursor_idx').on(t.threadId, t.createdAt, t.id),
     index('chat_messages_workspace_idx').on(t.workspaceId),
+    uniqueIndex('chat_messages_workspace_user_client_message_unique')
+      .on(t.workspaceId, t.authorUserId, t.clientMessageId),
   ],
 );

@@ -11,6 +11,24 @@ const BooleanFlagSchema = z.preprocess((value) => {
   return value;
 }, z.boolean());
 
+const OptionalUrlSchema = z.preprocess(
+  (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+  z.string().url().optional(),
+);
+
+const OptionalSecretSchema = z.preprocess(
+  (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+  z.string().min(1).optional(),
+);
+
+function canonicalBaseUrl(value: string): string {
+  const parsed = new URL(value);
+  parsed.hash = '';
+  parsed.search = '';
+  parsed.pathname = parsed.pathname.replace(/\/+$/u, '') || '/';
+  return parsed.toString().replace(/\/$/u, '');
+}
+
 /**
  * Environment contract (ADR-0014). App MUST fail to boot on invalid/missing env.
  * Secrets live only here on the server side; never sent to the browser (ADR-0007).
@@ -51,11 +69,70 @@ export const EnvSchema = z.object({
   VERIFIER_LLM_MODEL: z.string().optional(),
   VERIFIER_LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
 
+  // Content-bound adversarial artifact review rollout. Off prevents surprise LLM cost;
+  // shadow and warning require explicit promotions. Warning remains non-blocking.
+  ARTIFACT_RED_TEAM_MODE: z.enum(['off', 'shadow', 'warning']).default('off'),
+  ARTIFACT_RED_TEAM_API_BASE_URL: OptionalUrlSchema,
+  ARTIFACT_RED_TEAM_API_KEY: OptionalSecretSchema,
+  ARTIFACT_RED_TEAM_TIMEOUT_MS: z.coerce.number().int().positive().default(45_000),
+
+  // V3-4: response-invariant Web shadow. Off is the default and instant rollback.
+  CONSULTING_INSIGHT_WEB_SHADOW_MODE: z.enum(['off', 'shadow']).optional(),
+  CONSULTING_INSIGHT_WEB_SHADOW_THREAD_IDS: z.string().optional(),
+  CONSULTING_INSIGHT_POLICY_HASH: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
+
+  // W3: shadow-only report workflow. "off" is the instant rollback switch.
+  REPORT_WORKFLOW_SHADOW_MODE: z.enum(['off', 'observe']).default('off'),
+
   // Web Push (2026-07-06). Optional — when unset, push endpoints return
   // publicKey: null and the sender no-ops; the in-app bell keeps working.
   VAPID_PUBLIC_KEY: z.string().optional(),
   VAPID_PRIVATE_KEY: z.string().optional(),
   VAPID_SUBJECT: z.string().default('mailto:admin@localhost'),
+}).superRefine((env, context) => {
+  if (env.CONSULTING_INSIGHT_WEB_SHADOW_MODE === 'shadow') {
+    const threadIds = (env.CONSULTING_INSIGHT_WEB_SHADOW_THREAD_IDS ?? '').split(',').map((value) => value.trim()).filter(Boolean);
+    if (threadIds.length === 0 || threadIds.some((value) => !z.string().uuid().safeParse(value).success)) {
+      context.addIssue({ code: 'custom', path: ['CONSULTING_INSIGHT_WEB_SHADOW_THREAD_IDS'], message: 'shadow mode requires a non-empty comma-separated UUID allowlist' });
+    }
+    if (!env.CONSULTING_INSIGHT_POLICY_HASH) {
+      context.addIssue({ code: 'custom', path: ['CONSULTING_INSIGHT_POLICY_HASH'], message: 'required in consulting insight shadow mode' });
+    }
+  }
+  const dedicatedEndpointRequired = env.ARTIFACT_RED_TEAM_MODE !== 'off'
+    || env.CONSULTING_INSIGHT_WEB_SHADOW_MODE === 'shadow';
+  if (!dedicatedEndpointRequired) return;
+  if (!env.ARTIFACT_RED_TEAM_API_BASE_URL) {
+    context.addIssue({
+      code: 'custom',
+      path: ['ARTIFACT_RED_TEAM_API_BASE_URL'],
+      message: 'required when ARTIFACT_RED_TEAM_MODE is shadow or warning',
+    });
+  }
+  if (!env.ARTIFACT_RED_TEAM_API_KEY) {
+    context.addIssue({
+      code: 'custom',
+      path: ['ARTIFACT_RED_TEAM_API_KEY'],
+      message: 'required when ARTIFACT_RED_TEAM_MODE is shadow or warning',
+    });
+  }
+  if (
+    env.ARTIFACT_RED_TEAM_API_BASE_URL
+    && canonicalBaseUrl(env.ARTIFACT_RED_TEAM_API_BASE_URL) === canonicalBaseUrl(env.HERMES_API_BASE_URL)
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['ARTIFACT_RED_TEAM_API_BASE_URL'],
+      message: 'must use a dedicated endpoint distinct from HERMES_API_BASE_URL',
+    });
+  }
+  if (env.ARTIFACT_RED_TEAM_API_KEY && env.ARTIFACT_RED_TEAM_API_KEY === env.HERMES_API_KEY) {
+    context.addIssue({
+      code: 'custom',
+      path: ['ARTIFACT_RED_TEAM_API_KEY'],
+      message: 'must use a dedicated key distinct from HERMES_API_KEY',
+    });
+  }
 });
 
 export type Env = z.infer<typeof EnvSchema>;
@@ -68,7 +145,10 @@ export interface ParseResult {
 
 /** Pure parser — used by ConfigModule and by tests without booting Nest. */
 export function parseEnv(raw: NodeJS.ProcessEnv): ParseResult {
-  const result = EnvSchema.safeParse(raw);
+  const normalized = raw.APP_ENV === 'test' && !raw.DATABASE_URL && raw.TEST_DATABASE_URL
+    ? { ...raw, DATABASE_URL: raw.TEST_DATABASE_URL }
+    : raw;
+  const result = EnvSchema.safeParse(normalized);
   if (result.success) {
     return { ok: true, env: result.data };
   }

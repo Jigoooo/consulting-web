@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BASIC_INFO_EDIT_HELPER,
   CONNECTION_EDIT_HELPER,
+  DEFAULT_TEMPLATE_CHANNEL_LABEL,
   EDIT_AFTER_CREATE_NOTICE,
   REVIEW_EDIT_HELPER,
   SUCCESS_EDIT_NOTICE,
@@ -26,6 +27,12 @@ describe('project create wizard model', () => {
     expect(CONNECTION_EDIT_HELPER).toBe('연결은 생성 후에도 프로젝트 설정에서 언제든 바꿀 수 있어요.');
     expect(REVIEW_EDIT_HELPER).toBe('생성 후에도 프로젝트명·개요·연결·자료를 다시 바꿀 수 있습니다.');
     expect(SUCCESS_EDIT_NOTICE).toBe('이름·연결·자료는 언제든 다시 바꿀 수 있어요.');
+  });
+
+  it('names every channel created by the default consulting template', () => {
+    for (const channel of ['자료수집', '분석', '보고서', 'Q&A', '대화']) {
+      expect(DEFAULT_TEMPLATE_CHANNEL_LABEL).toContain(channel);
+    }
   });
 
   it('requires at least one selected project when the user chooses selected connections', () => {

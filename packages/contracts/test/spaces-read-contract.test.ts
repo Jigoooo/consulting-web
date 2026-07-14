@@ -55,6 +55,37 @@ describe('space read contracts (Phase 1-M)', () => {
     expect(WorkspaceTreeResponseSchema.parse(res)).toEqual(res);
   });
 
+  it('parses opt-in effective permissions without requiring them on legacy trees', () => {
+    const res = {
+      workspaceId: uuid(1),
+      permissions: ['workspace.read', 'project.create'],
+      projects: [{
+        id: uuid(2),
+        name: '프로젝트',
+        slug: 'project',
+        permissions: ['project.read', 'artifact.create'],
+        channels: [{
+          id: uuid(3),
+          name: '채널',
+          slug: 'channel',
+          permissions: ['channel.read', 'channel.update'],
+          topics: [{
+            id: uuid(4),
+            name: '대화',
+            slug: 'topic',
+            permissions: ['message.read'],
+          }],
+        }],
+      }],
+    };
+    expect(WorkspaceTreeResponseSchema.parse(res)).toEqual(res);
+    expect(() => WorkspaceTreeResponseSchema.parse({
+      workspaceId: uuid(1),
+      permissions: ['unknown.permission'],
+      projects: [],
+    })).toThrow();
+  });
+
   it('rejects tree nodes leaking internal linkage fields', () => {
     expect(() =>
       WorkspaceTreeResponseSchema.parse({

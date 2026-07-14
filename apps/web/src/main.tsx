@@ -4,6 +4,10 @@ import { RouterProvider, createRouter } from '@tanstack/react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { routeTree } from './routeTree.gen';
 import { authStore } from './lib/api';
+import { bindAuthRouterInvalidation } from './lib/auth-router-sync';
+import { bindAuthIdentityIsolation } from './lib/auth-identity-isolation';
+import { clearMessageWindowCache } from './widgets/chat-thread/model/messageCache';
+import { clearComposerDrafts } from './widgets/chat-thread/model/composerDraftStore';
 import { setupServiceWorker, reloadIfUpdateReady } from './lib/sw';
 import { ToastProvider } from './shared/ui/toast/Toast';
 import { ErrorBoundary } from './shared/ui/error-boundary/ErrorBoundary';
@@ -16,12 +20,34 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
 });
 
+const stopAuthIdentityIsolation = bindAuthIdentityIsolation(
+  {
+    getUserId: () => authStore.getUser()?.id ?? null,
+    subscribe: authStore.subscribe,
+  },
+  () => {
+    queryClient.clear();
+    clearMessageWindowCache();
+    clearComposerDrafts();
+  },
+);
+
 const router = createRouter({
   routeTree,
   context: { queryClient, auth: authStore },
   defaultPreload: 'intent',
   scrollRestoration: true,
 });
+
+const stopAuthRouterSync = bindAuthRouterInvalidation(authStore, () => {
+  void router.invalidate();
+});
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    stopAuthRouterSync();
+    stopAuthIdentityIsolation();
+  });
+}
 
 // SW deploy flow: when a new version is fully precached, swap at a natural
 // navigation boundary (user expects a screen change; no form state at risk).

@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { schema } from '@consulting/db-schema';
-import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type {
   ArtifactDetailResponse,
   ListArtifactsResponse,
@@ -21,67 +21,73 @@ export class ArtifactStore {
     projectId: string;
     title: string;
     content: string;
+    governingMessage: string | null;
+    soWhat: string | null;
     note: string;
     createdByUserId: string;
     sourceThreadId: string | null;
     sourceMessageId: string | null;
-  }): Promise<{ id: string; versionNo: number }> {
-    return this.db.transaction(async (tx) => {
-      const [artifact] = await tx
-        .insert(schema.artifacts)
-        .values({
-          workspaceId: input.workspaceId,
-          projectId: input.projectId,
-          title: input.title,
-          headVersion: 1,
-          createdByUserId: input.createdByUserId,
-        })
-        .returning({ id: schema.artifacts.id });
-      await tx.insert(schema.artifactVersions).values({
+  }, db?: Db): Promise<{ id: string; versionNo: number }> {
+    if (!db) return this.db.transaction((tx) => this.create(input, tx as Db));
+    const [artifact] = await db
+      .insert(schema.artifacts)
+      .values({
         workspaceId: input.workspaceId,
-        artifactId: artifact!.id,
-        versionNo: 1,
-        content: input.content,
-        note: input.note,
-        authorUserId: input.createdByUserId,
-        sourceThreadId: input.sourceThreadId,
-        sourceMessageId: input.sourceMessageId,
-      });
-      return { id: artifact!.id, versionNo: 1 };
+        projectId: input.projectId,
+        title: input.title,
+        headVersion: 1,
+        createdByUserId: input.createdByUserId,
+      })
+      .returning({ id: schema.artifacts.id });
+    await db.insert(schema.artifactVersions).values({
+      workspaceId: input.workspaceId,
+      artifactId: artifact!.id,
+      versionNo: 1,
+      content: input.content,
+      governingMessage: input.governingMessage,
+      soWhat: input.soWhat,
+      note: input.note,
+      authorUserId: input.createdByUserId,
+      sourceThreadId: input.sourceThreadId,
+      sourceMessageId: input.sourceMessageId,
     });
+    return { id: artifact!.id, versionNo: 1 };
   }
 
   async addVersion(input: {
     artifactId: string;
     workspaceId: string;
     content: string;
+    governingMessage: string | null;
+    soWhat: string | null;
     note: string;
     authorUserId: string;
     sourceThreadId: string | null;
     sourceMessageId: string | null;
-  }): Promise<{ versionNo: number }> {
-    return this.db.transaction(async (tx) => {
-      const [head] = await tx
-        .select({ max: sql<number>`coalesce(max(${schema.artifactVersions.versionNo}), 0)::int` })
-        .from(schema.artifactVersions)
-        .where(eq(schema.artifactVersions.artifactId, input.artifactId));
-      const versionNo = (head?.max ?? 0) + 1;
-      await tx.insert(schema.artifactVersions).values({
-        workspaceId: input.workspaceId,
-        artifactId: input.artifactId,
-        versionNo,
-        content: input.content,
-        note: input.note,
-        authorUserId: input.authorUserId,
-        sourceThreadId: input.sourceThreadId,
-        sourceMessageId: input.sourceMessageId,
-      });
-      await tx
-        .update(schema.artifacts)
-        .set({ headVersion: versionNo, updatedAt: new Date() })
-        .where(eq(schema.artifacts.id, input.artifactId));
-      return { versionNo };
+  }, db?: Db): Promise<{ versionNo: number }> {
+    if (!db) return this.db.transaction((tx) => this.addVersion(input, tx as Db));
+    const [head] = await db
+      .select({ max: sql<number>`coalesce(max(${schema.artifactVersions.versionNo}), 0)::int` })
+      .from(schema.artifactVersions)
+      .where(eq(schema.artifactVersions.artifactId, input.artifactId));
+    const versionNo = (head?.max ?? 0) + 1;
+    await db.insert(schema.artifactVersions).values({
+      workspaceId: input.workspaceId,
+      artifactId: input.artifactId,
+      versionNo,
+      content: input.content,
+      governingMessage: input.governingMessage,
+      soWhat: input.soWhat,
+      note: input.note,
+      authorUserId: input.authorUserId,
+      sourceThreadId: input.sourceThreadId,
+      sourceMessageId: input.sourceMessageId,
     });
+    await db
+      .update(schema.artifacts)
+      .set({ headVersion: versionNo, updatedAt: new Date() })
+      .where(eq(schema.artifacts.id, input.artifactId));
+    return { versionNo };
   }
 
   /** Workspace id for tenancy check; null when missing or soft-deleted. */
@@ -94,7 +100,12 @@ export class ArtifactStore {
     return row ?? null;
   }
 
-  async listForWorkspace(workspaceId: string, projectId?: string): Promise<ListArtifactsResponse> {
+  async listForWorkspace(
+    workspaceId: string,
+    projectIds: readonly string[],
+    offset = 0,
+  ): Promise<ListArtifactsResponse> {
+    if (projectIds.length === 0) return { artifacts: [] };
     const rows = await this.db
       .select({
         id: schema.artifacts.id,
@@ -106,16 +117,22 @@ export class ArtifactStore {
         updatedAt: schema.artifacts.updatedAt,
       })
       .from(schema.artifacts)
+      .innerJoin(schema.projects, and(
+        eq(schema.artifacts.projectId, schema.projects.id),
+        eq(schema.artifacts.workspaceId, schema.projects.workspaceId),
+      ))
       .where(
         and(
           eq(schema.artifacts.workspaceId, workspaceId),
           isNull(schema.artifacts.deletedAt),
-          // #5: optional project scope. artifacts.projectId is already NOT NULL
-          // and indexed (artifacts_project_idx) so this is a cheap filter.
-          ...(projectId ? [eq(schema.artifacts.projectId, projectId)] : []),
+          inArray(schema.artifacts.projectId, [...projectIds]),
+          eq(schema.projects.status, 'active'),
+          isNull(schema.projects.deletedAt),
         ),
       )
-      .orderBy(desc(schema.artifacts.updatedAt));
+      .orderBy(desc(schema.artifacts.updatedAt), desc(schema.artifacts.id))
+      .limit(500)
+      .offset(offset);
     return {
       artifacts: rows.map((r) => ({
         id: r.id,
@@ -147,6 +164,8 @@ export class ArtifactStore {
         id: schema.artifactVersions.id,
         versionNo: schema.artifactVersions.versionNo,
         content: schema.artifactVersions.content,
+        governingMessage: schema.artifactVersions.governingMessage,
+        soWhat: schema.artifactVersions.soWhat,
         note: schema.artifactVersions.note,
         authorUserId: schema.artifactVersions.authorUserId,
         authorName: schema.users.displayName,
@@ -168,6 +187,8 @@ export class ArtifactStore {
         id: v.id,
         versionNo: v.versionNo,
         content: v.content,
+        governingMessage: v.governingMessage,
+        soWhat: v.soWhat,
         note: v.note,
         authorUserId: v.authorUserId,
         authorName: v.authorName,

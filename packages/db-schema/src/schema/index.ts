@@ -6,6 +6,7 @@ export * from './context-graph';
 export * from './scope-profile';
 export * from './consulting-bridge';
 export * from './telegram-bridge';
+export * from './telegram-message-imports';
 export * from './permission';
 export * from './bot';
 export * from './events';

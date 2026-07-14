@@ -1,4 +1,4 @@
-import { Inject, Injectable, PayloadTooLargeException, ServiceUnavailableException } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional, PayloadTooLargeException, ServiceUnavailableException } from '@nestjs/common';
 import type { ArtifactExportPreflightResponse } from '@consulting/contracts';
 import type { ClaimInput, ClaimVerdict, EvidenceInput } from '../consulting/evidence-to-decision.service.js';
 import { ClaimVerifierService } from '../consulting/claim-verifier.service.js';
@@ -8,8 +8,10 @@ import {
   artifactContentHash,
   artifactTitleHash,
   auditArtifactExportPreflight,
+  type ArtifactRedTeamSnapshot,
   type ArtifactVersionVerificationSnapshot,
 } from './artifact-export-preflight-audit.js';
+import { ArtifactRedTeamService } from './artifact-red-team.service.js';
 
 const MAX_ARTIFACT_CLAIMS = 24;
 const MAX_ARTIFACT_CLAIM_CHARS = 2_000;
@@ -23,7 +25,7 @@ const STRUCTURAL_HEADING_RE = /^(?:결론|요약|개요|목차|근거|공식 근
 const STRUCTURAL_TABLE_CELL_RE = /^(?:항목|값|구분|내용|근거|출처|비고|기준|수치|결과)$/u;
 const STRUCTURAL_ARTIFACT_TITLE_RE = /^(?:대화\s*[—-]\s*지구 답변)$/u;
 
-export const ARTIFACT_VERIFICATION_POLICY_VERSION = 'artifact_claim_coverage_v4';
+export const ARTIFACT_VERIFICATION_POLICY_VERSION = 'artifact_claim_coverage_v5';
 
 export interface ArtifactVerificationTarget {
   artifactId: string;
@@ -33,6 +35,8 @@ export interface ArtifactVerificationTarget {
   title: string;
   versionNo: number;
   content: string;
+  governingMessage: string | null;
+  soWhat: string | null;
   sourceThreadId: string | null;
   sourceMessageId: string | null;
 }
@@ -65,24 +69,38 @@ export function artifactVerificationPolicyPrefix(target: Pick<ArtifactVerificati
 @Injectable()
 export class ArtifactVerificationService {
   private readonly inFlight = new Map<string, Promise<ArtifactExportPreflightResponse>>();
+  private readonly logger = new Logger(ArtifactVerificationService.name);
 
   constructor(
     @Inject(ARTIFACT_VERIFICATION_LEDGER) private readonly ledger: ArtifactVerificationLedger,
     @Inject(ClaimVerifierService) private readonly verifier: ClaimVerifierService,
     @Inject(ExactnessGateService) private readonly exactness: ExactnessGateService,
     @Inject(VerifierGatePolicyService) private readonly gatePolicy: VerifierGatePolicyService,
+    @Optional() @Inject(ArtifactRedTeamService) private readonly redTeam?: ArtifactRedTeamService,
   ) {}
 
   async preflightVersion(input: ArtifactVerificationTarget): Promise<ArtifactExportPreflightResponse> {
     assertArtifactVerificationInputSize(input);
-    return this.classify(input, await this.ledger.latest(input));
+    const redTeamLookup = this.redTeam
+      ? this.redTeam.latest(input).catch((error: unknown) => {
+          this.logger.warn(`artifact red-team preflight degraded: ${safeArtifactVerifierError(error)}`);
+          return null;
+        })
+      : Promise.resolve(null);
+    const [verification, redTeam] = await Promise.all([
+      this.ledger.latest(input),
+      redTeamLookup,
+    ]);
+    return this.classify(input, verification, redTeam);
   }
 
   async verifyVersion(
     input: ArtifactVerificationTarget & { verifiedByUserId: string },
   ): Promise<ArtifactExportPreflightResponse> {
     assertArtifactVerificationInputSize(input);
-    const contentHash = artifactContentHash(input.content);
+    const structurePreflight = this.classify(input, null, null);
+    if (structurePreflight.reason === 'ARTIFACT_STRUCTURE_REQUIRED') return structurePreflight;
+    const contentHash = artifactContentHash(input.content, input.governingMessage, input.soWhat);
     const key = `${input.artifactVersionId}:${contentHash}:${artifactTitleHash(input.title)}`;
     const existing = this.inFlight.get(key);
     if (existing) return existing;
@@ -108,7 +126,10 @@ export class ArtifactVerificationService {
     const highRiskClaimIds = claims
       .filter((claim) => (claim.decisionImpact ?? 0) >= 0.8)
       .map((claim) => claim.id);
-    const exactness = this.exactness.evaluateAnswer({ query: target.title, answer: target.content });
+    const exactness = this.exactness.evaluateAnswer({
+      query: target.title,
+      answer: [target.governingMessage, target.soWhat, target.content].filter(Boolean).join('\n\n'),
+    });
     const verification = await this.verifier.verify({ claims, evidence, highRiskClaimIds });
     const verdicts = completeClaimVerdicts(claims, verification.lattice.verdicts, extraction.coverageVerdicts);
     const gate = this.gatePolicy.evaluate({
@@ -129,17 +150,32 @@ export class ArtifactVerificationService {
       evidenceCount: evidence.length,
       verifiedByUserId,
     });
-    return this.classify(target, snapshot);
+    const verifierPreflight = this.classify(target, snapshot, null);
+    if (!verifierPreflight.canExport || !this.redTeam) return verifierPreflight;
+    const redTeam = await this.redTeam.enqueue({
+      target,
+      contentHash,
+      evidence,
+      verdicts,
+      reviewedByUserId: verifiedByUserId,
+    }).catch((error: unknown) => {
+      this.logger.warn(`artifact red-team review degraded: ${safeArtifactVerifierError(error)}`);
+      return null;
+    });
+    return this.classify(target, snapshot, redTeam);
   }
 
   private classify(
     input: ArtifactVerificationTarget,
     verification: ArtifactVersionVerificationSnapshot | null,
+    redTeam: ArtifactRedTeamSnapshot | null,
   ): ArtifactExportPreflightResponse {
+    const configuredMode = this.redTeam?.mode();
     const result = auditArtifactExportPreflight({
       projectId: input.projectId,
       projectName: input.title,
-      rows: [{ ...input, verification }],
+      redTeamMode: configuredMode ?? 'off',
+      rows: [{ ...input, verification, redTeam }],
     });
     const row = result.rows[0]!;
     return {
@@ -148,8 +184,13 @@ export class ArtifactVerificationService {
       versionNo: row.versionNo,
       gate: row.gate,
       messages: row.messages,
+      redTeam: row.redTeam,
     };
   }
+}
+
+function safeArtifactVerifierError(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).replace(/[\r\n]+/gu, ' ').slice(0, 300);
 }
 
 function assertArtifactVerificationInputSize(target: Pick<ArtifactVerificationTarget, 'title' | 'content'>): void {
@@ -166,10 +207,12 @@ function artifactClaims(target: ArtifactVerificationTarget): {
 } {
   const prefix = target.artifactVersionId.replace(/-/gu, '').slice(0, 8).toUpperCase();
   const titleSegments = STRUCTURAL_ARTIFACT_TITLE_RE.test(target.title.trim()) ? [] : [target.title.trim()];
+  const decisionSegments = [target.governingMessage, target.soWhat]
+    .filter((part): part is string => Boolean(part?.trim()));
   const contentSegments = target.content
     .split(/\n+/u)
     .flatMap(markdownLineSegments);
-  const segments = [...new Set([...titleSegments, ...contentSegments]
+  const segments = [...new Set([...decisionSegments, ...titleSegments, ...contentSegments]
     .map((part) => part.trim())
     .filter((part) => part.length >= 1))];
   const coverageReasons: string[] = [];

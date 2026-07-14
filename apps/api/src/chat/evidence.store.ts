@@ -76,7 +76,7 @@ export class EvidenceStore {
     messageId: string;
     runId: string | null;
     toolUses: CapturedToolUse[];
-  }): Promise<void> {
+  }, db: Db = this.db): Promise<void> {
     const rows = input.toolUses
       .filter((u) => u.tool.length > 0 && !IGNORED_TOOLS.has(u.tool) && capturesCompletedEvidence(u.tool))
       .map((u) => {
@@ -95,7 +95,7 @@ export class EvidenceStore {
         };
       });
     if (rows.length === 0) return;
-    await this.db.insert(schema.evidenceItems).values(rows);
+    await db.insert(schema.evidenceItems).values(rows);
   }
 
   async addManual(input: {

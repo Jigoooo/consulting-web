@@ -4,6 +4,8 @@ import type {
   AddEvidenceRequest,
   CreateArtifactRequest,
   AddArtifactVersionRequest,
+  ArtifactExportPreflightResponse,
+  ArtifactReviewDecisionRequest,
   VerifyArtifactVersionRequest,
   RecordRetrievalHitFeedbackRequest,
   ReviewQueueDecisionRequest,
@@ -17,8 +19,12 @@ export const collabKeys = {
   retrievalHits: (threadId: string) => ['retrieval-hits', threadId] as const,
   reviewQueue: (threadId: string, filter: ReviewQueueFilter = 'all') => ['review-queue', threadId, filter] as const,
   artifacts: (workspaceId: string) => ['artifacts', workspaceId] as const,
+  artifactContract: ['artifact-contract'] as const,
   artifact: (id: string) => ['artifact', id] as const,
   artifactExportPreflight: (id: string, version: number | 'head') => ['artifact-export-preflight', id, version] as const,
+  artifactReviewPlan: (projectId: string, offset?: number) => offset === undefined
+    ? ['artifact-review-plan', projectId] as const
+    : ['artifact-review-plan', projectId, offset] as const,
   observability: (workspaceId: string, traceId: string, threadId: string, limit: number | 'default') => ['observability', workspaceId, traceId, threadId, limit] as const,
   notifications: ['notifications'] as const,
   attachments: (threadId: string) => ['attachments', threadId] as const,
@@ -58,6 +64,7 @@ export function useEvidenceDecisionSummary(threadId: string | undefined) {
   });
 }
 
+
 export function useRetrievalHits(threadId: string | undefined) {
   return useQuery({
     queryKey: collabKeys.retrievalHits(threadId ?? ''),
@@ -95,10 +102,10 @@ export function useReviewQueueDecision(threadId: string | undefined) {
 }
 
 // --- artifacts (2-B) ---
-export function useArtifacts(workspaceId: string | undefined, projectId?: string) {
+export function useArtifacts(workspaceId: string | undefined, projectId?: string, offset = 0) {
   return useQuery({
-    queryKey: [...collabKeys.artifacts(workspaceId ?? ''), projectId ?? 'all'],
-    queryFn: () => api.listArtifacts(workspaceId!, projectId),
+    queryKey: [...collabKeys.artifacts(workspaceId ?? ''), projectId ?? 'all', offset],
+    queryFn: () => api.listArtifacts(workspaceId!, projectId, offset),
     enabled: Boolean(workspaceId),
   });
 }
@@ -115,7 +122,10 @@ export function useCreateArtifact(workspaceId: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: CreateArtifactRequest) => api.createArtifact(body),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: collabKeys.artifacts(workspaceId ?? '') }),
+    onSuccess: (_data, body) => {
+      void qc.invalidateQueries({ queryKey: collabKeys.artifacts(workspaceId ?? '') });
+      void qc.invalidateQueries({ queryKey: collabKeys.artifactReviewPlan(body.projectId) });
+    },
   });
 }
 
@@ -128,6 +138,7 @@ export function useAddArtifactVersion(workspaceId: string | undefined) {
       void qc.invalidateQueries({ queryKey: collabKeys.artifacts(workspaceId ?? '') });
       void qc.invalidateQueries({ queryKey: collabKeys.artifact(v.id) });
       void qc.invalidateQueries({ queryKey: ['artifact-export-preflight', v.id] });
+      void qc.invalidateQueries({ queryKey: ['artifact-review-plan'] });
     },
   });
 }
@@ -139,6 +150,7 @@ export function useVerifyArtifactVersion() {
       api.verifyArtifactVersion(input.id, input.body),
     onSuccess: (_data, input) => {
       void qc.invalidateQueries({ queryKey: ['artifact-export-preflight', input.id] });
+      void qc.invalidateQueries({ queryKey: ['artifact-review-plan'] });
     },
   });
 }
@@ -148,7 +160,44 @@ export function useArtifactExportPreflight(id: string | undefined, version: numb
     queryKey: collabKeys.artifactExportPreflight(id ?? '', version ?? 'head'),
     queryFn: () => api.exportArtifactPreflight(id!, 'pdf', version),
     enabled: Boolean(id && version),
+    refetchInterval: (query) => artifactRedTeamRefetchInterval(query.state.data),
   });
+}
+
+export function useArtifactContractV2() {
+  return useQuery({
+    queryKey: collabKeys.artifactContract,
+    queryFn: () => api.supportsArtifactContractV2(),
+    staleTime: 30_000,
+    refetchInterval: (query) => query.state.data === false ? 30_000 : false,
+  });
+}
+
+export function useArtifactReviewPlan(projectId: string | undefined, enabled = true, offset = 0) {
+  return useQuery({
+    queryKey: collabKeys.artifactReviewPlan(projectId ?? '', offset),
+    queryFn: () => api.artifactReviewPlan(projectId!, offset),
+    enabled: Boolean(projectId) && enabled,
+  });
+}
+
+export function useArtifactReviewDecision(projectId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { id: string; versionNo: number; body: ArtifactReviewDecisionRequest }) =>
+      api.recordArtifactReviewDecision(input.id, input.versionNo, input.body),
+    onSuccess: (_data, input) => {
+      void qc.invalidateQueries({ queryKey: collabKeys.artifactReviewPlan(projectId ?? '') });
+      void qc.invalidateQueries({ queryKey: ['artifact-export-preflight', input.id] });
+      void qc.invalidateQueries({ queryKey: collabKeys.artifact(input.id) });
+    },
+  });
+}
+
+export function artifactRedTeamRefetchInterval(
+  preflight: ArtifactExportPreflightResponse | undefined,
+): 1_500 | false {
+  return preflight?.redTeam.status === 'pending' || preflight?.redTeam.status === 'processing' ? 1_500 : false;
 }
 
 // --- notifications (2-C) — 30s polling, no websocket by design. ---

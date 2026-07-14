@@ -6,7 +6,15 @@ const CHANNEL_ID = '11111111-1111-4111-8111-111111111111';
 const THREAD_ID = '22222222-2222-4222-8222-222222222222';
 
 function makeController() {
-  const access = { workspaceMember: vi.fn().mockResolvedValue({ allowed: true }) };
+  const allowed = { allowed: true, workspaceId: 'ws-1' };
+  const access = {
+    workspaceMember: vi.fn().mockResolvedValue(allowed),
+    workspaceAnyMembership: vi.fn().mockResolvedValue(allowed),
+    projectPermission: vi.fn().mockResolvedValue(allowed),
+    channelPermission: vi.fn().mockResolvedValue(allowed),
+    topicPermission: vi.fn().mockResolvedValue(allowed),
+    threadPermission: vi.fn().mockResolvedValue(allowed),
+  };
   const reads = {
     listArchivedScopes: vi.fn().mockResolvedValue({
       items: [
@@ -45,8 +53,9 @@ function makeController() {
     {} as any,
     {} as any,
     {} as any,
+    {} as any,
   );
-  return { controller, reads, mutate };
+  return { controller, access, reads, mutate };
 }
 
 describe('SpacesController lifecycle policy', () => {
@@ -87,29 +96,52 @@ describe('SpacesController lifecycle policy', () => {
   });
 
   it('lists archived scopes for an accessible workspace', async () => {
-    const { controller, reads } = makeController();
+    const { controller, access, reads } = makeController();
 
     const result = await controller.archive('ws-1', { authUserId: 'user-1' } as any);
 
     expect(reads.listArchivedScopes).toHaveBeenCalledWith('ws-1');
+    expect(access.channelPermission).toHaveBeenCalledWith('user-1', CHANNEL_ID, 'channel.read', { allowArchived: true });
     expect(result.items[0]?.kind).toBe('channel');
     expect(result.items[0]?.parentPath).toEqual(['프로젝트']);
   });
 
+  it('filters archived scopes denied on their exact archived target chain', async () => {
+    const { controller, access } = makeController();
+    access.channelPermission.mockResolvedValueOnce({ allowed: false, reason: 'forbidden' });
+
+    const result = await controller.archive('ws-1', { authUserId: 'user-1' } as any);
+
+    expect(result.items).toEqual([]);
+  });
+
+  it('marks visible archived scopes read-only when restore permission is denied', async () => {
+    const { controller, access } = makeController();
+    access.channelPermission
+      .mockResolvedValueOnce({ allowed: true, workspaceId: 'ws-1' })
+      .mockResolvedValueOnce({ allowed: false, reason: 'forbidden' });
+
+    const result = await controller.archive('ws-1', { authUserId: 'user-1' } as any, 'true');
+
+    expect(result.items[0]?.canRestore).toBe(false);
+  });
+
   it('restores an archived channel through the archive endpoint', async () => {
-    const { controller, mutate } = makeController();
+    const { controller, access, mutate } = makeController();
 
     await controller.restoreArchived('channel', CHANNEL_ID, { authUserId: 'user-1' } as any);
 
     expect(mutate.restoreNode).toHaveBeenCalledWith('channel', CHANNEL_ID);
+    expect(access.channelPermission).toHaveBeenCalledWith('user-1', CHANNEL_ID, 'channel.update', { allowArchived: true });
   });
 
   it('restores an archived thread through the archive endpoint', async () => {
-    const { controller, mutate } = makeController();
+    const { controller, access, mutate } = makeController();
 
     await controller.restoreArchived('thread', THREAD_ID, { authUserId: 'user-1' } as any);
 
     expect(mutate.restoreThread).toHaveBeenCalledWith(THREAD_ID);
+    expect(access.threadPermission).toHaveBeenCalledWith('user-1', THREAD_ID, 'channel.update', { allowArchived: true });
   });
 
   it('turns parent-archived restore failures into a conflict response', async () => {

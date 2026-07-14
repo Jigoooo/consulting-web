@@ -37,7 +37,11 @@ export class LibraryController {
       if (access.reason === 'not_found') throw new NotFoundException({ code: 'NOT_FOUND', message: 'workspace not found' });
       throw new ForbiddenException({ code: 'FORBIDDEN', message: 'access denied' });
     }
-    // 프로젝트 필터가 워크스페이스에 속하는지도 access.workspaceId로 보장됨.
+    // URL workspace is part of the tenant boundary, not a cosmetic path. A
+    // readable project from another workspace must not silently replace it.
+    if (access.workspaceId !== workspaceId) {
+      throw new NotFoundException({ code: 'NOT_FOUND', message: 'workspace or project not found' });
+    }
     const typeFilter = type && VALID_TYPES.has(type as LibrarySourceType) ? (type as LibrarySourceType) : undefined;
     const result = await this.store.list({
       workspaceId: access.workspaceId,
