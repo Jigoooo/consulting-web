@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import sqlite3
 import sys
+import tempfile
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -58,6 +61,147 @@ def watermark(count: int) -> dict[str, object]:
 
 
 class PreviewReclassificationTests(unittest.TestCase):
+    def test_main_applies_manual_adjudication_to_both_source_snapshots(self) -> None:
+        row = import_row(1, old_thread="11111111-1111-4111-8111-111111111111")
+        raw = source(None, None)
+        raw = preview.SourceIdentity(**({
+            **raw.__dict__, "source": "telegram", "content_sha256": row.content_sha256,
+        }))
+        route = preview.RouteIdentity("22222222-2222-4222-8222-222222222222", True)
+        app = watermark(1) | {"approved_chat_link_thread_ids": ["12"]}
+        app_snapshot = ([row], app, {"12": route})
+        source_watermark = {
+            "source_label": "test", "identity_hash": "e" * 64,
+            "matched_legacy_source_count": 1, "max_message_id": 1,
+        }
+        source_snapshot = ({("s", 1): raw}, source_watermark)
+        decision = preview.ManualAdjudication(
+            source_session_id="s", target_chat_id=preview.sync.APPROVED_CHAT_ID,
+            target_thread_id="12", evidence_fingerprint="f" * 64,
+            evidence_basis="manual_source_review",
+        )
+        with (
+            mock.patch.object(preview, "load_app_snapshot", side_effect=[app_snapshot, app_snapshot]),
+            mock.patch.object(preview, "load_source_identities", side_effect=[source_snapshot, source_snapshot]),
+            mock.patch.object(preview, "load_manual_session_fingerprints", side_effect=[{"s": "f" * 64}, {"s": "f" * 64}]),
+            mock.patch.object(preview, "load_manual_adjudications", return_value=([decision], "a" * 64)),
+            mock.patch.object(preview, "_atomic_write_json") as writer,
+            mock.patch.object(sys, "argv", [
+                "preview", "--output", "/tmp/manual-preview.json",
+                "--manual-adjudications", "/tmp/manual.json",
+            ]),
+        ):
+            self.assertEqual(preview.main(), 0)
+
+        payload = writer.call_args.args[1]
+        self.assertEqual(payload["schema_version"], "v3-5-preview-4.0")
+        self.assertEqual(payload["classification_counts"], {"exact": 1})
+        self.assertFalse(payload["apply_blocked"])
+        self.assertEqual(payload["manual_adjudication_artifact_sha256"], "a" * 64)
+
+    def test_manual_session_fingerprint_changes_when_original_source_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            state_db = Path(directory) / "state.db"
+            with sqlite3.connect(state_db) as con:
+                con.executescript("""
+                  CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY, source TEXT, user_id TEXT, started_at REAL,
+                    ended_at REAL, title TEXT, system_prompt TEXT, chat_id TEXT, thread_id TEXT
+                  );
+                  CREATE TABLE messages (
+                    id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, timestamp REAL,
+                    active INTEGER, compacted INTEGER, platform_message_id TEXT, content TEXT
+                  );
+                  INSERT INTO sessions VALUES ('s','telegram','u',1.0,2.0,'title','route context',NULL,NULL);
+                  INSERT INTO messages VALUES (1,'s','user',1.5,1,0,NULL,'original');
+                """)
+            row = import_row(1)
+            first = preview.load_manual_session_fingerprints([row], state_db=state_db)
+            with sqlite3.connect(state_db) as con:
+                con.execute("UPDATE messages SET content='changed' WHERE id=1")
+            second = preview.load_manual_session_fingerprints([row], state_db=state_db)
+
+            self.assertRegex(first["s"], r"^[0-9a-f]{64}$")
+            self.assertNotEqual(first["s"], second["s"])
+
+    def test_manual_adjudication_file_is_strict_hash_bound_and_rejects_symlink(self) -> None:
+        payload = {
+            "schema_version": "v3-5-manual-adjudication-1.0",
+            "decisions": [{
+                "source_session_id": "s",
+                "target_chat_id": "approved",
+                "target_thread_id": "12",
+                "evidence_fingerprint": "f" * 64,
+                "evidence_basis": "manual_source_review",
+            }],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manual.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            os.chmod(path, 0o600)
+
+            decisions, digest = preview.load_manual_adjudications(path)
+
+            self.assertEqual(decisions[0].source_session_id, "s")
+            self.assertEqual(len(digest), 64)
+            os.chmod(path, 0o644)
+            with self.assertRaisesRegex(ValueError, "file_contract"):
+                preview.load_manual_adjudications(path)
+            os.chmod(path, 0o600)
+            link = Path(directory) / "manual-link.json"
+            link.symlink_to(path)
+            with self.assertRaisesRegex(ValueError, "open_failed"):
+                preview.load_manual_adjudications(link)
+
+    def test_manual_adjudication_promotes_only_fingerprint_bound_unproven_session(self) -> None:
+        row = import_row(1, old_thread="11111111-1111-4111-8111-111111111111")
+        raw = source(None, None)
+        raw = preview.SourceIdentity(**({
+            **raw.__dict__, "source": "telegram", "content_sha256": row.content_sha256,
+        }))
+        decision = preview.ManualAdjudication(
+            source_session_id="s",
+            target_chat_id="approved",
+            target_thread_id="12",
+            evidence_fingerprint="f" * 64,
+            evidence_basis="manual_source_review",
+        )
+
+        effective = preview.apply_manual_adjudications(
+            sources={("s", 1): raw},
+            adjudications=[decision],
+            session_fingerprints={"s": "f" * 64},
+            routes={"12": preview.RouteIdentity("22222222-2222-4222-8222-222222222222", True)},
+            approved_chat_id="approved",
+        )
+
+        self.assertEqual(effective[("s", 1)].telegram_chat_id, "approved")
+        self.assertEqual(effective[("s", 1)].telegram_thread_id, "12")
+        result = preview.build_preview(
+            imports=[row],
+            sources=effective,
+            routes={"12": preview.RouteIdentity("22222222-2222-4222-8222-222222222222", True)},
+            approved_chat_id="approved",
+            source_watermark={
+                "source_label": "test", "identity_hash": "e" * 64,
+                "matched_legacy_source_count": 1, "max_message_id": 1,
+            },
+            app_watermark=watermark(1) | {"approved_chat_link_thread_ids": ["12"]},
+            manual_adjudications=[decision],
+            manual_adjudication_artifact_sha256="a" * 64,
+        )
+        self.assertEqual(result["classification_counts"], {"exact": 1})
+        self.assertEqual(result["apply_blockers"], [])
+        self.assertEqual(result["manual_adjudications"], [decision.__dict__])
+        self.assertEqual(result["fixed_set"]["manual_adjudication_hash"], result["manual_adjudication_hash"])
+        self.assertEqual(result["manual_adjudication_artifact_sha256"], "a" * 64)
+        result.update({
+            "snapshot_fence": {"app_stable": True, "source_stable": True},
+            "generated_at": "2026-07-15T00:00:00+00:00",
+            "privacy_violations": [],
+        })
+        self.assertEqual(preview.artifact_privacy_violations(result), [])
+
     def test_route_snapshot_requires_denormalized_workspace_chain(self) -> None:
         sql = preview._route_snapshot_sql()
         self.assertIn("c.workspace_id = l.workspace_id", sql)

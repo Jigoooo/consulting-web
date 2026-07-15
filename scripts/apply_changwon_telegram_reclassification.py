@@ -90,7 +90,7 @@ def load_approved_artifact(path: Path, approved_sha256: str, *, allow_expired: b
     payload = json.loads(raw_bytes.decode("utf-8"))
     if not isinstance(payload, dict):
         raise ApplyBlocked("artifact_must_be_object")
-    if payload.get("schema_version") != "v3-5-preview-3.0" or payload.get("mode") != "read_only_preview":
+    if payload.get("schema_version") != "v3-5-preview-4.0" or payload.get("mode") != "read_only_preview":
         raise ApplyBlocked("artifact_contract_mismatch")
     if payload.get("privacy_violations") != [] or preview.artifact_privacy_violations(payload):
         raise ApplyBlocked("artifact_privacy_violation")
@@ -124,7 +124,10 @@ def load_approved_artifact(path: Path, approved_sha256: str, *, allow_expired: b
     fixed_set = payload.get("fixed_set")
     if not isinstance(fixed_set, dict) or any(
         fixed_set.get(name) != payload.get(name)
-        for name in ("app_preimage_hash", "preimage_hash", "mapping_hash", "reverse_plan_hash")
+        for name in (
+            "app_preimage_hash", "preimage_hash", "mapping_hash", "reverse_plan_hash",
+            "manual_adjudication_hash",
+        )
     ):
         raise ApplyBlocked("fixed_set_hash_mismatch")
     if (
@@ -160,6 +163,38 @@ def load_approved_artifact(path: Path, approved_sha256: str, *, allow_expired: b
     pre_by_key = indexed(preimage, PREIMAGE_FIELDS, "preimage")
     map_by_key = indexed(mapping, MAPPING_FIELDS, "mapping")
     reverse_by_key = indexed(reverse_plan, REVERSE_FIELDS, "reverse")
+    manual_rows = payload.get("manual_adjudications")
+    manual_hash = payload.get("manual_adjudication_hash")
+    manual_artifact_sha = payload.get("manual_adjudication_artifact_sha256")
+    manual_fields = {
+        "source_session_id", "target_chat_id", "target_thread_id",
+        "evidence_fingerprint", "evidence_basis",
+    }
+    if not isinstance(manual_rows, list) or canonical_hash(manual_rows) != manual_hash:
+        raise ApplyBlocked("manual_adjudication_hash_mismatch")
+    seen_manual_sessions: set[str] = set()
+    preimage_sessions = {key[0] for key in pre_by_key}
+    for row in manual_rows:
+        if not isinstance(row, dict) or set(row) != manual_fields:
+            raise ApplyBlocked("manual_adjudication_row_invalid")
+        session_id = row.get("source_session_id")
+        if (
+            not isinstance(session_id, str) or not session_id
+            or session_id in seen_manual_sessions
+            or session_id not in preimage_sessions
+            or row.get("target_chat_id") != sync.APPROVED_CHAT_ID
+            or not isinstance(row.get("target_thread_id"), str) or not row["target_thread_id"]
+            or row.get("evidence_basis") != "manual_source_review"
+            or not isinstance(row.get("evidence_fingerprint"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", row["evidence_fingerprint"], re.I) is None
+        ):
+            raise ApplyBlocked("manual_adjudication_value_invalid")
+        seen_manual_sessions.add(session_id)
+    if manual_rows:
+        if not isinstance(manual_artifact_sha, str) or re.fullmatch(r"[0-9a-f]{64}", manual_artifact_sha, re.I) is None:
+            raise ApplyBlocked("manual_adjudication_artifact_sha_invalid")
+    elif manual_artifact_sha is not None:
+        raise ApplyBlocked("manual_adjudication_artifact_without_rows")
     if set(pre_by_key) != set(map_by_key):
         raise ApplyBlocked("preimage_mapping_identity_mismatch")
     planned_keys = {row_key for row_key, row in map_by_key.items() if row["target_thread_id"] is not None}
@@ -250,15 +285,40 @@ def transactional_receipt_exists(artifact_sha256: str, direction: str, quiesce_n
 
 
 def verify_fresh_snapshot(artifact: dict[str, Any]) -> None:
+    manual_rows = artifact.get("manual_adjudications")
+    if not isinstance(manual_rows, list):
+        raise ApplyBlocked("manual_adjudication_plan_invalid")
+    try:
+        manual_adjudications = [preview.ManualAdjudication(**row) for row in manual_rows]
+    except (TypeError, ValueError) as exc:
+        raise ApplyBlocked("manual_adjudication_plan_invalid") from exc
     imports_a, app_a, routes_a = preview.load_app_snapshot()
-    sources_a, source_a = preview.load_source_identities(imports_a)
+    raw_sources_a, source_a = preview.load_source_identities(imports_a)
     imports_b, app_b, routes_b = preview.load_app_snapshot()
-    sources_b, source_b = preview.load_source_identities(imports_b)
-    if app_a != app_b or imports_a != imports_b or routes_a != routes_b or source_a != source_b or sources_a != sources_b:
+    raw_sources_b, source_b = preview.load_source_identities(imports_b)
+    fingerprints_a = preview.load_manual_session_fingerprints(imports_a) if manual_adjudications else {}
+    fingerprints_b = preview.load_manual_session_fingerprints(imports_b) if manual_adjudications else {}
+    sources_a = preview.apply_manual_adjudications(
+        sources=raw_sources_a, adjudications=manual_adjudications,
+        session_fingerprints=fingerprints_a, routes=routes_a,
+        approved_chat_id=sync.APPROVED_CHAT_ID,
+    )
+    sources_b = preview.apply_manual_adjudications(
+        sources=raw_sources_b, adjudications=manual_adjudications,
+        session_fingerprints=fingerprints_b, routes=routes_b,
+        approved_chat_id=sync.APPROVED_CHAT_ID,
+    )
+    if (
+        app_a != app_b or imports_a != imports_b or routes_a != routes_b
+        or source_a != source_b or raw_sources_a != raw_sources_b
+        or fingerprints_a != fingerprints_b or sources_a != sources_b
+    ):
         raise ApplyBlocked("fresh_snapshot_unstable")
     fresh = preview.build_preview(
         imports=imports_a, sources=sources_a, routes=routes_a,
         approved_chat_id=sync.APPROVED_CHAT_ID, source_watermark=source_a, app_watermark=app_a,
+        manual_adjudications=manual_adjudications,
+        manual_adjudication_artifact_sha256=artifact.get("manual_adjudication_artifact_sha256"),
     )
     if fresh.get("apply_blocked") or fresh.get("apply_blockers"):
         raise ApplyBlocked("fresh_snapshot_apply_blocked")
@@ -269,6 +329,11 @@ def verify_fresh_snapshot(artifact: dict[str, Any]) -> None:
         (fresh.get("preimage_hash"), artifact.get("preimage_hash")),
         (fresh.get("mapping_hash"), artifact.get("mapping_hash")),
         (fresh.get("reverse_plan_hash"), artifact.get("reverse_plan_hash")),
+        (fresh.get("manual_adjudication_hash"), artifact.get("manual_adjudication_hash")),
+        (
+            fresh.get("manual_adjudication_artifact_sha256"),
+            artifact.get("manual_adjudication_artifact_sha256"),
+        ),
     )
     if any(current != approved for current, approved in comparisons):
         raise ApplyBlocked("fresh_snapshot_mismatch")

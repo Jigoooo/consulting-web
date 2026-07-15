@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sqlite3
+import stat
 import subprocess
 import sys
 from collections import Counter
@@ -68,9 +69,176 @@ class RouteIdentity:
     topic_id: str = "44444444-4444-4444-8444-444444444444"
 
 
+@dataclass(frozen=True)
+class ManualAdjudication:
+    source_session_id: str
+    target_chat_id: str
+    target_thread_id: str
+    evidence_fingerprint: str
+    evidence_basis: str
+
+
+def load_manual_adjudications(path: Path) -> tuple[list[ManualAdjudication], str]:
+    flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError(f"manual_adjudication_open_failed:{exc.errno}") from exc
+    try:
+        info = os.fstat(fd)
+        mode = stat.S_IMODE(info.st_mode)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or mode != 0o600
+            or info.st_uid != os.getuid()
+            or info.st_size <= 0
+            or info.st_size > 1024 * 1024
+        ):
+            raise ValueError("manual_adjudication_file_contract_invalid")
+        chunks: list[bytes] = []
+        while chunk := os.read(fd, 64 * 1024):
+            chunks.append(chunk)
+        raw = b"".join(chunks)
+    finally:
+        os.close(fd)
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("manual_adjudication_json_invalid") from exc
+    if not isinstance(payload, dict) or set(payload) != {"schema_version", "decisions"}:
+        raise ValueError("manual_adjudication_envelope_invalid")
+    if payload.get("schema_version") != "v3-5-manual-adjudication-1.0":
+        raise ValueError("manual_adjudication_schema_invalid")
+    raw_decisions = payload.get("decisions")
+    fields = {
+        "source_session_id", "target_chat_id", "target_thread_id",
+        "evidence_fingerprint", "evidence_basis",
+    }
+    if not isinstance(raw_decisions, list) or not raw_decisions or len(raw_decisions) > 1000:
+        raise ValueError("manual_adjudication_decisions_invalid")
+    decisions: list[ManualAdjudication] = []
+    for row in raw_decisions:
+        if not isinstance(row, dict) or set(row) != fields or any(
+            not isinstance(row.get(name), str) or not row[name]
+            for name in fields
+        ):
+            raise ValueError("manual_adjudication_row_invalid")
+        decisions.append(ManualAdjudication(**row))
+    return decisions, hashlib.sha256(raw).hexdigest()
+
+
+def apply_manual_adjudications(
+    *,
+    sources: dict[tuple[str, int], SourceIdentity],
+    adjudications: list[ManualAdjudication],
+    session_fingerprints: dict[str, str],
+    routes: dict[str, RouteIdentity],
+    approved_chat_id: str,
+) -> dict[tuple[str, int], SourceIdentity]:
+    effective = dict(sources)
+    decisions: dict[str, ManualAdjudication] = {}
+    for decision in adjudications:
+        session_id = decision.source_session_id
+        if not session_id or session_id in decisions:
+            raise ValueError("manual_adjudication_duplicate_or_empty_session")
+        if decision.evidence_basis != "manual_source_review":
+            raise ValueError("manual_adjudication_evidence_basis_invalid")
+        if re.fullmatch(r"[0-9a-f]{64}", decision.evidence_fingerprint, re.I) is None:
+            raise ValueError("manual_adjudication_fingerprint_invalid")
+        if session_fingerprints.get(session_id) != decision.evidence_fingerprint:
+            raise ValueError("manual_adjudication_fingerprint_mismatch")
+        if decision.target_chat_id != approved_chat_id:
+            raise ValueError("manual_adjudication_chat_not_approved")
+        route = routes.get(decision.target_thread_id)
+        if route is None or not route.active or not route.target_thread_id:
+            raise ValueError("manual_adjudication_route_unavailable")
+        session_keys = [key for key in sources if key[0] == session_id]
+        if not session_keys:
+            raise ValueError("manual_adjudication_session_missing")
+        if any(
+            sources[key].source != "telegram"
+            or sources[key].telegram_chat_id is not None
+            or sources[key].telegram_thread_id is not None
+            for key in session_keys
+        ):
+            raise ValueError("manual_adjudication_may_only_resolve_unproven_telegram")
+        decisions[session_id] = decision
+        for key in session_keys:
+            source = sources[key]
+            effective[key] = SourceIdentity(
+                source=source.source,
+                telegram_chat_id=approved_chat_id,
+                telegram_thread_id=decision.target_thread_id,
+                role=source.role,
+                active=source.active,
+                compacted=source.compacted,
+                timestamp=source.timestamp,
+                content_sha256=source.content_sha256,
+            )
+    return effective
+
+
 def _canonical_hash(value: Any) -> str:
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def load_manual_session_fingerprints(
+    imports: list[ImportRow], *, state_db: Path = sync.STATE_DB,
+) -> dict[str, str]:
+    session_message_ids: dict[str, set[int]] = {}
+    for row in imports:
+        session_message_ids.setdefault(row.source_session_id, set()).add(row.source_message_id)
+    con = sqlite3.connect(f"file:{state_db}?mode=ro", uri=True, timeout=2, isolation_level=None)
+    try:
+        con.execute("PRAGMA query_only=ON")
+        con.execute("BEGIN")
+        fingerprints: dict[str, str] = {}
+        for session_id, message_ids in sorted(session_message_ids.items()):
+            session = con.execute("""
+              SELECT id,source,user_id,started_at,ended_at,title,system_prompt,chat_id,thread_id
+              FROM sessions WHERE id=?
+            """, (session_id,)).fetchone()
+            if session is None:
+                raise ValueError("manual_adjudication_source_session_missing")
+            ordered_ids = sorted(message_ids)
+            placeholders = ",".join("?" for _ in ordered_ids)
+            messages = con.execute(f"""
+              SELECT id,role,timestamp,COALESCE(active,1),COALESCE(compacted,0),
+                     platform_message_id,content
+              FROM messages
+              WHERE session_id=? AND id IN ({placeholders})
+              ORDER BY id
+            """, (session_id, *ordered_ids)).fetchall()
+            if [int(row[0]) for row in messages] != ordered_ids:
+                raise ValueError("manual_adjudication_source_message_missing")
+            projection = {
+                "session": {
+                    "id": session[0], "source": session[1], "user_id": session[2],
+                    "started_at": session[3], "ended_at": session[4], "title": session[5],
+                    "system_prompt_sha256": hashlib.sha256(str(session[6] or "").encode("utf-8")).hexdigest(),
+                    "chat_id": session[7], "thread_id": session[8],
+                },
+                "messages": [{
+                    "id": int(row[0]), "role": str(row[1]), "timestamp": row[2],
+                    "active": bool(row[3]), "compacted": bool(row[4]),
+                    "platform_message_id": row[5],
+                    "content_sha256": hashlib.sha256(
+                        sync.clean_content(str(row[1]), str(row[6] or "")).encode("utf-8")
+                    ).hexdigest(),
+                } for row in messages],
+            }
+            fingerprints[session_id] = _canonical_hash(projection)
+        con.execute("COMMIT")
+        return fingerprints
+    except Exception:
+        try:
+            con.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
+        raise
+    finally:
+        con.close()
 
 
 def _append_blocker(result: dict[str, Any], blocker: str) -> None:
@@ -91,6 +259,7 @@ def artifact_privacy_violations(payload: Any) -> list[str]:
         "duplicate_source_keys", "duplicate_web_message_ids", "source_content_hash_mismatches",
         "apply_blocked", "apply_blockers", "app_preimage_hash", "preimage_hash", "mapping_hash", "reverse_plan_hash",
         "preimage", "mapping", "reverse_plan", "invariants", "snapshot_fence", "generated_at",
+        "manual_adjudications", "manual_adjudication_hash", "manual_adjudication_artifact_sha256",
         "privacy_violations",
     }
     forbidden_fields = {"content", "text", "prompt", "answer", "query", "state_db_path", "email", "phone"}
@@ -98,13 +267,13 @@ def artifact_privacy_violations(payload: Any) -> list[str]:
     if isinstance(payload, dict) and "schema_version" in payload:
         if set(payload) != allowed_top_level:
             violations.add("top_level_field_allowlist")
-        if payload.get("schema_version") != "v3-5-preview-3.0" or payload.get("mode") != "read_only_preview":
+        if payload.get("schema_version") != "v3-5-preview-4.0" or payload.get("mode") != "read_only_preview":
             violations.add("artifact_contract_version")
 
     schemas = {
         "source_watermark": {"source_label", "matched_legacy_source_count", "max_message_id", "identity_hash"},
         "app_watermark": {"import_count", "legacy_import_count", "max_imported_at", "distinct_source_sessions", "snapshot_hash", "route_snapshot_hash", "approved_chat_link_thread_ids"},
-        "fixed_set": {"legacy_import_count", "distinct_source_sessions", "app_preimage_hash", "preimage_hash", "mapping_hash", "reverse_plan_hash"},
+        "fixed_set": {"legacy_import_count", "distinct_source_sessions", "app_preimage_hash", "preimage_hash", "mapping_hash", "reverse_plan_hash", "manual_adjudication_hash"},
         "preimage": {
             "source_session_id", "source_message_id", "web_message_id", "old_thread_id", "role",
             "old_workspace_id", "old_project_id", "old_channel_id", "old_topic_id",
@@ -128,6 +297,10 @@ def artifact_privacy_violations(payload: Any) -> list[str]:
             "expected_current_routing_version", "reverse_telegram_chat_id",
             "reverse_telegram_thread_id", "reverse_target_web_thread_id", "reverse_routing_version",
         },
+        "manual_adjudications": {
+            "source_session_id", "target_chat_id", "target_thread_id",
+            "evidence_fingerprint", "evidence_basis",
+        },
         "invariants": {
             "fixed_set_nonempty", "classification_total_matches_fixed_set",
             "preimage_count_matches_fixed_set", "app_legacy_count_matches_fixed_set",
@@ -141,7 +314,7 @@ def artifact_privacy_violations(payload: Any) -> list[str]:
     }
 
     if isinstance(payload, dict) and "schema_version" in payload:
-        list_containers = {"preimage", "mapping", "reverse_plan"}
+        list_containers = {"preimage", "mapping", "reverse_plan", "manual_adjudications"}
         for container, allowed_keys in schemas.items():
             value = payload.get(container)
             if container in list_containers:
@@ -160,7 +333,8 @@ def artifact_privacy_violations(payload: Any) -> list[str]:
         hash_fields = {
             "app_preimage_hash", "preimage_hash", "mapping_hash", "reverse_plan_hash",
             "identity_hash", "snapshot_hash", "route_snapshot_hash", "content_sha256",
-            "source_identity_hash",
+            "source_identity_hash", "manual_adjudication_hash", "manual_adjudication_artifact_sha256",
+            "evidence_fingerprint",
         }
         count_fields = {
             "import_count", "legacy_import_count", "distinct_source_sessions",
@@ -338,7 +512,22 @@ def build_preview(
     approved_chat_id: str,
     source_watermark: dict[str, Any],
     app_watermark: dict[str, Any],
+    manual_adjudications: list[ManualAdjudication] | None = None,
+    manual_adjudication_artifact_sha256: str | None = None,
 ) -> dict[str, Any]:
+    adjudication_rows = [
+        asdict(item) for item in sorted(
+            manual_adjudications or [], key=lambda item: item.source_session_id,
+        )
+    ]
+    if adjudication_rows and (
+        manual_adjudication_artifact_sha256 is None
+        or re.fullmatch(r"[0-9a-f]{64}", manual_adjudication_artifact_sha256, re.I) is None
+    ):
+        raise ValueError("manual_adjudication_artifact_sha256_required")
+    if not adjudication_rows and manual_adjudication_artifact_sha256 is not None:
+        raise ValueError("manual_adjudication_artifact_without_decisions")
+    manual_adjudication_hash = _canonical_hash(adjudication_rows)
     preimage: list[dict[str, Any]] = []
     reverse_plan: list[dict[str, Any]] = []
     mapping_rows: list[dict[str, Any]] = []
@@ -497,7 +686,7 @@ def build_preview(
         blockers.add("invariant_failure")
 
     return {
-        "schema_version": "v3-5-preview-3.0",
+        "schema_version": "v3-5-preview-4.0",
         "mode": "read_only_preview",
         "approved_chat_id": approved_chat_id,
         "source_watermark": source_watermark,
@@ -509,6 +698,7 @@ def build_preview(
             "preimage_hash": preimage_hash,
             "mapping_hash": mapping_hash,
             "reverse_plan_hash": reverse_plan_hash,
+            "manual_adjudication_hash": manual_adjudication_hash,
         },
         "classification_counts": dict(sorted(classifications.items())),
         "target_move_counts": dict(sorted(moves.items())),
@@ -525,6 +715,9 @@ def build_preview(
         "preimage_hash": preimage_hash,
         "mapping_hash": mapping_hash,
         "reverse_plan_hash": reverse_plan_hash,
+        "manual_adjudications": adjudication_rows,
+        "manual_adjudication_hash": manual_adjudication_hash,
+        "manual_adjudication_artifact_sha256": manual_adjudication_artifact_sha256,
         "preimage": preimage,
         "mapping": mapping_rows,
         "reverse_plan": reverse_plan,
@@ -821,12 +1014,32 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--stdout", action="store_true", help="print compact summary only")
+    parser.add_argument("--manual-adjudications", type=Path)
     args = parser.parse_args()
 
+    manual_adjudications: list[ManualAdjudication] = []
+    manual_adjudication_artifact_sha256: str | None = None
+    if args.manual_adjudications is not None:
+        manual_adjudications, manual_adjudication_artifact_sha256 = load_manual_adjudications(
+            args.manual_adjudications,
+        )
+
     imports_a, app_watermark_a, routes_a = load_app_snapshot()
-    sources_a, source_watermark_a = load_source_identities(imports_a)
+    raw_sources_a, source_watermark_a = load_source_identities(imports_a)
     imports_b, app_watermark_b, routes_b = load_app_snapshot()
-    sources_b, source_watermark_b = load_source_identities(imports_b)
+    raw_sources_b, source_watermark_b = load_source_identities(imports_b)
+    fingerprints_a = load_manual_session_fingerprints(imports_a) if manual_adjudications else {}
+    fingerprints_b = load_manual_session_fingerprints(imports_b) if manual_adjudications else {}
+    sources_a = apply_manual_adjudications(
+        sources=raw_sources_a, adjudications=manual_adjudications,
+        session_fingerprints=fingerprints_a, routes=routes_a,
+        approved_chat_id=sync.APPROVED_CHAT_ID,
+    )
+    sources_b = apply_manual_adjudications(
+        sources=raw_sources_b, adjudications=manual_adjudications,
+        session_fingerprints=fingerprints_b, routes=routes_b,
+        approved_chat_id=sync.APPROVED_CHAT_ID,
+    )
     result = build_preview(
         imports=imports_a,
         sources=sources_a,
@@ -834,14 +1047,26 @@ def main() -> int:
         approved_chat_id=sync.APPROVED_CHAT_ID,
         source_watermark=source_watermark_a,
         app_watermark=app_watermark_a,
+        manual_adjudications=manual_adjudications,
+        manual_adjudication_artifact_sha256=manual_adjudication_artifact_sha256,
     )
     if app_watermark_a != app_watermark_b or imports_a != imports_b or routes_a != routes_b:
         _append_blocker(result, "app_snapshot_drift")
-    if source_watermark_a != source_watermark_b or sources_a != sources_b:
+    if (
+        source_watermark_a != source_watermark_b
+        or raw_sources_a != raw_sources_b
+        or fingerprints_a != fingerprints_b
+        or sources_a != sources_b
+    ):
         _append_blocker(result, "source_snapshot_drift")
     result["snapshot_fence"] = {
         "app_stable": app_watermark_a == app_watermark_b and imports_a == imports_b and routes_a == routes_b,
-        "source_stable": source_watermark_a == source_watermark_b and sources_a == sources_b,
+        "source_stable": (
+            source_watermark_a == source_watermark_b
+            and raw_sources_a == raw_sources_b
+            and fingerprints_a == fingerprints_b
+            and sources_a == sources_b
+        ),
     }
     result["generated_at"] = datetime.now(UTC).isoformat()
     result["privacy_violations"] = []
@@ -870,6 +1095,7 @@ def main() -> int:
         "preimage_hash": result["preimage_hash"],
         "mapping_hash": result["mapping_hash"],
         "reverse_plan_hash": result["reverse_plan_hash"],
+        "manual_adjudication_hash": result["manual_adjudication_hash"],
     }
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
     return 0

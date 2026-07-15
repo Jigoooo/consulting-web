@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import unittest
+from unittest import mock
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -81,8 +82,10 @@ def artifact() -> dict[str, Any]:
     preimage_hash = apply.canonical_hash(preimage)
     mapping_hash = apply.canonical_hash(mapping)
     reverse_hash = apply.canonical_hash(reverse)
+    manual_adjudications: list[dict[str, object]] = []
+    manual_adjudication_hash = apply.canonical_hash(manual_adjudications)
     return {
-        "schema_version": "v3-5-preview-3.0",
+        "schema_version": "v3-5-preview-4.0",
         "mode": "read_only_preview",
         "approved_chat_id": "-1004453868195",
         "source_watermark": {
@@ -99,6 +102,7 @@ def artifact() -> dict[str, Any]:
             "legacy_import_count": 1, "distinct_source_sessions": 1,
             "app_preimage_hash": "f" * 64, "preimage_hash": preimage_hash,
             "mapping_hash": mapping_hash, "reverse_plan_hash": reverse_hash,
+            "manual_adjudication_hash": manual_adjudication_hash,
         },
         "classification_counts": {"exact": 1},
         "target_move_counts": {"33333333-3333-4333-8333-333333333333->22222222-2222-4222-8222-222222222222": 1},
@@ -118,6 +122,9 @@ def artifact() -> dict[str, Any]:
         "mapping_hash": mapping_hash,
         "reverse_plan": reverse,
         "reverse_plan_hash": reverse_hash,
+        "manual_adjudications": manual_adjudications,
+        "manual_adjudication_hash": manual_adjudication_hash,
+        "manual_adjudication_artifact_sha256": None,
         "generated_at": datetime.now(UTC).isoformat(),
     }
 
@@ -133,6 +140,39 @@ def subprocess_result(returncode: int, stdout: str, stderr: str) -> SimpleNamesp
 
 
 class ApplyReclassificationTests(unittest.TestCase):
+    def test_fresh_snapshot_replays_embedded_manual_adjudication(self) -> None:
+        payload = artifact()
+        decision = {
+            "source_session_id": "session-1",
+            "target_chat_id": apply.sync.APPROVED_CHAT_ID,
+            "target_thread_id": "524",
+            "evidence_fingerprint": "a" * 64,
+            "evidence_basis": "manual_source_review",
+        }
+        payload["manual_adjudications"] = [decision]
+        payload["manual_adjudication_hash"] = apply.canonical_hash([decision])
+        payload["manual_adjudication_artifact_sha256"] = "b" * 64
+        payload["fixed_set"]["manual_adjudication_hash"] = payload["manual_adjudication_hash"]
+        app_snapshot = (["import"], {"snapshot_hash": "app"}, {"524": "route"})
+        source_snapshot = ({("session-1", 7): "raw"}, {"identity_hash": "source"})
+        with (
+            mock.patch.object(apply.preview, "load_app_snapshot", side_effect=[app_snapshot, app_snapshot]),
+            mock.patch.object(apply.preview, "load_source_identities", side_effect=[source_snapshot, source_snapshot]),
+            mock.patch.object(
+                apply.preview, "load_manual_session_fingerprints",
+                side_effect=[{"session-1": "a" * 64}, {"session-1": "a" * 64}],
+            ),
+            mock.patch.object(apply.preview, "apply_manual_adjudications", return_value={"effective": True}) as apply_manual,
+            mock.patch.object(apply.preview, "build_preview", return_value=payload),
+        ):
+            apply.verify_fresh_snapshot(payload)
+
+        self.assertEqual(apply_manual.call_count, 2)
+        self.assertEqual(
+            apply_manual.call_args_list[0].kwargs["adjudications"][0].source_session_id,
+            "session-1",
+        )
+
     def test_artifact_hash_blocker_and_plan_integrity_fail_closed(self) -> None:
         with self.subTest("valid and hash-bound"):
             import tempfile
