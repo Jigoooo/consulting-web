@@ -63,18 +63,18 @@ d('Scope RBAC integration', () => {
     const access = new SpaceAccessService(db);
     const chat = new ChatStreamUseCase(db);
 
-    expect(await access.workspaceMember(viewerId, workspaceId)).toEqual({ allowed: false, reason: 'forbidden' });
+    expect(await access.workspaceMember(viewerId, workspaceId)).toEqual({ allowed: false, reason: 'forbidden', workspaceId });
     expect(await access.projectMember(viewerId, allowed.projectId)).toEqual({ allowed: true, workspaceId });
-    expect(await access.projectMember(viewerId, sibling.projectId)).toEqual({ allowed: false, reason: 'forbidden' });
+    expect(await access.projectMember(viewerId, sibling.projectId)).toEqual({ allowed: false, reason: 'forbidden', workspaceId });
     expect(await access.threadMember(viewerId, allowed.threadId)).toEqual({ allowed: true, workspaceId });
-    expect(await access.threadMember(viewerId, sibling.threadId)).toEqual({ allowed: false, reason: 'forbidden' });
+    expect(await access.threadMember(viewerId, sibling.threadId)).toEqual({ allowed: false, reason: 'forbidden', workspaceId });
     expect(await chat.canReadThread(viewerId, allowed.threadId)).toEqual({ status: 'allowed', workspaceId, projectId: allowed.projectId });
-    expect(await chat.canReadThread(viewerId, sibling.threadId)).toEqual({ status: 'forbidden' });
-    expect(await chat.canSendThread(viewerId, allowed.threadId)).toEqual({ status: 'forbidden' });
+    expect(await chat.canReadThread(viewerId, sibling.threadId)).toEqual({ status: 'forbidden', workspaceId, projectId: sibling.projectId });
+    expect(await chat.canSendThread(viewerId, allowed.threadId)).toEqual({ status: 'forbidden', workspaceId, projectId: allowed.projectId });
     expect(await chat.canSendThread(editorId, allowed.threadId)).toEqual({ status: 'allowed', workspaceId, projectId: allowed.projectId });
-    expect(await access.topicMember(threadViewerId, allowed.topicId)).toEqual({ allowed: false, reason: 'forbidden' });
+    expect(await access.topicMember(threadViewerId, allowed.topicId)).toEqual({ allowed: false, reason: 'forbidden', workspaceId });
     expect(await access.threadMember(threadViewerId, allowed.threadId)).toEqual({ allowed: true, workspaceId });
-    expect(await access.threadMember(threadViewerId, sibling.threadId)).toEqual({ allowed: false, reason: 'forbidden' });
+    expect(await access.threadMember(threadViewerId, sibling.threadId)).toEqual({ allowed: false, reason: 'forbidden', workspaceId });
   });
 
   it('returns only the subtree reachable from the caller memberships', async () => {
@@ -102,7 +102,7 @@ d('Scope RBAC integration', () => {
   it('enforces role grants and explicit deny overrides on the target scope chain', async () => {
     const access = new SpaceAccessService(db);
 
-    expect(await access.threadPermission(viewerId, allowed.threadId, 'message.send')).toEqual({ allowed: false, reason: 'forbidden' });
+    expect(await access.threadPermission(viewerId, allowed.threadId, 'message.send')).toEqual({ allowed: false, reason: 'forbidden', workspaceId });
     expect(await access.projectPermission(editorId, allowed.projectId, 'channel.create')).toEqual({ allowed: true, workspaceId });
     expect(await access.threadPermission(editorId, allowed.threadId, 'message.send')).toEqual({ allowed: true, workspaceId });
 
@@ -114,7 +114,7 @@ d('Scope RBAC integration', () => {
       permission: 'message.send',
       allow: false,
     }).returning({ id: schema.permissionOverrides.id });
-    expect(await access.threadPermission(editorId, allowed.threadId, 'message.send')).toEqual({ allowed: false, reason: 'forbidden' });
+    expect(await access.threadPermission(editorId, allowed.threadId, 'message.send')).toEqual({ allowed: false, reason: 'forbidden', workspaceId });
     await db.delete(schema.permissionOverrides).where(inArray(schema.permissionOverrides.id, [threadDeny!.id]));
 
     await db.insert(schema.permissionOverrides).values({
@@ -125,7 +125,7 @@ d('Scope RBAC integration', () => {
       permission: 'message.send',
       allow: false,
     });
-    expect(await access.threadPermission(editorId, allowed.threadId, 'message.send')).toEqual({ allowed: false, reason: 'forbidden' });
+    expect(await access.threadPermission(editorId, allowed.threadId, 'message.send')).toEqual({ allowed: false, reason: 'forbidden', workspaceId });
 
     const reads = new SpaceReadService(db);
     const legacyTree = await reads.workspaceTree(workspaceId, editorId);

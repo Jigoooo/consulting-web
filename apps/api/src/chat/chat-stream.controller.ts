@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, HttpCode, Inject, Logger, NotFoundException, Optional, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, HttpCode, Inject, Logger, NotFoundException, Optional, Param, Post, PreconditionFailedException, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import {
   AddEvidenceRequestSchema,
@@ -11,8 +11,11 @@ import {
   ChatRuntimeModelsResponseSchema,
   ChatStreamEventSchema,
   ChatStreamRequestSchema,
+  ArtifactVersionDecisionAnalyticsResponseSchema,
+  DecisionAnalyticsRunResponseSchema,
   EvidenceDecisionSummaryResponseSchema,
   EvidenceDecisionSummaryV2ResponseSchema,
+  EvidenceDecisionSummaryV3ResponseSchema,
   ListRetrievalHitFeedbackResponseSchema,
   ListEvidenceResponseSchema,
   ListMessagesPageRequestSchema,
@@ -22,6 +25,7 @@ import {
   ReviewQueueDecisionRequestSchema,
   ReviewQueueFilterSchema,
   ReviewQueueResponseSchema,
+  RunDecisionAnalyticsRequestSchema,
   RecordRetrievalHitFeedbackRequestSchema,
   SearchMessagesRequestSchema,
   SearchMessagesResponseSchema,
@@ -35,14 +39,22 @@ import { ChatMessageStore, type FinishState } from './chat-message.store.js';
 import { captureToolEvidence, EvidenceStore, type CapturedToolUse } from './evidence.store.js';
 import { SpaceAccessService, type SpaceAccess } from '../spaces/space-access.service.js';
 import { EvidenceDecisionStore } from '../consulting/evidence-decision.store.js';
+import { DecisionAnalyticsSourceIntegrityError } from '../consulting/decision-analytics-audit.js';
 import { ConsultingMemoryContextBuilder } from '../consulting/consulting-memory-context.builder.js';
 import { RuntimeApprovalStore } from './runtime-approval.store.js';
 import { ChatTurnIdempotencyConflictError, ChatTurnSettlementStore, type ChatTurnSettlementRecord } from './chat-turn-settlement.store.js';
+import { ChatCheckpointCoalescer } from './chat-checkpoint-coalescer.js';
 import { PublicChatStreamSanitizer, sanitizePublicChatText } from './public-chat-content.js';
 import { ConsultingInsightShadowStore } from '../consulting/consulting-insight-shadow.store.js';
 import { routeConsultingInsightIntent } from '../consulting/consulting-insight-intent.js';
 import { ENV_TOKEN } from '../config/config.module.js';
 import type { Env } from '../config/env.schema.js';
+
+const PREPARATION_ABORT_DRAIN_MS = 250;
+// Non-blocking memory budget: cap how long the consulting brain may delay a turn.
+// Observed recall p50≈5s/max≈5.2s, so 6s lets healthy recall through while a hung
+// brain degrades to empty context instead of stalling the user's answer.
+const MEMORY_CONTEXT_BUDGET_MS = 6_000;
 
 @Controller('chat')
 export class ChatStreamController {
@@ -199,15 +211,107 @@ export class ChatStreamController {
   async evidenceDecisionSummary(
     @Param('threadId') threadId: string,
     @Query('includeJudgment') includeJudgment: string | undefined,
+    @Query('includeAnalytics') includeAnalytics: string | undefined,
     @Req() req: AuthenticatedRequest,
   ) {
     await this.requireThreadRead(requireAuthUserId(req), threadId);
+    if (includeAnalytics === '1') {
+      return parseResponse(EvidenceDecisionSummaryV3ResponseSchema, await this.evidenceDecision.summaryV3(threadId));
+    }
     if (includeJudgment === '1') {
       return parseResponse(EvidenceDecisionSummaryV2ResponseSchema, await this.evidenceDecision.summaryV2(threadId));
     }
     return parseResponse(EvidenceDecisionSummaryResponseSchema, await this.evidenceDecision.summary(threadId));
   }
 
+  /** Run immutable MCDA sensitivity and optional multiplicative KRW impact analysis. */
+  @Post('threads/:threadId/decision-analytics')
+  @UseGuards(AccessTokenGuard)
+  async runDecisionAnalytics(
+    @Param('threadId') threadId: string,
+    @Body() body: unknown,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const userId = requireAuthUserId(req);
+    const cmd = parseBody(RunDecisionAnalyticsRequestSchema, body);
+    const access = await this.requireThreadSend(userId, threadId);
+    const artifactScope = cmd.artifactVersionId
+      ? await this.requireDecisionAnalyticsArtifactAccess(
+          userId,
+          threadId,
+          cmd.artifactVersionId,
+          access.workspaceId,
+          access.projectId,
+        )
+      : null;
+    if (artifactScope && (!artifactScope.scorecard || cmd.scorecardId !== artifactScope.scorecard.id)) {
+      throw new PreconditionFailedException({
+        code: 'PRECONDITION',
+        message: 'Artifact version is not linked to the requested decision scorecard',
+      });
+    }
+    try {
+      const run = await this.evidenceDecision.runDecisionAnalytics({
+        workspaceId: access.workspaceId,
+        threadId,
+        actorUserId: userId,
+        ...(artifactScope ? {
+          artifactProjectId: artifactScope.projectId,
+          artifactScorecardId: artifactScope.scorecard!.id,
+        } : {}),
+        request: cmd,
+      });
+      if (!run) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Decision scorecard not found' });
+      return parseResponse(DecisionAnalyticsRunResponseSchema, { run });
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      if (error instanceof DecisionAnalyticsSourceIntegrityError) {
+        throw new ConflictException({
+          code: 'CONFLICT',
+          message: 'Decision scorecard inputs are inconsistent; regenerate the scorecard',
+        });
+      }
+      if (isDecisionAnalyticsActorMembershipError(error)) {
+        throw new NotFoundException({
+          code: 'NOT_FOUND',
+          message: 'Decision analytics actor is no longer available',
+        });
+      }
+      if (isDecisionAnalyticsConflictError(error)) {
+        throw new ConflictException({ code: 'CONFLICT', message: 'Decision analytics inputs changed; retry' });
+      }
+      if (error instanceof RangeError) {
+        throw new BadRequestException({ code: 'VALIDATION', message: error.message });
+      }
+      throw error;
+    }
+  }
+
+  /** Read analytics bound to one immutable artifact version without changing its body. */
+  @Get('threads/:threadId/decision-analytics/artifact-versions/:artifactVersionId')
+  @UseGuards(AccessTokenGuard)
+  async artifactVersionDecisionAnalytics(
+    @Param('threadId') threadId: string,
+    @Param('artifactVersionId') artifactVersionId: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const userId = requireAuthUserId(req);
+    const access = await this.requireThreadRead(userId, threadId);
+    const artifactScope = await this.requireDecisionAnalyticsArtifactAccess(
+      userId,
+      threadId,
+      artifactVersionId,
+      access.workspaceId,
+      access.projectId,
+    );
+    const latestRun = await this.evidenceDecision.latestDecisionAnalyticsForArtifactVersion(threadId, artifactVersionId);
+    return parseResponse(ArtifactVersionDecisionAnalyticsResponseSchema, {
+      supported: true,
+      latestRun,
+      lineageStatus: artifactScope.scorecard ? 'resolved' : 'unavailable',
+      scorecard: artifactScope.scorecard,
+    });
+  }
 
   /** Latest GraphRAG retrieval hits for one-click relevance/failure labeling. */
   @Get('threads/:threadId/retrieval-hits')
@@ -402,6 +506,15 @@ export class ChatStreamController {
     const access = await this.requireThreadSend(userId, cmd.threadId);
 
     const runMessage = cmd.message.trim() || '첨부 파일을 확인해주세요.';
+    const runtimeStartedAt = Date.now();
+    let firstSseAt: number | null = null;
+    let sseEvents = 0;
+    const writeSse = (event: string, payload: string): void => {
+      firstSseAt ??= Date.now();
+      sseEvents += 1;
+      res.write(`event: ${event}\n`);
+      res.write(`data: ${payload}\n\n`);
+    };
 
     // The browser idempotency key, user row, assistant capture row, and ledger are
     // created atomically before any Hermes run or SSE byte can escape.
@@ -485,14 +598,26 @@ export class ChatStreamController {
     }
     this.setSseHeaders(res);
     let captureLeaseFailure: unknown;
+    const checkpoints = new ChatCheckpointCoalescer<ReturnType<typeof captureSettlement>>(
+      async (snapshot) => await this.settlements.checkpointCapture(snapshot, captureLeaseToken),
+      {
+        intervalMs: 300,
+        maxBufferedBytes: 2_048,
+        onError: (error) => {
+          if (captureLeaseFailure !== undefined) return;
+          captureLeaseFailure = error ?? new Error('chat checkpoint failed');
+          upstreamAbort.abort();
+        },
+      },
+    );
     const captureHeartbeat = setInterval(() => {
       void this.settlements.heartbeatCapture(settlementId, captureLeaseToken).then((alive) => {
-        if (alive || captureLeaseFailure) return;
+        if (alive || captureLeaseFailure !== undefined) return;
         captureLeaseFailure = new Error('chat capture lease lost');
         upstreamAbort.abort();
       }).catch((error: unknown) => {
-        if (captureLeaseFailure) return;
-        captureLeaseFailure = error;
+        if (captureLeaseFailure !== undefined) return;
+        captureLeaseFailure = error ?? new Error('chat capture heartbeat failed');
         upstreamAbort.abort();
       });
     }, 30_000);
@@ -501,15 +626,23 @@ export class ChatStreamController {
       if (settled) return;
       if (settleInFlight) return settleInFlight;
       terminalSnapshot ??= snapshot;
-      settleInFlight = this.settlements.finalizeCapture(terminalSnapshot, captureLeaseToken).then(() => {
+      settleInFlight = (async () => {
+        try {
+          await checkpoints.close();
+        } catch (error) {
+          captureLeaseFailure ??= error;
+        }
+        await this.settlements.finalizeCapture(terminalSnapshot, captureLeaseToken);
         settled = true;
-      }).catch((err: unknown) => {
-        const message = redactLogText(err instanceof Error ? err.message : String(err));
-        this.logger.warn(`chat settlement request failed: ${message}`);
-        throw err;
-      }).finally(() => {
-        settleInFlight = null;
-      });
+      })()
+        .catch((err: unknown) => {
+          const message = redactLogText(err instanceof Error ? err.message : String(err));
+          this.logger.warn(`chat settlement request failed: ${message}`);
+          throw err;
+        })
+        .finally(() => {
+          settleInFlight = null;
+        });
       await settleInFlight;
     };
     res.on('close', () => {
@@ -522,16 +655,49 @@ export class ChatStreamController {
 
     let pendingDonePayload: string | null = null;
     let streamFailure: unknown;
+    let memoryMs: number | null = null;
+    let preflightMs: number | null = null;
+    let preparationMs: number | null = null;
     try {
-      const memoryBundle = typeof this.memoryContext.buildBundle === 'function'
-        ? await this.memoryContext.buildBundle({ threadId: cmd.threadId, query: runMessage })
-        : {
-            context: await this.memoryContext.build({ threadId: cmd.threadId, query: runMessage }),
+      const preparationStartedAt = Date.now();
+      const memoryBundlePromise = (typeof this.memoryContext.buildBundle === 'function'
+        ? this.memoryContext.buildBundle({ threadId: cmd.threadId, query: runMessage, signal: upstreamAbort.signal, budgetMs: MEMORY_CONTEXT_BUDGET_MS })
+        : this.memoryContext.build({ threadId: cmd.threadId, query: runMessage, signal: upstreamAbort.signal, budgetMs: MEMORY_CONTEXT_BUDGET_MS }).then((context) => ({
+            context,
             scope: null,
             retrieval: null,
             shadowEligible: false,
             ineligibleReason: 'builder_error' as const,
-          };
+          }))).then((bundle) => {
+            memoryMs = Math.max(0, Date.now() - preparationStartedAt);
+            return bundle;
+          });
+      const preparedRunPromise = (typeof this.hermesRunsClient.prepareChatRun === 'function'
+        ? this.hermesRunsClient.prepareChatRun(access.workspaceId, upstreamAbort.signal)
+        : Promise.resolve(undefined)).then((prepared) => {
+          preflightMs = Math.max(0, Date.now() - preparationStartedAt);
+          return prepared;
+        });
+      const preparationTasks = [memoryBundlePromise, preparedRunPromise] as const;
+      const settledPreparation = Promise.allSettled(preparationTasks);
+      let preparation;
+      try {
+        preparation = await Promise.all(preparationTasks);
+      } catch (error) {
+        upstreamAbort.abort(error);
+        let drainTimer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          settledPreparation,
+          new Promise<void>((resolve) => {
+            drainTimer = setTimeout(resolve, PREPARATION_ABORT_DRAIN_MS);
+            drainTimer.unref?.();
+          }),
+        ]);
+        if (drainTimer) clearTimeout(drainTimer);
+        throw error;
+      }
+      const [memoryBundle, preparedRun] = preparation;
+      preparationMs = Math.max(0, Date.now() - preparationStartedAt);
       const graphRagContext = memoryBundle.context;
       if (
         insightShadowId
@@ -560,12 +726,13 @@ export class ChatStreamController {
         { ...cmd, message: runMessage },
         runScope,
         upstreamAbort.signal,
+        preparedRun,
       )) {
         if (clientAborted) break;
         const parsed = ChatStreamEventSchema.parse(event);
         let outbound = parsed;
         if (parsed.type === 'approval') {
-          const approval = await this.approvals.createRuntimeApproval({
+          const approval = await this.withAbort(this.approvals.createRuntimeApproval({
             workspaceId: access.workspaceId,
             threadId: cmd.threadId,
             requestedByUserId: userId,
@@ -575,7 +742,8 @@ export class ChatStreamController {
             ...(parsed.risk ? { risk: parsed.risk } : {}),
             ...(parsed.toolId ? { toolId: parsed.toolId } : {}),
             choices: parsed.choices,
-          });
+          }), upstreamAbort.signal);
+          if (clientAborted || res.writableEnded) break;
           outbound = { ...parsed, approvalId: approval.approvalId };
         }
         let captureChanged = false;
@@ -603,13 +771,17 @@ export class ChatStreamController {
           pendingDonePayload = JSON.stringify(outbound);
           continue;
         }
-        if (captureChanged) {
-          await this.settlements.checkpointCapture(captureSettlement(), captureLeaseToken);
+        const checkpointBytes = parsed.type === 'delta' ? Buffer.byteLength(parsed.text, 'utf8') : 0;
+        if (outbound.type === 'delta' && outbound.text.length === 0) {
+          if (captureChanged) checkpoints.schedule(captureSettlement(), checkpointBytes);
+          continue;
         }
-        if (outbound.type === 'delta' && outbound.text.length === 0) continue;
         if (res.writableEnded) break;
-        res.write(`event: ${outbound.type}\n`);
-        res.write(`data: ${JSON.stringify(outbound)}\n\n`);
+        writeSse(outbound.type, JSON.stringify(outbound));
+        if (captureChanged) {
+          checkpoints.schedule(captureSettlement(), checkpointBytes);
+          if (parsed.type === 'tool' || parsed.type === 'error') await checkpoints.flush();
+        }
       }
     } catch (error) {
       if (!clientAborted) streamFailure = captureLeaseFailure ?? error;
@@ -623,8 +795,7 @@ export class ChatStreamController {
     const trailingPublicText = publicStream.flush();
     if (trailingPublicText && runId && !clientAborted && !res.writableEnded) {
       const trailingEvent = ChatStreamEventSchema.parse({ type: 'delta', runId, text: trailingPublicText });
-      res.write('event: delta\n');
-      res.write(`data: ${JSON.stringify(trailingEvent)}\n\n`);
+      writeSse('delta', JSON.stringify(trailingEvent));
     }
 
     let settlementFailure: unknown;
@@ -633,32 +804,54 @@ export class ChatStreamController {
     } catch (error) {
       settlementFailure = error;
       if (!clientAborted && !res.writableEnded) {
-        res.write('event: error\n');
-        res.write(`data: ${JSON.stringify({
+        writeSse('error', JSON.stringify({
           type: 'error',
           ...(runId ? { runId } : {}),
           code: 'CHAT_SETTLEMENT_FAILED',
           message: '답변을 안전하게 저장하지 못했습니다. 다시 시도해주세요.',
-        })}\n\n`);
+        }));
         res.end();
       }
+    }
+    if (
+      !settlementFailure
+      && upstreamTerminalState === 'complete'
+      && captureLeaseFailure !== undefined
+      && streamFailure === captureLeaseFailure
+    ) {
+      streamFailure = undefined;
     }
     clearInterval(captureHeartbeat);
     if (!settlementFailure && !clientAborted && !res.writableEnded) {
       if (streamFailure) {
-        res.write('event: error\n');
-        res.write(`data: ${JSON.stringify({
+        writeSse('error', JSON.stringify({
           type: 'error',
           ...(runId ? { runId } : {}),
           code: 'CHAT_STREAM_FAILED',
           message: '응답 준비 또는 전송 중 오류가 발생했습니다. 다시 시도해주세요.',
-        })}\n\n`);
+        }));
       } else if (pendingDonePayload) {
-        res.write('event: done\n');
-        res.write(`data: ${pendingDonePayload}\n\n`);
+        writeSse('done', pendingDonePayload);
       }
       res.end();
     }
+    this.logger.log(JSON.stringify({
+      event: 'chat_stream_runtime',
+      settlementId,
+      totalMs: Math.max(0, Date.now() - runtimeStartedAt),
+      preparationMs,
+      memoryMs,
+      preflightMs,
+      firstSseMs: firstSseAt === null ? null : Math.max(0, firstSseAt - runtimeStartedAt),
+      sseEvents,
+      checkpointScheduled: checkpoints.stats.scheduled,
+      checkpointWrites: checkpoints.stats.writes,
+      checkpointFailed: captureLeaseFailure !== undefined,
+      finishState,
+      clientAborted,
+      streamFailed: Boolean(streamFailure),
+      settlementFailed: Boolean(settlementFailure),
+    }));
     if (settlementFailure) {
       if (settlementFailure instanceof Error) throw settlementFailure;
       throw new Error('chat settlement failed');
@@ -674,6 +867,26 @@ export class ChatStreamController {
     }
   }
 
+  private async withAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+    if (signal.aborted) throw this.abortReason(signal);
+    let onAbort: (() => void) | undefined;
+    try {
+      return await new Promise<T>((resolve, reject) => {
+        onAbort = () => reject(this.abortReason(signal));
+        signal.addEventListener('abort', onAbort, { once: true });
+        operation.then(resolve, reject);
+      });
+    } finally {
+      if (onAbort) signal.removeEventListener('abort', onAbort);
+    }
+  }
+
+  private abortReason(signal: AbortSignal): Error {
+    return signal.reason instanceof Error
+      ? signal.reason
+      : new DOMException('Chat stream aborted', 'AbortError');
+  }
+
   private async requireRuntimeRunBinding(runId: string, threadId: string, workspaceId: string): Promise<void> {
     const owner = await this.settlements.findOwnershipByRunId(runId);
     if (!owner || owner.threadId !== threadId || owner.workspaceId !== workspaceId) {
@@ -681,17 +894,55 @@ export class ChatStreamController {
     }
   }
 
+  private async requireDecisionAnalyticsArtifactAccess(
+    userId: string,
+    threadId: string,
+    artifactVersionId: string,
+    expectedWorkspaceId: string,
+    expectedProjectId: string,
+  ): Promise<{
+    workspaceId: string;
+    projectId: string;
+    scorecard: { id: string; question: string; createdAt: string } | null;
+  }> {
+    const scope = await this.evidenceDecision.decisionAnalyticsArtifactScope(threadId, artifactVersionId);
+    if (
+      !scope
+      || scope.workspaceId !== expectedWorkspaceId
+      || scope.projectId !== expectedProjectId
+    ) {
+      throw new NotFoundException({ code: 'NOT_FOUND', message: 'Artifact version not found' });
+    }
+    const permission = await this.access.projectPermission(userId, scope.projectId, 'artifact.render');
+    if (!permission.allowed || permission.workspaceId !== scope.workspaceId) {
+      const membership = await this.access.workspaceAnyMembership(userId, scope.workspaceId);
+      if (!membership.allowed) {
+        throw new NotFoundException({ code: 'NOT_FOUND', message: 'Artifact version not found' });
+      }
+      throw new ForbiddenException({ code: 'FORBIDDEN', message: 'Artifact render access denied' });
+    }
+    return scope;
+  }
+
   private async requireThreadRead(userId: string, threadId: string): Promise<{ workspaceId: string; projectId: string }> {
     const access = await this.chatStreamUseCase.canReadThread(userId, threadId);
     if (access.status === 'not_found') throw new NotFoundException({ code: 'NOT_FOUND', message: 'Thread not found' });
-    if (access.status === 'forbidden') throw new ForbiddenException({ code: 'FORBIDDEN', message: 'Thread access denied' });
+    if (access.status === 'forbidden') {
+      const membership = await this.access.workspaceAnyMembership(userId, access.workspaceId);
+      if (!membership.allowed) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Thread not found' });
+      throw new ForbiddenException({ code: 'FORBIDDEN', message: 'Thread access denied' });
+    }
     return { workspaceId: access.workspaceId, projectId: access.projectId };
   }
 
   private async requireThreadSend(userId: string, threadId: string): Promise<{ workspaceId: string; projectId: string }> {
     const access = await this.chatStreamUseCase.canSendThread(userId, threadId);
     if (access.status === 'not_found') throw new NotFoundException({ code: 'NOT_FOUND', message: 'Thread not found' });
-    if (access.status === 'forbidden') throw new ForbiddenException({ code: 'FORBIDDEN', message: 'Thread send access denied' });
+    if (access.status === 'forbidden') {
+      const membership = await this.access.workspaceAnyMembership(userId, access.workspaceId);
+      if (!membership.allowed) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Thread not found' });
+      throw new ForbiddenException({ code: 'FORBIDDEN', message: 'Thread send access denied' });
+    }
     return { workspaceId: access.workspaceId, projectId: access.projectId };
   }
 
@@ -700,4 +951,38 @@ export class ChatStreamController {
     if (access.reason === 'not_found') throw new NotFoundException({ code: 'NOT_FOUND', message: 'space not found' });
     throw new ForbiddenException({ code: 'FORBIDDEN', message: 'space access denied' });
   }
+}
+
+function isDecisionAnalyticsConflictError(error: unknown): boolean {
+  const visited = new Set<unknown>();
+  let current = error;
+  while (typeof current === 'object' && current !== null && !visited.has(current)) {
+    visited.add(current);
+    const record = current as Record<string, unknown>;
+    const code = record.code;
+    const message = typeof record.message === 'string' ? record.message : '';
+    const constraint = typeof record.constraint === 'string' ? record.constraint : '';
+    if (
+      (code === '23514' && /decision analytics (?:run scope|artifact binding)/iu.test(message))
+      || (code === '23503' && constraint.startsWith('decision_analytics_runs_'))
+    ) return true;
+    current = record.cause;
+  }
+  return false;
+}
+
+function isDecisionAnalyticsActorMembershipError(error: unknown): boolean {
+  const visited = new Set<unknown>();
+  let current = error;
+  while (typeof current === 'object' && current !== null && !visited.has(current)) {
+    visited.add(current);
+    const record = current as Record<string, unknown>;
+    if (
+      record.code === '23514'
+      && typeof record.message === 'string'
+      && /decision analytics user actor is not an active workspace member/iu.test(record.message)
+    ) return true;
+    current = record.cause;
+  }
+  return false;
 }

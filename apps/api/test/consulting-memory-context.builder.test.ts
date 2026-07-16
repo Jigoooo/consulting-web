@@ -246,6 +246,46 @@ describe('ConsultingMemoryContextBuilder', () => {
     expect(context).toContain('Source intake');
   });
 
+  it('omits cross-project hedge directives when every hit is same-scope', async () => {
+    const resolver = {
+      resolveThreadFanout: async () => ({
+        scope: {
+          workspaceId: 'ws', projectId: 'project', channelId: 'channel', topicId: 'topic', threadId: 'thread',
+          projectName: '창원시 컨설팅', channelName: '분석', topicName: '시설 적정성 진단', threadTitle: '정원 검토',
+          consultingTopicSlug: 'changwon-org-mgmt-diagnosis', consultingTopicId: 5, linkLevel: 'topic' as const,
+          scopePath: '창원시 컨설팅/분석/시설 적정성 진단/정원 검토', archived: false,
+        },
+        recallScopes: [{ topicSlug: 'changwon-org-mgmt-diagnosis', topicId: 5, label: '현재 프로젝트: 창원시 컨설팅', relation: 'current' as const, weight: 1, archived: false }],
+      }),
+    };
+    const bridge = {
+      recallMany: async () => ({
+        status: 'ok', ok: true, topic: 'changwon-org-mgmt-diagnosis', query: '정원 인건비', rerank: 'cross-encoder', rerankError: null, signals: null,
+        hits: [{
+          kind: 'file', score: 0.4, fusedScore: 0.4, rerankScore: 0.82,
+          docTitle: '2026년 정원 검토 메모.md', utilityTier: 'qualified_usable',
+          text: '2026년 1월 기준 정원 검토 메모: 현재 정원과 인건비 총액을 함께 검토한다.',
+          linked: [], graphPath: [],
+          signalBreakdown: null,
+          sourceTopicSlug: 'changwon-org-mgmt-diagnosis', sourceLabel: '현재 프로젝트: 창원시 컨설팅', sourceRelation: 'current' as const,
+        }],
+      }),
+    };
+
+    const context = await new ConsultingMemoryContextBuilder(
+      resolver as unknown as ConsultingTopicResolver,
+      bridge as unknown as ConsultingGraphRagBridge,
+      new EvidenceSufficiencyEvaluator(),
+      new EvidenceToDecisionService(),
+    ).build({ threadId: 'thread', query: '정원 인건비' });
+
+    // Same-scope recall must not carry the cross-project "단정 금지/라벨" hedge lines.
+    expect(context).not.toContain('다른 프로젝트 자료는 참조용이며 현재 범위의 사실처럼 단정하지 않는다.');
+    expect(context).not.toContain('다른 프로젝트/보관 자료가 섞인 경우 반드시 라벨을 붙인다.');
+    // The evidence-driven usage principle stays.
+    expect(context).toContain('### 사용 규칙');
+  });
+
   it('treats retrieved/profile text as untrusted data and redacts prompt-injection/PII before LLM context and ledger previews', async () => {
     const inserted: Array<{ value: unknown }> = [];
     const db = {
@@ -424,5 +464,64 @@ describe('ConsultingMemoryContextBuilder', () => {
     expect(recallCalls).toBe(0);
     expect(context).toContain('General/검토필요');
     expect(context).toContain('자동 검색·차용 금지');
+  });
+
+  it('rejects promptly when preparation is aborted during a pending scope lookup', async () => {
+    const resolver = {
+      resolveThreadFanout: async () => await new Promise<never>(() => undefined),
+    };
+    const bridge = {
+      recallMany: async () => { throw new Error('recall must not start'); },
+    };
+    const builder = new ConsultingMemoryContextBuilder(
+      resolver as unknown as ConsultingTopicResolver,
+      bridge as unknown as ConsultingGraphRagBridge,
+      new EvidenceSufficiencyEvaluator(),
+      new EvidenceToDecisionService(),
+    );
+    const abort = new AbortController();
+    const building = builder.buildBundle({
+      threadId: 'thread',
+      query: '중단 테스트',
+      signal: abort.signal,
+    });
+
+    abort.abort(new Error('preflight failed'));
+
+    await expect(building).rejects.toThrow('preflight failed');
+  });
+
+  it('degrades to an empty budget_exceeded bundle when recall exceeds the memory budget instead of stalling the turn', async () => {
+    const resolver = {
+      resolveThreadFanout: async () => ({
+        scope: {
+          workspaceId: 'ws', projectId: 'project', channelId: 'channel', topicId: 'topic', threadId: 'thread',
+          projectName: '창원시 컨설팅', channelName: '분석', topicName: '시설 적정성 진단', threadTitle: '정원 검토',
+          consultingTopicSlug: 'changwon-org-mgmt-diagnosis', consultingTopicId: 5, linkLevel: 'topic' as const,
+          scopePath: '창원시 컨설팅/분석/시설 적정성 진단/정원 검토', archived: false,
+        },
+        recallScopes: [{ topicSlug: 'changwon-org-mgmt-diagnosis', topicId: 5, label: '현재 프로젝트', relation: 'current' as const, weight: 1, archived: false }],
+      }),
+    };
+    const bridge = {
+      // Simulates a hung/slow recall that never resolves within the budget.
+      recallMany: async () => await new Promise<never>(() => undefined),
+    };
+    const builder = new ConsultingMemoryContextBuilder(
+      resolver as unknown as ConsultingTopicResolver,
+      bridge as unknown as ConsultingGraphRagBridge,
+      new EvidenceSufficiencyEvaluator(),
+      new EvidenceToDecisionService(),
+    );
+
+    const started = Date.now();
+    const bundle = await builder.buildBundle({ threadId: 'thread', query: '정원 인건비', budgetMs: 40 });
+    const elapsed = Date.now() - started;
+
+    expect(bundle.context).toBe('');
+    expect(bundle.ineligibleReason).toBe('budget_exceeded');
+    expect(bundle.retrieval).toBeNull();
+    // Must return well before any real recall latency — proves it did not block the turn.
+    expect(elapsed).toBeLessThan(1_000);
   });
 });

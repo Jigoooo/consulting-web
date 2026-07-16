@@ -8,6 +8,7 @@ import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { eq, inArray } from 'drizzle-orm';
 import { Pool } from 'pg';
 import { schema } from '@consulting/db-schema';
+import { deleteToolPolicyAuditFixtures } from './tool-policy-audit-fixtures.js';
 import {
   ChatStreamEventSchema,
   CreateProjectResponseSchema,
@@ -101,6 +102,7 @@ d('HTTP API contract adapters', () => {
 
   afterAll(async () => {
     if (createdWorkspaces.length > 0) {
+      await deleteToolPolicyAuditFixtures(pool, createdWorkspaces);
       await db.delete(schema.workspaces).where(inArray(schema.workspaces.id, createdWorkspaces));
     }
     if (createdUsers.length > 0) {
@@ -335,7 +337,7 @@ d('HTTP API contract adapters', () => {
       .post('/chat/stream')
       .set('authorization', `Bearer ${outsiderSession.tokens.accessToken}`)
       .send({ threadId: thread!.id, message: 'hello', clientMessageId: randomUUID() })
-      .expect(403);
+      .expect(404);
 
     const response = await request(app.getHttpServer())
       .post('/chat/stream')
@@ -349,13 +351,14 @@ d('HTTP API contract adapters', () => {
     expect((events[0] as { runId: string }).runId).toBe(runId());
     expect((events[1] as { text: string }).text).toBe('proxied ');
     const hermesBase = (process.env.HERMES_API_BASE_URL ?? 'http://127.0.0.1:8642').replace(/\/$/, '');
-    expect(calls).toEqual([
+    expect(calls).toHaveLength(4);
+    expect(calls).toEqual(expect.arrayContaining([
       `${hermesBase}/v1/toolsets`,
       `${hermesBase}/v1/capabilities`,
       `${hermesBase}/v1/runs`,
-      `${hermesBase}/v1/runs/${runId()}`,
       `${hermesBase}/v1/runs/${runId()}/events`,
-    ]);
+    ]));
+    expect(calls).not.toContain(`${hermesBase}/v1/runs/${runId()}`);
     for (const event of events) {
       expect(ChatStreamEventSchema.parse(event)).toEqual(event);
       expect(JSON.stringify(event)).not.toContain('HERMES_API_KEY');

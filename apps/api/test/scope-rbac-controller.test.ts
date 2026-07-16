@@ -77,8 +77,9 @@ describe('controller RBAC enforcement', () => {
   it('denies starting a chat stream when the user can read but cannot send', async () => {
     const usecase = {
       canReadThread: vi.fn(async () => ({ status: 'allowed', workspaceId: WORKSPACE_ID, projectId: PROJECT_ID })),
-      canSendThread: vi.fn(async () => ({ status: 'forbidden' })),
+      canSendThread: vi.fn(async () => ({ status: 'forbidden', workspaceId: WORKSPACE_ID, projectId: PROJECT_ID })),
     };
+    const access = { workspaceAnyMembership: vi.fn(async () => ({ allowed: true, workspaceId: WORKSPACE_ID })) };
     const hermes = { streamChat: vi.fn() };
     const settlements = { beginCapture: vi.fn() };
     const controller = new (ChatStreamController as any)(
@@ -86,7 +87,7 @@ describe('controller RBAC enforcement', () => {
       hermes,
       {},
       {},
-      {},
+      access,
       {},
       {},
       {},

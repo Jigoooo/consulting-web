@@ -8,7 +8,7 @@ import type { Permission } from '../permissions/permission.types.js';
 export type ChatStreamAccess =
   | { status: 'allowed'; workspaceId: string; projectId: string }
   | { status: 'not_found' }
-  | { status: 'forbidden' };
+  | { status: 'forbidden'; workspaceId: string; projectId: string };
 
 @Injectable()
 export class ChatStreamUseCase {
@@ -63,7 +63,7 @@ export class ChatStreamUseCase {
     const access = await new SpaceAccessService(this.db).threadPermission(userId, threadId, permission);
     return access.allowed
       ? { status: 'allowed', workspaceId: thread.workspaceId, projectId: thread.projectId }
-      : { status: 'forbidden' };
+      : { status: 'forbidden', workspaceId: thread.workspaceId, projectId: thread.projectId };
   }
 
 }

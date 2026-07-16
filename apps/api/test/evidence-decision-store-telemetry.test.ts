@@ -109,6 +109,16 @@ describe('EvidenceDecisionStore post-answer telemetry', () => {
       expect.objectContaining({ metricName: 'exactness_status', score: '1', passed: true }),
       expect.objectContaining({ metricName: 'final_export_gate', score: '1', passed: true }),
     ]));
+    expect(valuesFor(captured, schema.decisionAnalyticsRuns)[0]).toMatchObject({
+      workspaceId: 'ws-1',
+      threadId: 'thread-1',
+      methodVersion: 'decision_analytics_v2',
+      inputHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      actorKind: 'system',
+      actorUserId: null,
+      impact: null,
+      sensitivity: expect.objectContaining({ scenarios: 2000 }),
+    });
   });
 
   it('returns refuted claims with their counter-evidence and exposes them in the review queue', async () => {

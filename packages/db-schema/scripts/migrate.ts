@@ -2,9 +2,10 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 
 const legacyOuterTransactionFiles = new Set(['0055_retrieval_label_pair_null_hardening.sql']);
+const migrationLockSql = "hashtextextended('consulting.schema-migrations.v1', 0)";
 
 function normalizeMigrationSql(file: string, sql: string): string {
   let normalized = sql;
@@ -17,6 +18,29 @@ function normalizeMigrationSql(file: string, sql: string): string {
     throw new Error(`migration contains forbidden transaction control: ${file}`);
   }
   return normalized;
+}
+
+function migrationLockTimeoutMs(raw: string | undefined): number {
+  const parsed = Number(raw ?? '30000');
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 300_000) {
+    throw new Error('MIGRATION_LOCK_TIMEOUT_MS must be an integer between 1 and 300000');
+  }
+  return parsed;
+}
+
+async function acquireMigrationLock(client: PoolClient, timeoutMs: number): Promise<void> {
+  const startedAt = Date.now();
+  while (true) {
+    const result = await client.query<{ locked: boolean }>(
+      `SELECT pg_try_advisory_lock(${migrationLockSql}) AS locked`,
+    );
+    if (result.rows[0]?.locked === true) return;
+    const remainingMs = timeoutMs - (Date.now() - startedAt);
+    if (remainingMs <= 0) {
+      throw new Error(`migration advisory lock timed out after ${timeoutMs}ms`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, Math.min(100, remainingMs)));
+  }
 }
 
 /**
@@ -34,15 +58,33 @@ if (checksumManifest.schema_version !== '1.0' || checksumManifest.algorithm !== 
   throw new Error('invalid migration checksum manifest');
 }
 
+function loadVerifiedMigrations(): Array<{ file: string; sql: string; checksum: string }> {
+  return readdirSync(drizzleDir)
+    .filter((file) => file.endsWith('.sql'))
+    .sort()
+    .map((file) => {
+      const sql = readFileSync(join(drizzleDir, file), 'utf8');
+      const checksum = createHash('sha256').update(sql, 'utf8').digest('hex');
+      if (checksumManifest.migrations[file] !== checksum) {
+        throw new Error(`migration checksum manifest missing or mismatched for ${file}`);
+      }
+      return { file, sql, checksum };
+    });
+}
+
 async function main(): Promise<void> {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('DATABASE_URL not set');
+
+  // Verify the candidate image before waiting on or mutating any database.
+  const migrations = loadVerifiedMigrations();
+  const lockTimeoutMs = migrationLockTimeoutMs(process.env.MIGRATION_LOCK_TIMEOUT_MS);
   const pool = new Pool({ connectionString: url });
   const lockClient = await pool.connect();
+  let lockAcquired = false;
   try {
-    await lockClient.query(
-      "SELECT pg_advisory_lock(hashtextextended('consulting.schema-migrations.v1', 0))",
-    );
+    await acquireMigrationLock(lockClient, lockTimeoutMs);
+    lockAcquired = true;
 
     await pool.query(
       `CREATE TABLE IF NOT EXISTS _migrations (
@@ -53,17 +95,6 @@ async function main(): Promise<void> {
     );
     await pool.query('ALTER TABLE _migrations ADD COLUMN IF NOT EXISTS checksum text');
 
-    const files = readdirSync(drizzleDir)
-      .filter((f) => f.endsWith('.sql'))
-      .sort();
-    const migrations = files.map((file) => {
-      const sql = readFileSync(join(drizzleDir, file), 'utf8');
-      const checksum = createHash('sha256').update(sql, 'utf8').digest('hex');
-      if (checksumManifest.migrations[file] !== checksum) {
-        throw new Error(`migration checksum manifest missing or mismatched for ${file}`);
-      }
-      return { file, sql, checksum };
-    });
     const pendingSeals: Array<{ file: string; checksum: string }> = [];
 
     for (const { file, sql, checksum } of migrations) {
@@ -88,13 +119,13 @@ async function main(): Promise<void> {
       // drizzle uses "--> statement-breakpoint" between statements
       const statements = normalizeMigrationSql(file, sql)
         .split('--> statement-breakpoint')
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
+        .map((statement) => statement.trim())
+        .filter((statement) => statement.length > 0);
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        for (const stmt of statements) {
-          await client.query(stmt);
+        for (const statement of statements) {
+          await client.query(statement);
         }
         await client.query('INSERT INTO _migrations(name, checksum) VALUES ($1, $2)', [
           file,
@@ -102,9 +133,9 @@ async function main(): Promise<void> {
         ]);
         await client.query('COMMIT');
         console.log(`apply ${file} (${statements.length} statements)`);
-      } catch (e) {
+      } catch (error) {
         await client.query('ROLLBACK');
-        throw e;
+        throw error;
       } finally {
         client.release();
       }
@@ -139,15 +170,17 @@ async function main(): Promise<void> {
 
     console.log('migrations complete');
   } finally {
-    await lockClient
-      .query("SELECT pg_advisory_unlock(hashtextextended('consulting.schema-migrations.v1', 0))")
-      .catch(() => undefined);
+    if (lockAcquired) {
+      await lockClient
+        .query(`SELECT pg_advisory_unlock(${migrationLockSql})`)
+        .catch(() => undefined);
+    }
     lockClient.release();
     await pool.end();
   }
 }
 
-main().catch((e) => {
-  console.error(e);
+main().catch((error) => {
+  console.error(error);
   process.exit(1);
 });

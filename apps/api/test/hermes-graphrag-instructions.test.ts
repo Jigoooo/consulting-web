@@ -45,6 +45,7 @@ function toolsetInventory(data: Array<{ name: string; enabled: boolean }>) {
 describe('HermesRunsClient GraphRAG instructions', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it('adds consulting GraphRAG memory context to the run instructions', async () => {
@@ -240,6 +241,16 @@ describe('HermesRunsClient GraphRAG instructions', () => {
       expect.objectContaining({ method: 'POST' }),
       expect.objectContaining({ method: 'POST' }),
     ]);
+  });
+
+  it('bounds every stop retry when the transport ignores abort signals', async () => {
+    const fetchMock = vi.fn(() => new Promise<Response>(() => undefined));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new HermesRunsClient(env);
+    (client as any).stopRequestTimeoutMs = 5;
+    await expect(client.stopRun('run_hung_stop')).rejects.toThrow('Hermes stop request timed out');
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it('stops a client-identified run when abort loses the accepted start response', async () => {
@@ -803,5 +814,217 @@ describe('HermesRunsClient GraphRAG instructions', () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it('starts tool inventory and capability preflight checks in parallel', async () => {
+    const requested: string[] = [];
+    let resolveToolsets: ((response: Response) => void) | undefined;
+    let resolveCapabilities: ((response: Response) => void) | undefined;
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+      const url = input instanceof Request ? input.url : String(input);
+      requested.push(url);
+      if (url.endsWith('/v1/toolsets')) {
+        return await new Promise<Response>((resolve) => { resolveToolsets = resolve; });
+      }
+      if (url.endsWith('/v1/capabilities')) {
+        return await new Promise<Response>((resolve) => { resolveCapabilities = resolve; });
+      }
+      return new Response('unexpected request', { status: 500 });
+    }));
+
+    const preparation = new HermesRunsClient(env).prepareChatRun('ws-parallel');
+    await vi.waitFor(() => {
+      expect(requested).toContain('http://hermes.local/v1/toolsets');
+      expect(requested).toContain('http://hermes.local/v1/capabilities');
+    });
+
+    resolveToolsets?.(new Response(JSON.stringify(toolsetInventory([{ name: 'web', enabled: true }])), { status: 200 }));
+    resolveCapabilities?.(new Response(JSON.stringify({
+      features: { run_client_idempotency: true, run_tool_inventory_binding: true },
+    }), { status: 200 }));
+
+    await expect(preparation).resolves.toMatchObject({
+      runId: expect.stringMatching(/^run_[0-9a-f]{32}$/),
+      toolInventoryHash: inventoryHash,
+    });
+  });
+
+  it('times out when one failed preflight sibling leaves another permanently pending', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.endsWith('/v1/toolsets')) {
+        return await new Promise<Response>(() => undefined);
+      }
+      if (url.endsWith('/v1/capabilities')) {
+        return new Response(JSON.stringify({ features: {} }), { status: 200 });
+      }
+      return new Response('not found', { status: 404 });
+    }));
+
+    const preparation = new HermesRunsClient(env).prepareChatRun('ws-timeout');
+    const rejection = expect(preparation).rejects.toThrow('Hermes preflight timed out');
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    await rejection;
+  });
+
+  it('emits start and opens the event stream without waiting for an initial run status GET', async () => {
+    let runId: string | undefined;
+    let initialStatusGets = 0;
+    const events = [
+      'data: {"event":"run.completed","run_id":"run_nonblocking"}',
+      '',
+    ].join('\n');
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.endsWith('/v1/toolsets')) {
+        return new Response(JSON.stringify(toolsetInventory([{ name: 'web', enabled: true }])), { status: 200 });
+      }
+      if (url.endsWith('/v1/capabilities')) {
+        return new Response(JSON.stringify({
+          features: { run_client_idempotency: true, run_tool_inventory_binding: true },
+        }), { status: 200 });
+      }
+      if (url.endsWith('/v1/runs') && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as { client_run_id: string };
+        runId = body.client_run_id;
+        return new Response(JSON.stringify({ run_id: runId, tool_inventory_hash: inventoryHash }), { status: 202 });
+      }
+      if (runId && url.endsWith(`/v1/runs/${runId}/events`)) {
+        return new Response(events, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+      }
+      if (runId && url.endsWith(`/v1/runs/${runId}/stop`)) {
+        return new Response(JSON.stringify({ run_id: runId, status: 'stopping' }), { status: 200 });
+      }
+      if (runId && url.endsWith(`/v1/runs/${runId}`)) {
+        initialStatusGets += 1;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        return new Response(JSON.stringify({ status: 'running' }), { status: 200 });
+      }
+      return new Response('not found', { status: 404 });
+    }));
+
+    const stream = new HermesRunsClient(env).streamChat({
+      threadId: 'thread-nonblocking',
+      clientMessageId,
+      message: '즉시 시작',
+    });
+    const first = await Promise.race([
+      stream.next(),
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 30)),
+    ]);
+
+    expect(first).not.toBe('timeout');
+    expect(first).toMatchObject({ value: { type: 'start', runId } });
+    expect(initialStatusGets).toBe(0);
+    await stream.return(undefined);
+  });
+
+  it('rejects a structurally forged prepared run before any Hermes request', async () => {
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.endsWith('/v1/runs') && init?.method === 'POST') {
+        return new Response(JSON.stringify({ run_id: 'run_forged', tool_inventory_hash: 'f'.repeat(64) }), { status: 202 });
+      }
+      if (url.endsWith('/v1/runs/run_forged/events')) {
+        return new Response('data: {"event":"run.completed","run_id":"run_forged"}\n\n', {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      }
+      return new Response('not found', { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const events = [];
+    for await (const event of new HermesRunsClient(env).streamChat(
+      { threadId: 'thread-forged', clientMessageId, message: '위조 준비' },
+      { workspaceId: 'ws-forged', projectId: 'project-forged' },
+      undefined,
+      { runId: 'run_forged', toolInventoryHash: 'f'.repeat(64) } as never,
+    )) {
+      events.push(event);
+    }
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(events).toEqual([expect.objectContaining({
+      type: 'error',
+      code: 'HERMES_PROXY_ERROR',
+      message: 'Invalid or already-consumed Hermes run preparation',
+    })]);
+  });
+
+  it('binds an opaque prepared run to one workspace and one submission', async () => {
+    let runId: string | undefined;
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.endsWith('/v1/toolsets')) {
+        return new Response(JSON.stringify(toolsetInventory([{ name: 'web', enabled: true }])), { status: 200 });
+      }
+      if (url.endsWith('/v1/capabilities')) {
+        return new Response(JSON.stringify({
+          features: { run_client_idempotency: true, run_tool_inventory_binding: true },
+        }), { status: 200 });
+      }
+      if (url.endsWith('/v1/runs') && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as { client_run_id: string };
+        runId = body.client_run_id;
+        return new Response(JSON.stringify({ run_id: runId, tool_inventory_hash: inventoryHash }), { status: 202 });
+      }
+      if (runId && url.endsWith(`/v1/runs/${runId}/events`)) {
+        return new Response(`data: {"event":"run.completed","run_id":"${runId}"}\n\n`, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      }
+      return new Response('not found', { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new HermesRunsClient(env);
+    const prepared = await client.prepareChatRun('ws-bound');
+    fetchMock.mockClear();
+    expect(Object.isFrozen(prepared)).toBe(true);
+
+    const clonedEvents = [];
+    for await (const event of client.streamChat(
+      { threadId: 'thread-bound', clientMessageId, message: 'cloned handle' },
+      { workspaceId: 'ws-bound', projectId: 'project-bound' },
+      undefined,
+      { ...prepared },
+    )) clonedEvents.push(event);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(clonedEvents).toEqual([expect.objectContaining({ type: 'error', code: 'HERMES_PROXY_ERROR' })]);
+
+    const wrongWorkspaceEvents = [];
+    for await (const event of client.streamChat(
+      { threadId: 'thread-bound', clientMessageId, message: 'workspace mismatch' },
+      { workspaceId: 'ws-other', projectId: 'project-bound' },
+      undefined,
+      prepared,
+    )) wrongWorkspaceEvents.push(event);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(wrongWorkspaceEvents).toEqual([expect.objectContaining({ type: 'error', code: 'HERMES_PROXY_ERROR' })]);
+
+    const acceptedEvents = [];
+    for await (const event of client.streamChat(
+      { threadId: 'thread-bound', clientMessageId, message: 'first use' },
+      { workspaceId: 'ws-bound', projectId: 'project-bound' },
+      undefined,
+      prepared,
+    )) acceptedEvents.push(event);
+    expect(acceptedEvents.some((event) => event.type === 'done')).toBe(true);
+    expect(fetchMock).toHaveBeenCalled();
+    fetchMock.mockClear();
+
+    const reusedEvents = [];
+    for await (const event of client.streamChat(
+      { threadId: 'thread-bound', clientMessageId, message: 'second use' },
+      { workspaceId: 'ws-bound', projectId: 'project-bound' },
+      undefined,
+      prepared,
+    )) reusedEvents.push(event);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(reusedEvents).toEqual([expect.objectContaining({ type: 'error', code: 'HERMES_PROXY_ERROR' })]);
   });
 });

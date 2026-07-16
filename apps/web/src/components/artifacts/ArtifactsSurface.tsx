@@ -5,7 +5,7 @@ import type { ArtifactExportPreflightResponse, ArtifactReviewWorklistItem } from
 import { useSelectedWorkspace } from '../../lib/wsStore';
 import { useLastThread } from '../../lib/threadCtx';
 import { useWorkspaceTree } from '../../lib/spaces';
-import { useArtifacts, useArtifactDetail, useCreateArtifact, useAddArtifactVersion, useVerifyArtifactVersion, useArtifactExportPreflight, useArtifactContractV2, useArtifactReviewPlan, useArtifactReviewDecision, saveArtifactExport } from '../../lib/collab';
+import { useArtifacts, useArtifactDetail, useCreateArtifact, useAddArtifactVersion, useVerifyArtifactVersion, useArtifactExportPreflight, useArtifactContractV2, useArtifactReviewPlan, useArtifactReviewDecision, useArtifactVersionDecisionAnalytics, useRunDecisionAnalytics, saveArtifactExport } from '../../lib/collab';
 import { Markdown } from '../../shared/ui/markdown/Markdown';
 import { useToast } from '../../shared/ui/toast/Toast';
 import { Button } from '../../shared/ui/button/Button';
@@ -31,6 +31,31 @@ type VersionBoundReviewNote = {
   versionId: string;
   note: string;
 };
+
+type ArtifactVersionDraftBinding = {
+  artifactId: string;
+  baseVersionId: string;
+};
+
+export function isArtifactVersionDraftBound(
+  binding: ArtifactVersionDraftBinding | null,
+  artifactId: string | null | undefined,
+  baseVersionId: string | undefined,
+): boolean {
+  return Boolean(
+    binding
+    && binding.artifactId === artifactId
+    && binding.baseVersionId === baseVersionId,
+  );
+}
+
+export function isArtifactVersionAnalyticsPending(
+  isPending: boolean,
+  variables: { artifactVersionId?: string | undefined } | undefined,
+  artifactVersionId: string | undefined,
+): boolean {
+  return Boolean(isPending && artifactVersionId && variables?.artifactVersionId === artifactVersionId);
+}
 
 type ReviewPageState = { projectId: string; offset: number; history: number[] };
 
@@ -83,6 +108,7 @@ export function ArtifactsSurface({
   const [vSoWhat, setVSoWhat] = useState('');
   const [vNote, setVNote] = useState('');
   const [vSource, setVSource] = useState<{ sourceThreadId?: string; sourceMessageId?: string }>({});
+  const [versionDraftBinding, setVersionDraftBinding] = useState<ArtifactVersionDraftBinding | null>(null);
   const [viewVersion, setViewVersion] = useState<number | null>(null);
   const [exporting, setExporting] = useState<'pdf' | 'docx' | null>(null);
   const [exportIssueState, setExportIssueState] = useState<VersionBoundExportIssue | null>(null);
@@ -105,6 +131,28 @@ export function ArtifactsSurface({
   const shown = viewVersion
     ? versions.find((v) => v.versionNo === viewVersion)
     : versions[versions.length - 1];
+  const versionDraftBound = isArtifactVersionDraftBound(versionDraftBinding, selected, shown?.id);
+  const artifactAnalytics = useArtifactVersionDecisionAnalytics(shown?.sourceThreadId, shown?.id);
+  const runArtifactAnalytics = useRunDecisionAnalytics(shown?.sourceThreadId ?? undefined);
+  const sourceThreadTopic = projects
+    .flatMap((project) => project.channels)
+    .flatMap((channel) => channel.topics)
+    .find((topic) => topic.defaultThreadId === shown?.sourceThreadId);
+  const canSendSourceThread = sourceThreadTopic?.permissions?.includes('message.send') ?? false;
+  const artifactAnalyticsPending = isArtifactVersionAnalyticsPending(
+    runArtifactAnalytics.isPending,
+    runArtifactAnalytics.variables,
+    shown?.id,
+  );
+  const artifactAnalyticsLinkReady = Boolean(
+    canEdit
+    && shown?.sourceThreadId
+    && canSendSourceThread
+    && artifactAnalytics.isSuccess
+    && artifactAnalytics.data?.supported === true
+    && artifactAnalytics.data.lineageStatus === 'resolved'
+    && artifactAnalytics.data.scorecard,
+  );
   const reviewNote = visibleVersionReviewNote(reviewNoteState, shown?.id);
   const setReviewNote = (note: string) => setReviewNoteState(shown ? { versionId: shown.id, note } : null);
   const exportPreflight = useArtifactExportPreflight(selected ?? undefined, shown?.versionNo);
@@ -174,7 +222,11 @@ export function ArtifactsSurface({
       toast('error', '서버 업데이트가 완료된 뒤 새 버전을 저장할 수 있습니다.');
       return;
     }
-    if (!selected || !vContent.trim() || !vGoverningMessage.trim() || !vSoWhat.trim()) return;
+    if (!selected || !shown || !versionDraftBound) {
+      toast('error', '새 버전 초안이 현재 산출물 버전과 일치하지 않습니다. 다시 열어주세요.');
+      return;
+    }
+    if (!vContent.trim() || !vGoverningMessage.trim() || !vSoWhat.trim()) return;
     if (addVersion.isPending || !claimArtifactSubmission(versionSubmission)) return;
     try {
       await addVersion.mutateAsync({
@@ -196,6 +248,7 @@ export function ArtifactsSurface({
       setVSoWhat('');
       setVNote('');
       setVSource({});
+      setVersionDraftBinding(null);
       setViewVersion(null);
     } catch {
       toast('error', '버전 추가에 실패했어요.');
@@ -221,6 +274,18 @@ export function ArtifactsSurface({
     }
   }
 
+  async function linkDecisionAnalyticsToCurrentVersion() {
+    if (!artifactAnalyticsLinkReady || !shown?.sourceThreadId) return;
+    try {
+      await runArtifactAnalytics.mutateAsync({
+        scorecardId: artifactAnalytics.data!.scorecard!.id,
+        artifactVersionId: shown.id,
+      });
+      toast('success', `v${shown.versionNo} 결정 분석 연결 완료`);
+    } catch {
+      toast('error', '이 버전에 연결할 결정표가 없거나 분석을 실행할 수 없습니다.');
+    }
+  }
 
   async function submitReview(action: 'approve' | 'reject') {
     if (!canEdit || !selected || !shown || !currentReviewItem) return;
@@ -585,11 +650,15 @@ export function ArtifactsSurface({
                     variant="primary"
                     size="sm"
                     leadingIcon="file-text"
+                    disabled={addVersion.isPending}
                     onClick={() => {
+                      if (!selected || !shown) return;
                       setVContent(shown?.content ?? '');
                       setVGoverningMessage(shown?.governingMessage ?? '');
                       setVSoWhat(shown?.soWhat ?? '');
+                      setVNote('');
                       setVSource(createArtifactVersionSourceSnapshot(shown));
+                      setVersionDraftBinding({ artifactId: selected, baseVersionId: shown.id });
                       setVersionOpen(true);
                     }}
                   >
@@ -699,8 +768,60 @@ export function ArtifactsSurface({
                 </section>
               </div>
             ) : null}
-
-            {versionOpen && canEdit ? (
+            {shown ? (
+              <section className={s.analyticsCard} data-testid="artifact-version-decision-analytics" aria-labelledby="artifact-analytics-heading">
+                <div className={s.analyticsCardHead}>
+                  <div>
+                    <strong id="artifact-analytics-heading">결정 분석 · v{shown.versionNo}</strong>
+                    <p>본문과 분리된 감사 원장 · 현재 버전의 본문 해시와 함께 보관</p>
+                  </div>
+                  {canEdit && shown.sourceThreadId ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={!artifactAnalyticsLinkReady || artifactAnalyticsPending}
+                      title={!canSendSourceThread ? '출처 대화 전송 권한이 필요합니다.' : !artifactAnalyticsLinkReady ? '현재 버전의 분석 지원 상태를 먼저 확인해야 합니다.' : undefined}
+                      onClick={() => void linkDecisionAnalyticsToCurrentVersion()}
+                    >
+                      {artifactAnalyticsPending ? '연결 중…' : '현재 버전에 결정 분석 연결'}
+                    </Button>
+                  ) : null}
+                </div>
+                {artifactAnalytics.data?.scorecard ? (
+                  <p className={s.analyticsLineage}>
+                    연결 결정표 · {artifactAnalytics.data.scorecard.question} · {formatFullDateTime(artifactAnalytics.data.scorecard.createdAt)} · <code>{artifactAnalytics.data.scorecard.id}</code>
+                  </p>
+                ) : null}
+                {!shown.sourceThreadId ? (
+                  <p className={s.analyticsState}>대화 출처가 없는 버전이라 결정 분석을 연결할 수 없습니다.</p>
+                ) : !canSendSourceThread ? (
+                  <p className={s.analyticsState}>출처 대화 전송 권한이 없어 결정 분석을 연결할 수 없습니다.</p>
+                ) : artifactAnalytics.isLoading ? (
+                  <p className={s.analyticsState}>현재 버전의 분석 기록을 확인하고 있습니다…</p>
+                ) : artifactAnalytics.isError ? (
+                  <div className={s.analyticsState} role="alert">
+                    분석 기록을 불러오지 못했습니다.
+                    <Button type="button" variant="ghost" size="sm" onClick={() => void artifactAnalytics.refetch()}>다시 시도</Button>
+                  </div>
+                ) : artifactAnalytics.data?.supported === false ? (
+                  <p className={s.analyticsState}>서버 업데이트 뒤 현재 버전의 분석 원장을 사용할 수 있습니다.</p>
+                ) : artifactAnalytics.data?.lineageStatus !== 'resolved' || !artifactAnalytics.data.scorecard ? (
+                  <p className={s.analyticsState}>출처 메시지와 정확히 연결된 결정표를 확인할 수 없어 분석 연결을 차단했습니다.</p>
+                ) : artifactAnalytics.data?.latestRun ? (
+                  <div className={s.analyticsSummary}>
+                    <div><span>승자 안정성</span><b>{Math.round(artifactAnalytics.data.latestRun.sensitivity.winnerStability * 100)}%</b></div>
+                    <div><span>시나리오</span><b>{artifactAnalytics.data.latestRun.sensitivity.scenarios.toLocaleString('ko-KR')}개</b></div>
+                    <div><span>재정 영향 · 입력 가정 기반 중앙 분위(P50)</span><b>{artifactAnalytics.data.latestRun.impact ? `${Math.round(artifactAnalytics.data.latestRun.impact.interval.p50).toLocaleString('ko-KR')}원` : '입력 없음'}</b></div>
+                    <small>P50은 입력 가정 기반 중앙 분위이며 신뢰구간·보장액·확정 예산이 아닙니다.</small>
+                    <code title={artifactAnalytics.data.latestRun.inputHash}>{artifactAnalytics.data.latestRun.methodVersion} · {artifactAnalytics.data.latestRun.inputHash.slice(0, 16)}…</code>
+                  </div>
+                ) : (
+                  <p className={s.analyticsState}>이 버전에 연결된 분석 기록이 없습니다. 연결하면 산출물 본문은 바뀌지 않습니다.</p>
+                )}
+              </section>
+            ) : null}
+            {versionOpen && versionDraftBound && canEdit ? (
               <div className={s.editor}>
                 <Input
                   className={s.input}
@@ -754,7 +875,10 @@ export function ArtifactsSurface({
                   >
                     현재 버전
                   </Button>
-                  <Button type="button" variant="ghost" onClick={() => setVersionOpen(false)}>
+                  <Button type="button" variant="ghost" onClick={() => {
+                    setVersionOpen(false);
+                    setVersionDraftBinding(null);
+                  }}>
                     닫기
                   </Button>
                 </div>

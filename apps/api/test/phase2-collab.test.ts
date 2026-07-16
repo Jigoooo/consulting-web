@@ -8,6 +8,7 @@ import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { eq, inArray } from 'drizzle-orm';
 import { Pool } from 'pg';
 import { schema } from '@consulting/db-schema';
+import { deleteToolPolicyAuditFixtures } from './tool-policy-audit-fixtures.js';
 import {
   AuthSessionResponseSchema,
   SignUpBootstrapResponseSchema,
@@ -173,6 +174,7 @@ d('Phase 2 — evidence, artifacts, notifications', () => {
 
   afterAll(async () => {
     if (createdWorkspaces.length > 0) {
+      await deleteToolPolicyAuditFixtures(pool, createdWorkspaces);
       await db.delete(schema.workspaces).where(inArray(schema.workspaces.id, createdWorkspaces));
     }
     if (createdUsers.length > 0) {
@@ -263,7 +265,7 @@ d('Phase 2 — evidence, artifacts, notifications', () => {
     await request(app.getHttpServer())
       .get(`/chat/threads/${thread.id}/evidence`)
       .set('authorization', outsider.bearer)
-      .expect(403);
+      .expect(404);
   });
 
   it('A-1/A-2: artifact create → version append → detail with immutable chain', async () => {
@@ -272,13 +274,17 @@ d('Phase 2 — evidence, artifacts, notifications', () => {
 
     const created = CreateArtifactResponseSchema.parse(
       (await request(app.getHttpServer())
-        .post('/artifacts')
+        .post('/artifacts?includeStructure=1')
         .set('authorization', owner.bearer)
         .send({
           projectId: project.id,
           title: '공공시설 적정성 1차 보고',
           content: '# 초안\n\n| 시설 | 판정 |\n|---|---|\n| A | 유지 |',
           note: '초판',
+          structure: {
+            governingMessage: '공공시설 A는 현행 운영안을 유지하는 것이 타당합니다.',
+            soWhat: '따라서 다음 검토 전까지 시설 운영 방식의 변경을 보류해야 합니다.',
+          },
           sourceThreadId: thread.id,
         })
         .expect(201)).body,
@@ -287,16 +293,23 @@ d('Phase 2 — evidence, artifacts, notifications', () => {
 
     const v2 = CreateArtifactResponseSchema.parse(
       (await request(app.getHttpServer())
-        .post(`/artifacts/${created.id}/versions`)
+        .post(`/artifacts/${created.id}/versions?includeStructure=1`)
         .set('authorization', owner.bearer)
-        .send({ content: '# 개정\n\n수치 보강판', note: '수치 보강' })
+        .send({
+          content: '# 개정\n\n수치 보강판',
+          note: '수치 보강',
+          structure: {
+            governingMessage: '보강된 수치에서도 공공시설 A의 현행 유지안이 타당합니다.',
+            soWhat: '따라서 정량 근거를 추가하되 운영 방식 변경은 계속 보류해야 합니다.',
+          },
+        })
         .expect(201)).body,
     );
     expect(v2.versionNo).toBe(2);
 
     const detail = ArtifactDetailResponseSchema.parse(
       (await request(app.getHttpServer())
-        .get(`/artifacts/${created.id}`)
+        .get(`/artifacts/${created.id}?includeStructure=1`)
         .set('authorization', owner.bearer)
         .expect(200)).body,
     );
@@ -357,7 +370,7 @@ d('Phase 2 — evidence, artifacts, notifications', () => {
     const soWhat = '따라서 검증이 통과하기 전에는 정원 확대 결정을 집행해서는 안 됩니다.';
     const created = CreateArtifactResponseSchema.parse(
       (await request(app.getHttpServer())
-        .post('/artifacts')
+        .post('/artifacts?includeStructure=1')
         .set('authorization', owner.bearer)
         .send({
           projectId: project.id,
@@ -460,17 +473,17 @@ d('Phase 2 — evidence, artifacts, notifications', () => {
     await request(app.getHttpServer())
       .get(`/artifacts/${created.id}`)
       .set('authorization', outsider.bearer)
-      .expect(403);
+      .expect(404);
     await request(app.getHttpServer())
       .post(`/artifacts/${created.id}/versions`)
       .set('authorization', outsider.bearer)
       .send({ content: '악성 개정' })
-      .expect(403);
+      .expect(404);
     await request(app.getHttpServer())
       .post('/artifacts')
       .set('authorization', outsider.bearer)
       .send({ projectId: project.id, title: '침투', content: 'x' })
-      .expect(403);
+      .expect(404);
   });
 
   it('A-2/F-VERIFY: rejects artifact source ids that do not belong to the artifact project', async () => {

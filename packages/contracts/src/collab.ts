@@ -160,6 +160,161 @@ export const DecisionScorecardSummarySchema = z
   .strict();
 export type DecisionScorecardSummary = z.infer<typeof DecisionScorecardSummarySchema>;
 
+export const DecisionAnalyticsDriverSchema = z
+  .object({
+    id: z.string().trim().regex(/^[a-z][a-z0-9_-]{0,63}$/u),
+    label: z.string().trim().min(1).max(80),
+    min: z.number().finite().nonnegative().max(1_000_000_000_000),
+    mode: z.number().finite().nonnegative().max(1_000_000_000_000),
+    max: z.number().finite().nonnegative().max(1_000_000_000_000),
+  })
+  .strict()
+  .superRefine((driver, ctx) => {
+    if (driver.min > driver.mode || driver.mode > driver.max) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'driver range must satisfy min <= mode <= max' });
+    }
+  });
+export type DecisionAnalyticsDriver = z.infer<typeof DecisionAnalyticsDriverSchema>;
+
+export const DecisionAnalyticsImpactRequestSchema = z
+  .object({
+    unit: z.literal('KRW'),
+    model: z.literal('multiplicative'),
+    fixedMultiplier: z.number().finite().positive().max(1_000_000),
+    drivers: z.array(DecisionAnalyticsDriverSchema).min(1).max(6),
+    iterations: z.number().int().min(1).max(100_000).default(10_000),
+  })
+  .strict()
+  .superRefine((impact, ctx) => {
+    const ids = impact.drivers.map((driver) => driver.id);
+    if (new Set(ids).size !== ids.length) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'impact driver ids must be unique', path: ['drivers'] });
+    }
+  });
+export type DecisionAnalyticsImpactRequest = z.infer<typeof DecisionAnalyticsImpactRequestSchema>;
+
+export const RunDecisionAnalyticsRequestSchema = z
+  .object({
+    scorecardId: UuidSchema.optional(),
+    artifactVersionId: UuidSchema.optional(),
+    perturbationPct: z.number().finite().min(0).max(1).default(0.2),
+    scenarios: z.number().int().min(1).max(100_000).default(2_000),
+    impact: DecisionAnalyticsImpactRequestSchema.optional(),
+  })
+  .strict()
+  .superRefine((request, ctx) => {
+    if (request.artifactVersionId && !request.scorecardId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'scorecardId is required when artifactVersionId is provided',
+        path: ['scorecardId'],
+      });
+    }
+  });
+export type RunDecisionAnalyticsRequest = z.infer<typeof RunDecisionAnalyticsRequestSchema>;
+export type RunDecisionAnalyticsRequestInput = z.input<typeof RunDecisionAnalyticsRequestSchema>;
+
+export const DecisionAnalyticsSensitivitySchema = z
+  .object({
+    baselineWinnerId: z.string().nullable(),
+    winnerStability: z.number().min(0).max(1),
+    perturbationPct: z.number().min(0).max(1),
+    scenarios: z.number().int().min(1).max(100_000),
+    criticalCriteria: z.array(z.object({
+      criterionId: z.string(),
+      label: z.string(),
+      flipsWinner: z.boolean(),
+      thresholdPct: z.number().min(-1).max(1).nullable(),
+      challengerId: z.string().nullable(),
+    }).strict()).max(100),
+  })
+  .strict();
+export type DecisionAnalyticsSensitivity = z.infer<typeof DecisionAnalyticsSensitivitySchema>;
+
+export const DecisionAnalyticsImpactIntervalSchema = z
+  .object({
+    iterations: z.number().int().min(1).max(100_000),
+    mean: z.number().finite().nonnegative(),
+    p10: z.number().finite().nonnegative(),
+    p50: z.number().finite().nonnegative(),
+    p90: z.number().finite().nonnegative(),
+    min: z.number().finite().nonnegative(),
+    max: z.number().finite().nonnegative(),
+  })
+  .strict();
+
+export const DecisionAnalyticsImpactSchema = DecisionAnalyticsImpactRequestSchema.extend({
+  seed: z.number().int().nonnegative().max(0xffff_ffff),
+  interval: DecisionAnalyticsImpactIntervalSchema,
+}).strict().superRefine((impact, ctx) => {
+  const { interval } = impact;
+  if (impact.iterations !== interval.iterations) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'impact and interval iterations must match',
+      path: ['interval', 'iterations'],
+    });
+  }
+  if (!(interval.min <= interval.p10
+    && interval.p10 <= interval.p50
+    && interval.p50 <= interval.p90
+    && interval.p90 <= interval.max)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'impact interval quantiles must be ordered',
+      path: ['interval'],
+    });
+  }
+  if (interval.mean < interval.min || interval.mean > interval.max) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'impact interval mean must be within min and max',
+      path: ['interval', 'mean'],
+    });
+  }
+});
+export type DecisionAnalyticsImpact = z.infer<typeof DecisionAnalyticsImpactSchema>;
+
+export const DecisionAnalyticsRunSchema = z
+  .object({
+    id: UuidSchema,
+    scorecardId: UuidSchema,
+    artifactVersionId: UuidSchema.nullable(),
+    artifactContentHash: z.string().regex(/^[a-f0-9]{64}$/u).nullable(),
+    methodVersion: z.literal('decision_analytics_v2'),
+    inputHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    actorKind: z.enum(['system', 'user']),
+    sensitivity: DecisionAnalyticsSensitivitySchema,
+    impact: DecisionAnalyticsImpactSchema.nullable(),
+    createdAt: z.string().datetime({ offset: true }),
+  })
+  .strict()
+  .superRefine((run, ctx) => {
+    if ((run.artifactVersionId === null) !== (run.artifactContentHash === null)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'artifact version and content hash must be paired' });
+    }
+  });
+export type DecisionAnalyticsRun = z.infer<typeof DecisionAnalyticsRunSchema>;
+
+export const DecisionAnalyticsRunResponseSchema = z.object({ run: DecisionAnalyticsRunSchema }).strict();
+export type DecisionAnalyticsRunResponse = z.infer<typeof DecisionAnalyticsRunResponseSchema>;
+
+export const DecisionAnalyticsSummarySchema = z
+  .object({ supported: z.boolean(), latestRun: DecisionAnalyticsRunSchema.nullable() })
+  .strict();
+export type DecisionAnalyticsSummary = z.infer<typeof DecisionAnalyticsSummarySchema>;
+
+export const DecisionAnalyticsScorecardLineageSchema = z.object({
+  id: UuidSchema,
+  question: z.string().min(1),
+  createdAt: z.string().datetime({ offset: true }),
+}).strict();
+
+export const ArtifactVersionDecisionAnalyticsResponseSchema = DecisionAnalyticsSummarySchema.extend({
+  lineageStatus: z.enum(['resolved', 'unavailable']).default('unavailable'),
+  scorecard: DecisionAnalyticsScorecardLineageSchema.nullable().default(null),
+}).strict();
+export type ArtifactVersionDecisionAnalyticsResponse = z.infer<typeof ArtifactVersionDecisionAnalyticsResponseSchema>;
 
 export const DocumentUnitsSummarySchema = z
   .object({
@@ -367,6 +522,11 @@ export const EvidenceDecisionSummaryV2ResponseSchema = EvidenceDecisionSummaryRe
 }).strict();
 export type EvidenceDecisionSummaryV2Response = z.infer<typeof EvidenceDecisionSummaryV2ResponseSchema>;
 
+/** Opt-in v3. Older clients keep receiving their strict v1/v2 shapes. */
+export const EvidenceDecisionSummaryV3ResponseSchema = EvidenceDecisionSummaryV2ResponseSchema.extend({
+  analytics: DecisionAnalyticsSummarySchema,
+}).strict();
+export type EvidenceDecisionSummaryV3Response = z.infer<typeof EvidenceDecisionSummaryV3ResponseSchema>;
 
 // ---------------------------------------------------------------------------
 // Phase 2-B — Artifacts

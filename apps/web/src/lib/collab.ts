@@ -8,6 +8,7 @@ import type {
   ArtifactReviewDecisionRequest,
   VerifyArtifactVersionRequest,
   RecordRetrievalHitFeedbackRequest,
+  RunDecisionAnalyticsRequestInput,
   ReviewQueueDecisionRequest,
   ReviewQueueFilter,
   UploadAttachmentRequest,
@@ -16,6 +17,7 @@ import type {
 export const collabKeys = {
   evidence: (threadId: string) => ['evidence', threadId] as const,
   evidenceDecision: (threadId: string) => ['evidence-decision', threadId] as const,
+  artifactVersionDecisionAnalytics: (threadId: string, versionId: string) => ['artifact-version-decision-analytics', threadId, versionId] as const,
   retrievalHits: (threadId: string) => ['retrieval-hits', threadId] as const,
   reviewQueue: (threadId: string, filter: ReviewQueueFilter = 'all') => ['review-queue', threadId, filter] as const,
   artifacts: (workspaceId: string) => ['artifacts', workspaceId] as const,
@@ -64,6 +66,28 @@ export function useEvidenceDecisionSummary(threadId: string | undefined) {
   });
 }
 
+export function useRunDecisionAnalytics(threadId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: RunDecisionAnalyticsRequestInput) => api.runDecisionAnalytics(threadId!, body),
+    onSuccess: (data) => {
+      void qc.invalidateQueries({ queryKey: collabKeys.evidenceDecision(threadId ?? '') });
+      if (data.run.artifactVersionId) {
+        void qc.invalidateQueries({
+          queryKey: collabKeys.artifactVersionDecisionAnalytics(threadId ?? '', data.run.artifactVersionId),
+        });
+      }
+    },
+  });
+}
+
+export function useArtifactVersionDecisionAnalytics(threadId: string | null | undefined, artifactVersionId: string | undefined) {
+  return useQuery({
+    queryKey: collabKeys.artifactVersionDecisionAnalytics(threadId ?? '', artifactVersionId ?? ''),
+    queryFn: () => api.artifactVersionDecisionAnalytics(threadId!, artifactVersionId!),
+    enabled: Boolean(threadId && artifactVersionId),
+  });
+}
 
 export function useRetrievalHits(threadId: string | undefined) {
   return useQuery({

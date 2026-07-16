@@ -1,16 +1,20 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { schema } from '@consulting/db-schema';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import {
+  DecisionAnalyticsRunSchema,
   JudgmentGuardIssueSchema,
   RetrievalFailureTypeSchema,
+  type DecisionAnalyticsRun,
   type EvidenceDecisionSummaryResponse,
   type EvidenceDecisionSummaryV2Response,
+  type EvidenceDecisionSummaryV3Response,
   type ListRetrievalHitFeedbackResponse,
   type RetrievalFailureType,
   type ReviewQueueFilter,
   type ReviewQueueResponse,
+  type RunDecisionAnalyticsRequest,
 } from '@consulting/contracts';
 import { DRIZZLE, type Db } from '../infra/drizzle.module.js';
 import { EvidenceToDecisionService, type ClaimInput, type ClaimVerdict, type DecisionRating, type EvidenceInput, type ProvenanceGraphEdge, type ReviewInput, type StrictJsonVerificationResult } from './evidence-to-decision.service.js';
@@ -19,6 +23,8 @@ import { ExactnessGateService, type ExactnessGateResult, type ExactnessRunStatus
 import { VerifierGatePolicyService, type VerifierGateResult } from './verifier-gate-policy.service.js';
 import { ConsultingJudgmentGuardService, type ConsultingJudgmentGuardResult } from './consulting-judgment-guard.service.js';
 import type { ConsultingVerifiedContradiction } from './consulting-web-ingest.service.js';
+import { buildDecisionAnalyticsAudit, type DecisionAnalyticsAuditInput } from './decision-analytics-audit.js';
+import { artifactContentHash } from '../artifacts/artifact-export-preflight-audit.js';
 
 const FACTUAL_RE = /(이다|입니다|한다|합니다|된다|됩니다|있다|있습니다|없다|없습니다|필요|확정|증가|감소|부담|영향|제시|늘려|줄어|higher|lower|increase|decrease)/iu;
 
@@ -314,7 +320,29 @@ export class EvidenceDecisionStore {
           criteriaBreakdown: item.criteriaBreakdown,
         })),
       );
-
+      const analytics = buildDecisionAnalyticsAudit({
+        scorecardId: scorecardRow.id,
+        source: 'post_answer_verification_v2',
+        ranked: scorecard.ranked.map((item) => ({
+          alternativeId: item.alternativeId,
+          label: item.label,
+          criteriaBreakdown: item.criteriaBreakdown,
+        })),
+        perturbationPct: 0.2,
+        scenarios: 2_000,
+      });
+      await db.insert(schema.decisionAnalyticsRuns).values({
+        workspaceId: input.workspaceId,
+        threadId: input.threadId,
+        scorecardId: scorecardRow.id,
+        methodVersion: analytics.methodVersion,
+        inputHash: analytics.inputHash,
+        inputSnapshot: analytics.inputSnapshot,
+        sensitivity: analytics.sensitivity,
+        impact: analytics.impact,
+        actorKind: 'system',
+        actorUserId: null,
+      });
     }
 
     const reviewInputs: ReviewInput[] = [
@@ -860,6 +888,329 @@ export class EvidenceDecisionStore {
     };
   }
 
+  private analyticsRunForResponse(row: {
+    id: string;
+    scorecardId: string;
+    artifactVersionId: string | null;
+    artifactContentHash: string | null;
+    methodVersion: string;
+    inputHash: string;
+    sensitivity: unknown;
+    impact: unknown;
+    actorKind: string;
+    createdAt: Date;
+  }): DecisionAnalyticsRun {
+    return DecisionAnalyticsRunSchema.parse({
+      id: row.id,
+      scorecardId: row.scorecardId,
+      artifactVersionId: row.artifactVersionId,
+      artifactContentHash: row.artifactContentHash,
+      methodVersion: row.methodVersion,
+      inputHash: row.inputHash,
+      sensitivity: row.sensitivity,
+      impact: row.impact,
+      actorKind: row.actorKind,
+      createdAt: iso(row.createdAt),
+    });
+  }
+
+  async decisionAnalyticsArtifactScope(
+    threadId: string,
+    artifactVersionId: string,
+  ): Promise<{
+    workspaceId: string;
+    projectId: string;
+    scorecard: { id: string; question: string; createdAt: string } | null;
+  } | null> {
+    const [row] = await this.db
+      .select({
+        workspaceId: schema.artifactVersions.workspaceId,
+        projectId: schema.artifacts.projectId,
+        sourceMessageId: schema.artifactVersions.sourceMessageId,
+      })
+      .from(schema.artifactVersions)
+      .innerJoin(schema.artifacts, and(
+        eq(schema.artifactVersions.artifactId, schema.artifacts.id),
+        eq(schema.artifactVersions.workspaceId, schema.artifacts.workspaceId),
+      ))
+      .innerJoin(schema.threads, and(
+        eq(schema.artifactVersions.sourceThreadId, schema.threads.id),
+        eq(schema.artifactVersions.workspaceId, schema.threads.workspaceId),
+      ))
+      .innerJoin(schema.topics, and(
+        eq(schema.threads.topicId, schema.topics.id),
+        eq(schema.threads.workspaceId, schema.topics.workspaceId),
+      ))
+      .innerJoin(schema.channels, and(
+        eq(schema.topics.channelId, schema.channels.id),
+        eq(schema.topics.workspaceId, schema.channels.workspaceId),
+      ))
+      .innerJoin(schema.projects, and(
+        eq(schema.artifacts.projectId, schema.projects.id),
+        eq(schema.artifacts.workspaceId, schema.projects.workspaceId),
+        eq(schema.channels.projectId, schema.projects.id),
+      ))
+      .where(and(
+        eq(schema.artifactVersions.id, artifactVersionId),
+        eq(schema.threads.id, threadId),
+        eq(schema.threads.status, 'active'),
+        eq(schema.topics.status, 'active'),
+        eq(schema.channels.status, 'active'),
+        eq(schema.projects.status, 'active'),
+        isNull(schema.artifacts.deletedAt),
+        isNull(schema.threads.deletedAt),
+        isNull(schema.topics.deletedAt),
+        isNull(schema.channels.deletedAt),
+        isNull(schema.projects.deletedAt),
+      ))
+      .limit(1);
+    if (!row) return null;
+    if (!row.sourceMessageId) return { ...row, scorecard: null };
+    const [sourceMessage] = await this.db
+      .select({ runId: schema.chatMessages.runId })
+      .from(schema.chatMessages)
+      .where(and(
+        eq(schema.chatMessages.id, row.sourceMessageId),
+        eq(schema.chatMessages.workspaceId, row.workspaceId),
+        eq(schema.chatMessages.threadId, threadId),
+        eq(schema.chatMessages.role, 'assistant'),
+        eq(schema.chatMessages.finishState, 'complete'),
+        isNull(schema.chatMessages.deletedAt),
+      ))
+      .limit(1);
+    if (!sourceMessage?.runId) return { ...row, scorecard: null };
+    const scorecards = await this.db
+      .select({
+        id: schema.decisionScorecards.id,
+        question: schema.decisionScorecards.question,
+        createdAt: schema.decisionScorecards.createdAt,
+      })
+      .from(schema.decisionScorecards)
+      .where(and(
+        eq(schema.decisionScorecards.workspaceId, row.workspaceId),
+        eq(schema.decisionScorecards.threadId, threadId),
+        isNull(schema.decisionScorecards.deletedAt),
+        sql`${schema.decisionScorecards.scoreSummary} ->> 'runId' = ${sourceMessage.runId}`,
+      ))
+      .orderBy(desc(schema.decisionScorecards.createdAt), desc(schema.decisionScorecards.id))
+      .limit(2);
+    const scorecard = scorecards.length === 1 && scorecards[0]
+      ? { ...scorecards[0], createdAt: iso(scorecards[0].createdAt) }
+      : null;
+    return { workspaceId: row.workspaceId, projectId: row.projectId, scorecard };
+  }
+
+  async latestDecisionAnalytics(threadId: string, scorecardId?: string): Promise<DecisionAnalyticsRun | null> {
+    const predicates = [eq(schema.decisionAnalyticsRuns.threadId, threadId)];
+    if (scorecardId) predicates.push(eq(schema.decisionAnalyticsRuns.scorecardId, scorecardId));
+    const [row] = await this.db
+      .select({
+        id: schema.decisionAnalyticsRuns.id,
+        scorecardId: schema.decisionAnalyticsRuns.scorecardId,
+        artifactVersionId: schema.decisionAnalyticsRuns.artifactVersionId,
+        artifactContentHash: schema.decisionAnalyticsRuns.artifactContentHash,
+        methodVersion: schema.decisionAnalyticsRuns.methodVersion,
+        inputHash: schema.decisionAnalyticsRuns.inputHash,
+        sensitivity: schema.decisionAnalyticsRuns.sensitivity,
+        impact: schema.decisionAnalyticsRuns.impact,
+        actorKind: schema.decisionAnalyticsRuns.actorKind,
+        createdAt: schema.decisionAnalyticsRuns.createdAt,
+      })
+      .from(schema.decisionAnalyticsRuns)
+      .where(and(...predicates))
+      .orderBy(desc(schema.decisionAnalyticsRuns.sequenceNo))
+      .limit(1);
+    return row ? this.analyticsRunForResponse(row) : null;
+  }
+
+  async latestDecisionAnalyticsForArtifactVersion(threadId: string, artifactVersionId: string): Promise<DecisionAnalyticsRun | null> {
+    const [row] = await this.db
+      .select({
+        id: schema.decisionAnalyticsRuns.id,
+        scorecardId: schema.decisionAnalyticsRuns.scorecardId,
+        artifactVersionId: schema.decisionAnalyticsRuns.artifactVersionId,
+        artifactContentHash: schema.decisionAnalyticsRuns.artifactContentHash,
+        methodVersion: schema.decisionAnalyticsRuns.methodVersion,
+        inputHash: schema.decisionAnalyticsRuns.inputHash,
+        sensitivity: schema.decisionAnalyticsRuns.sensitivity,
+        impact: schema.decisionAnalyticsRuns.impact,
+        actorKind: schema.decisionAnalyticsRuns.actorKind,
+        createdAt: schema.decisionAnalyticsRuns.createdAt,
+      })
+      .from(schema.decisionAnalyticsRuns)
+      .where(and(
+        eq(schema.decisionAnalyticsRuns.threadId, threadId),
+        eq(schema.decisionAnalyticsRuns.artifactVersionId, artifactVersionId),
+      ))
+      .orderBy(desc(schema.decisionAnalyticsRuns.sequenceNo))
+      .limit(1);
+    return row ? this.analyticsRunForResponse(row) : null;
+  }
+
+  async summaryV3(threadId: string): Promise<EvidenceDecisionSummaryV3Response> {
+    const base = await this.summaryV2(threadId);
+    const latestRun = base.latestScorecard
+      ? await this.latestDecisionAnalytics(threadId, base.latestScorecard.id)
+      : null;
+    return { ...base, analytics: { supported: true, latestRun } };
+  }
+
+  async runDecisionAnalytics(input: {
+    workspaceId: string;
+    threadId: string;
+    actorUserId: string;
+    artifactProjectId?: string;
+    artifactScorecardId?: string;
+    request: RunDecisionAnalyticsRequest;
+  }): Promise<DecisionAnalyticsRun | null> {
+    return this.db.transaction(async (tx) => {
+      const scorecardPredicates = [
+        eq(schema.decisionScorecards.workspaceId, input.workspaceId),
+        eq(schema.decisionScorecards.threadId, input.threadId),
+        isNull(schema.decisionScorecards.deletedAt),
+      ];
+      if (input.request.scorecardId) scorecardPredicates.push(eq(schema.decisionScorecards.id, input.request.scorecardId));
+      const [selectedScorecard] = await tx
+        .select({ id: schema.decisionScorecards.id })
+        .from(schema.decisionScorecards)
+        .where(and(...scorecardPredicates))
+        .orderBy(desc(schema.decisionScorecards.createdAt), desc(schema.decisionScorecards.id))
+        .limit(1);
+      if (!selectedScorecard) return null;
+      await tx.execute(sql`SELECT decision_analytics_source_is_locked(
+        'scorecard', ${selectedScorecard.id}::uuid, ${input.workspaceId}::uuid
+      )`);
+      const [scorecard] = await tx
+        .select({
+          id: schema.decisionScorecards.id,
+          scoreSummary: schema.decisionScorecards.scoreSummary,
+        })
+        .from(schema.decisionScorecards)
+        .where(and(
+          eq(schema.decisionScorecards.id, selectedScorecard.id),
+          eq(schema.decisionScorecards.workspaceId, input.workspaceId),
+          eq(schema.decisionScorecards.threadId, input.threadId),
+          isNull(schema.decisionScorecards.deletedAt),
+        ))
+        .limit(1);
+      if (!scorecard) return null;
+      const items = await tx
+      .select({
+        alternativeId: schema.decisionScorecardItems.alternativeId,
+        label: schema.decisionScorecardItems.alternativeLabel,
+        criteriaBreakdown: schema.decisionScorecardItems.criteriaBreakdown,
+      })
+      .from(schema.decisionScorecardItems)
+      .where(and(
+        eq(schema.decisionScorecardItems.workspaceId, input.workspaceId),
+        eq(schema.decisionScorecardItems.scorecardId, scorecard.id),
+      ))
+      .orderBy(asc(schema.decisionScorecardItems.alternativeId));
+    let artifact: { versionId: string; contentHash: string } | undefined;
+    if (input.request.artifactVersionId) {
+      if (!input.artifactProjectId) throw new RangeError('artifact project authorization is required');
+      if (!input.artifactScorecardId || input.artifactScorecardId !== scorecard.id) {
+        throw new RangeError('artifact scorecard lineage authorization is required');
+      }
+      await tx.execute(sql`SELECT decision_analytics_source_is_locked(
+        'artifact_version', ${input.request.artifactVersionId}::uuid, ${input.workspaceId}::uuid
+      )`);
+      const [version] = await tx
+        .select({
+          id: schema.artifactVersions.id,
+          content: schema.artifactVersions.content,
+          governingMessage: schema.artifactVersions.governingMessage,
+          soWhat: schema.artifactVersions.soWhat,
+        })
+        .from(schema.artifactVersions)
+        .innerJoin(schema.artifacts, eq(schema.artifacts.id, schema.artifactVersions.artifactId))
+        .where(and(
+          eq(schema.artifactVersions.id, input.request.artifactVersionId),
+          eq(schema.artifactVersions.workspaceId, input.workspaceId),
+          eq(schema.artifactVersions.sourceThreadId, input.threadId),
+          eq(schema.artifacts.workspaceId, input.workspaceId),
+          eq(schema.artifacts.projectId, input.artifactProjectId),
+          isNull(schema.artifacts.deletedAt),
+        ))
+        .limit(1);
+      if (!version) throw new RangeError('artifact version is unavailable in this thread scope');
+      artifact = {
+        versionId: version.id,
+        contentHash: artifactContentHash(version.content, version.governingMessage, version.soWhat),
+      };
+    }
+    const summary = scorecard.scoreSummary && typeof scorecard.scoreSummary === 'object'
+      ? scorecard.scoreSummary
+      : {};
+    const source = typeof summary.source === 'string' ? summary.source : 'unknown';
+    const analytics = buildDecisionAnalyticsAudit({
+      scorecardId: scorecard.id,
+      source,
+      ranked: items.map((item) => ({
+        alternativeId: item.alternativeId,
+        label: item.label,
+        criteriaBreakdown: item.criteriaBreakdown as DecisionAnalyticsAuditInput['ranked'][number]['criteriaBreakdown'],
+      })),
+      perturbationPct: input.request.perturbationPct,
+      scenarios: input.request.scenarios,
+      ...(artifact ? { artifact } : {}),
+      ...(input.request.impact ? { impact: input.request.impact } : {}),
+    });
+    const [inserted] = await tx
+      .insert(schema.decisionAnalyticsRuns)
+      .values({
+        workspaceId: input.workspaceId,
+        threadId: input.threadId,
+        scorecardId: scorecard.id,
+        artifactVersionId: analytics.artifactVersionId,
+        artifactContentHash: analytics.artifactContentHash,
+        methodVersion: analytics.methodVersion,
+        inputHash: analytics.inputHash,
+        inputSnapshot: analytics.inputSnapshot,
+        sensitivity: analytics.sensitivity,
+        impact: analytics.impact,
+        actorKind: 'user',
+        actorUserId: input.actorUserId,
+      })
+      .onConflictDoNothing()
+      .returning({
+        id: schema.decisionAnalyticsRuns.id,
+        scorecardId: schema.decisionAnalyticsRuns.scorecardId,
+        artifactVersionId: schema.decisionAnalyticsRuns.artifactVersionId,
+        artifactContentHash: schema.decisionAnalyticsRuns.artifactContentHash,
+        methodVersion: schema.decisionAnalyticsRuns.methodVersion,
+        inputHash: schema.decisionAnalyticsRuns.inputHash,
+        sensitivity: schema.decisionAnalyticsRuns.sensitivity,
+        impact: schema.decisionAnalyticsRuns.impact,
+        actorKind: schema.decisionAnalyticsRuns.actorKind,
+        createdAt: schema.decisionAnalyticsRuns.createdAt,
+      });
+    if (inserted) return this.analyticsRunForResponse(inserted);
+    const [existing] = await tx
+      .select({
+        id: schema.decisionAnalyticsRuns.id,
+        scorecardId: schema.decisionAnalyticsRuns.scorecardId,
+        artifactVersionId: schema.decisionAnalyticsRuns.artifactVersionId,
+        artifactContentHash: schema.decisionAnalyticsRuns.artifactContentHash,
+        methodVersion: schema.decisionAnalyticsRuns.methodVersion,
+        inputHash: schema.decisionAnalyticsRuns.inputHash,
+        sensitivity: schema.decisionAnalyticsRuns.sensitivity,
+        impact: schema.decisionAnalyticsRuns.impact,
+        actorKind: schema.decisionAnalyticsRuns.actorKind,
+        createdAt: schema.decisionAnalyticsRuns.createdAt,
+      })
+      .from(schema.decisionAnalyticsRuns)
+      .where(and(
+        eq(schema.decisionAnalyticsRuns.workspaceId, input.workspaceId),
+        eq(schema.decisionAnalyticsRuns.scorecardId, scorecard.id),
+        eq(schema.decisionAnalyticsRuns.inputHash, analytics.inputHash),
+        eq(schema.decisionAnalyticsRuns.actorKind, 'user'),
+        eq(schema.decisionAnalyticsRuns.actorUserId, input.actorUserId),
+      ))
+      .limit(1);
+    return existing ? this.analyticsRunForResponse(existing) : null;
+    });
+  }
 
   async reviewQueue(threadId: string, limit = 30, filter: ReviewQueueFilter = 'all'): Promise<ReviewQueueResponse> {
     const predicates = [

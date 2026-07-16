@@ -79,7 +79,9 @@ d('ToolPolicyAuditStore', () => {
         eq(schema.toolPolicyAuditEvents.runId, 'run-2'),
       ));
     if (trigger.rowCount === 1) {
-      await expect(mutation).rejects.toThrow(/append-only/u);
+      await expect(mutation).rejects.toMatchObject({
+        cause: expect.objectContaining({ message: expect.stringContaining('append-only') }),
+      });
       await expect(store.verifyWorkspaceChain(workspaceId)).resolves.toEqual({ valid: true, count: 3 });
     } else {
       await mutation;

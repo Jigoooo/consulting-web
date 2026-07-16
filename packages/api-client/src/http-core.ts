@@ -226,6 +226,10 @@ export class HttpCore {
       if (loose.success) {
         return new ApiClientError(response.status, loose.data, raw);
       }
+      const looseMessage = (raw as { message?: unknown }).message;
+      if (response.status === 404 && typeof looseMessage === 'string' && /^Cannot GET\b/u.test(looseMessage)) {
+        return new ApiClientError(response.status, { code: 'UNKNOWN', message: looseMessage }, raw);
+      }
     }
     return new ApiClientError(response.status, {
       code: 'UNKNOWN',

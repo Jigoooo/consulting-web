@@ -291,6 +291,231 @@
   border-radius: inherit;
   background: var(--accent);
 }
+.analyticsNotice,
+.analyticsSection,
+.impactForm {
+  border-top: 1px solid var(--border-hair);
+  padding: 12px 2px;
+}
+.analyticsNotice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.analyticsNotice b,
+.analyticsHead h3,
+.impactFormHead h3 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.analyticsNotice span,
+.analyticsHead > span,
+.impactFormHead p,
+.analyticsAssumption,
+.auditMeta {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  line-height: 1.55;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+.analyticsHead,
+.impactFormHead,
+.driverHead,
+.impactActions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.analyticsHead > span {
+  flex: 0 0 auto;
+  margin-top: 4px;
+}
+.stabilityTrack {
+  height: 6px;
+  margin-top: 9px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--bg-warm);
+}
+.stabilityTrack span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+.analyticsSubhead {
+  margin-top: 13px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: var(--fw-strong);
+}
+.thresholdList {
+  display: flex;
+  flex-direction: column;
+  margin-top: 4px;
+}
+.thresholdRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-whisper);
+}
+.thresholdRow span,
+.thresholdRow b {
+  color: var(--text-secondary);
+  font-size: 10.5px;
+}
+.thresholdRow b {
+  color: var(--text-primary);
+}
+.thresholdRow[data-flips='true'] b {
+  color: var(--semantic-warning);
+}
+.thresholdRow small {
+  grid-column: 1 / -1;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.impactGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  margin-top: 7px;
+}
+.impactGrid > div {
+  min-width: 0;
+  padding: 8px 6px;
+  border: 1px solid var(--border-hair);
+  border-radius: 8px;
+  background: var(--surface-card);
+}
+.impactGrid span,
+.impactGrid b {
+  display: block;
+}
+.impactGrid span {
+  color: var(--text-muted);
+  font-size: 9.5px;
+  font-weight: var(--fw-strong);
+}
+.impactGrid b {
+  margin-top: 3px;
+  color: var(--text-primary);
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+}
+.analyticsAssumption {
+  margin-top: 8px;
+}
+.auditMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-whisper);
+}
+.auditMeta code {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.impactFormHead {
+  align-items: center;
+}
+.impactFormHead > div {
+  min-width: 0;
+}
+.impactFormHead p {
+  margin-top: 3px;
+}
+.impactForm fieldset {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.impactFormBody {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+.analyticsField {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-weight: var(--fw-strong);
+}
+.analyticsField input,
+.driverGroup input {
+  min-height: 44px;
+}
+.driverGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border-whisper);
+}
+.driverHead b {
+  color: var(--text-secondary);
+  font-size: 10.5px;
+}
+.driverRemove {
+  min-width: 44px;
+  min-height: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.driverRemove:hover {
+  color: var(--semantic-danger);
+}
+.driverRemove:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.driverNumbers {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+.driverNumbers input {
+  min-width: 0;
+  padding-inline: 7px;
+}
+.impactActions {
+  align-items: center;
+  flex-wrap: wrap;
+}
+.impactError {
+  margin: 0;
+  color: var(--semantic-danger);
+  font-size: 10.5px;
+  line-height: 1.5;
+  word-break: keep-all;
+}
+.reviewTitle {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
 .reviewPromptActions,
 .reviewDecisionActions {
   display: flex;

@@ -8,6 +8,7 @@ import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { inArray } from 'drizzle-orm';
 import { Pool } from 'pg';
 import { schema } from '@consulting/db-schema';
+import { deleteToolPolicyAuditFixtures } from './tool-policy-audit-fixtures.js';
 import {
   AuthSessionResponseSchema,
   SignUpBootstrapResponseSchema,
@@ -115,6 +116,7 @@ d('chat persistence + space mutations (Phase 1.5)', () => {
 
   afterAll(async () => {
     if (createdWorkspaces.length > 0) {
+      await deleteToolPolicyAuditFixtures(pool, createdWorkspaces);
       await db.delete(schema.workspaces).where(inArray(schema.workspaces.id, createdWorkspaces));
     }
     if (createdUsers.length > 0) {
@@ -176,7 +178,7 @@ d('chat persistence + space mutations (Phase 1.5)', () => {
     await request(app.getHttpServer())
       .get(`/chat/threads/${thread.id}/messages`)
       .set('authorization', outsider.bearer)
-      .expect(403);
+      .expect(404);
 
     // thread detail (N-6)
     const detail = ThreadDetailResponseSchema.parse(
@@ -433,7 +435,7 @@ d('chat persistence + space mutations (Phase 1.5)', () => {
     await request(app.getHttpServer())
       .get(`/chat/threads/${thread.id}/messages/search?q=버스`)
       .set('authorization', outsider.bearer)
-      .expect(403);
+      .expect(404);
   });
 
   it('renames and soft-deletes space nodes with membership enforcement', async () => {

@@ -76,6 +76,15 @@ interface HermesToolsetStatus {
   readonly enabled: boolean;
 }
 
+const HERMES_PREPARED_RUN_BRAND: unique symbol = Symbol('HermesPreparedRun');
+
+export interface HermesPreparedRun {
+  readonly [HERMES_PREPARED_RUN_BRAND]: object;
+  readonly runId: string;
+  readonly toolInventoryHash: string;
+  readonly workspaceId?: string;
+}
+
 interface HermesUsageWire {
   readonly input_tokens?: unknown;
   readonly output_tokens?: unknown;
@@ -97,6 +106,9 @@ function normalizeUniqueStringArray(value: unknown): string[] | null {
 
 
 const HERMES_STOP_RETRY_DELAYS_MS = [100, 250, 500, 1_000] as const;
+const HERMES_STOP_REQUEST_TIMEOUT_MS = 2_000;
+const HERMES_PREFLIGHT_TIMEOUT_MS = 5_000;
+const HERMES_PREFLIGHT_ABORT_DRAIN_MS = 250;
 
 class HermesRunStartError extends Error {
   constructor(message: string, readonly mayHaveStarted: boolean) {
@@ -324,37 +336,89 @@ const CONSULTING_RESPONSE_FORMAT = [
 @Injectable()
 export class HermesRunsClient {
   private readonly logger = new Logger(HermesRunsClient.name);
+  private readonly preparedRunOwner = Object.freeze({});
+  private readonly issuedPreparedRuns = new WeakSet<object>();
+  private readonly consumedPreparedRuns = new WeakSet<object>();
+  private stopRequestTimeoutMs = HERMES_STOP_REQUEST_TIMEOUT_MS;
 
   constructor(
     @Inject(ENV_TOKEN) private readonly env: Env,
     @Optional() private readonly toolPolicyAudits?: ToolPolicyAuditStore,
   ) {}
 
+  async prepareChatRun(workspaceId?: string, signal?: AbortSignal): Promise<HermesPreparedRun> {
+    if (this.env.APP_ENV === 'production' && !this.toolPolicyAudits) {
+      throw new Error('Hermes tool policy audit store is required in production');
+    }
+    const runId = `run_${randomUUID().replaceAll('-', '')}`;
+    const preflightAbort = new AbortController();
+    const relayAbort = () => preflightAbort.abort(signal?.reason);
+    if (signal?.aborted) relayAbort();
+    else signal?.addEventListener('abort', relayAbort, { once: true });
+    const preflightTimeout = setTimeout(() => {
+      preflightAbort.abort(new Error('Hermes preflight timed out'));
+    }, HERMES_PREFLIGHT_TIMEOUT_MS);
+    preflightTimeout.unref?.();
+    const identityResult = this.withAbort(
+      this.enforceHermesRunClientIdentity(preflightAbort.signal),
+      preflightAbort.signal,
+    ).then(
+      () => ({ ok: true as const }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    try {
+      const toolInventoryHash = await this.withAbort(
+        this.enforceHermesToolPolicy(workspaceId, runId, preflightAbort.signal),
+        preflightAbort.signal,
+      );
+      const identity = await identityResult;
+      if (!identity.ok) {
+        preflightAbort.abort(identity.error);
+        throw identity.error;
+      }
+      const prepared: HermesPreparedRun = Object.freeze({
+        [HERMES_PREPARED_RUN_BRAND]: this.preparedRunOwner,
+        runId,
+        toolInventoryHash,
+        ...(workspaceId ? { workspaceId } : {}),
+      });
+      this.issuedPreparedRuns.add(prepared);
+      return prepared;
+    } catch (error) {
+      preflightAbort.abort(error);
+      await this.settleWithin(identityResult, HERMES_PREFLIGHT_ABORT_DRAIN_MS);
+      throw error;
+    } finally {
+      clearTimeout(preflightTimeout);
+      signal?.removeEventListener('abort', relayAbort);
+    }
+  }
+
   async *streamChat(
     cmd: ChatStreamRequest,
     scope?: { workspaceId: string; projectId: string; memoryContext?: string },
     signal?: AbortSignal,
+    prepared?: HermesPreparedRun,
   ): AsyncGenerator<ChatStreamEvent> {
     let runId: string | undefined;
     let runSubmissionAttempted = false;
     let terminalObserved = false;
     let cleanupAttempted = false;
     try {
-      runId = `run_${randomUUID().replaceAll('-', '')}`;
-      const toolInventoryHash = await this.enforceHermesToolPolicy(scope?.workspaceId, runId, signal);
-      await this.enforceHermesRunClientIdentity(signal);
+      const preparation = prepared
+        ? this.consumePreparedRun(prepared, scope?.workspaceId)
+        : await this.prepareChatRun(scope?.workspaceId, signal);
+      runId = preparation.runId;
       runSubmissionAttempted = true;
       try {
-        await this.startRun(cmd, scope, runId, toolInventoryHash, signal);
+        await this.startRun(cmd, scope, runId, preparation.toolInventoryHash, signal);
       } catch (error) {
         if (error instanceof HermesRunStartError && !error.mayHaveStarted) {
           runSubmissionAttempted = false;
         }
         throw error;
       }
-      const status = await this.getRunStatus(runId, signal).catch(() => null);
-      const model = typeof status?.model === 'string' ? status.model : undefined;
-      yield { type: 'start', runId, threadId: cmd.threadId, ts: new Date().toISOString(), ...(model ? { model } : {}) };
+      yield { type: 'start', runId, threadId: cmd.threadId, ts: new Date().toISOString() };
 
       for await (const upstream of this.readRunEvents(runId, signal)) {
         const eventType = typeof upstream.event === 'string' ? upstream.event : '';
@@ -456,6 +520,52 @@ export class HermesRunsClient {
         });
       }
     }
+  }
+
+  private async withAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+    if (signal.aborted) throw this.abortReason(signal);
+    let onAbort: (() => void) | undefined;
+    try {
+      return await new Promise<T>((resolve, reject) => {
+        onAbort = () => reject(this.abortReason(signal));
+        signal.addEventListener('abort', onAbort, { once: true });
+        operation.then(resolve, reject);
+      });
+    } finally {
+      if (onAbort) signal.removeEventListener('abort', onAbort);
+    }
+  }
+
+  private abortReason(signal: AbortSignal): Error {
+    return signal.reason instanceof Error
+      ? signal.reason
+      : new DOMException('Hermes preflight aborted', 'AbortError');
+  }
+
+  private async settleWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      promise.then(() => undefined, () => undefined),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+  }
+
+  private consumePreparedRun(prepared: HermesPreparedRun, workspaceId?: string): HermesPreparedRun {
+    if (
+      prepared[HERMES_PREPARED_RUN_BRAND] !== this.preparedRunOwner
+      || prepared.workspaceId !== workspaceId
+      || !this.issuedPreparedRuns.has(prepared)
+      || this.consumedPreparedRuns.has(prepared)
+    ) {
+      throw new Error('Invalid or already-consumed Hermes run preparation');
+    }
+    this.issuedPreparedRuns.delete(prepared);
+    this.consumedPreparedRuns.add(prepared);
+    return prepared;
   }
 
   private async startRun(
@@ -717,18 +827,28 @@ export class HermesRunsClient {
     let lastError: unknown;
     for (let attempt = 0; attempt <= HERMES_STOP_RETRY_DELAYS_MS.length; attempt += 1) {
       try {
-        const response = await fetch(this.url(`/v1/runs/${encodeURIComponent(runId)}/stop`), {
-          method: 'POST',
-          headers: this.headers({ accept: 'application/json' }),
-        });
-        if (response.ok) {
-          const body: unknown = await response.json().catch(() => ({}));
-          const status = isRecord(body) && typeof body.status === 'string' ? body.status : 'stopping';
-          return { ok: true, runId, status };
+        const stopAbort = new AbortController();
+        const stopTimeout = setTimeout(() => {
+          stopAbort.abort(new Error('Hermes stop request timed out'));
+        }, this.stopRequestTimeoutMs);
+        stopTimeout.unref?.();
+        try {
+          const response = await this.withAbort(fetch(this.url(`/v1/runs/${encodeURIComponent(runId)}/stop`), {
+            method: 'POST',
+            headers: this.headers({ accept: 'application/json' }),
+            signal: stopAbort.signal,
+          }), stopAbort.signal);
+          if (response.ok) {
+            const body: unknown = await response.json().catch(() => ({}));
+            const status = isRecord(body) && typeof body.status === 'string' ? body.status : 'stopping';
+            return { ok: true, runId, status };
+          }
+          lastError = new Error(`Hermes stop failed (${response.status})`);
+          const retryable = response.status >= 500 || (retryNotFound && response.status === 404);
+          if (!retryable) throw lastError;
+        } finally {
+          clearTimeout(stopTimeout);
         }
-        lastError = new Error(`Hermes stop failed (${response.status})`);
-        const retryable = response.status >= 500 || (retryNotFound && response.status === 404);
-        if (!retryable) throw lastError;
       } catch (error) {
         lastError = error;
         const message = error instanceof Error ? error.message : String(error);

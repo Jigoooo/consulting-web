@@ -58,6 +58,8 @@
     "0053_telegram_reclassification_run_ledger.sql": "69231752208131e04c087806b1e0b9edbc81ea208a15b7b98f3d1b9348f0b96d",
     "0054_tool_policy_audit_append_only.sql": "05db4a5dfe4d1942ab96c014851cd8b39fc9a7cecc5d8952106ad32a346eb978",
     "0055_retrieval_label_pair_null_hardening.sql": "1b7009b9e4035c1aae25014c479f233c8b5f017b69794701018f2378a5a3a8f5",
-    "0056_artifact_review_decision_integrity.sql": "78b3f888e21baacb48738cd8d52970f805128ed9a6f4a61b4e0587a810a6b348"
+    "0056_artifact_review_decision_integrity.sql": "78b3f888e21baacb48738cd8d52970f805128ed9a6f4a61b4e0587a810a6b348",
+    "0057_decision_analytics_runs.sql": "743b38a38ca29eec98dafad8be70c8a24261e8c8ec5378e675eb4832535c14b7",
+    "0058_decision_analytics_source_immutability.sql": "14f21f15a5b7b31306e6d9a3c7f543113184e00e04c1c7ff3851bcc68fcfac66"
   }
 }

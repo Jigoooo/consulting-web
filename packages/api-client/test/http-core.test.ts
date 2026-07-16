@@ -56,6 +56,129 @@ describe('HttpCore fetch binding', () => {
     expect(calls[0]).toBe('/api/spaces/workspaces/00000000-0000-4000-8000-000000000001/tree?includePermissions=true');
   });
 
+  it('opts into analytics summary while accepting an old strict v1 API response', async () => {
+    const calls: string[] = [];
+    const v1 = {
+      verdictSummary: { supports: 0, refutes: 0, mixed: 0, notEnoughInfo: 0, claimCount: 0 },
+      latestVerdicts: [],
+      latestScorecard: null,
+      documentUnits: { total: 0, byModality: {} },
+      reviewQueue: { openCount: 0, top: null },
+      postAnswerVerification: {
+        checkedMessageCount: 0,
+        unsupportedCount: 0,
+        refutedCount: 0,
+        verificationMetrics: { totalLatencyMs: 0, providerCalls: { nli: 0, llm: 0, heuristic: 0 }, providerLatencies: {} },
+        gate: { decision: 'PASS', blockers: [], warnings: [] },
+      },
+      exactness: { latestRun: null, blockedCount: 0 },
+    };
+    const fakeFetch = vi.fn((url: string | URL | Request) => {
+      calls.push(String(url));
+      return Promise.resolve(new Response(JSON.stringify(v1), { status: 200, headers: { 'content-type': 'application/json' } }));
+    });
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+    const summary = await client.evidenceDecisionSummary('00000000-0000-4000-8000-000000000009');
+    expect(calls[0]).toBe('/api/chat/threads/00000000-0000-4000-8000-000000000009/evidence-decision/summary?includeAnalytics=1');
+    expect(summary.judgment).toEqual({ latestRun: null, blockedCount: 0 });
+    expect(summary.analytics).toEqual({ supported: false, latestRun: null });
+  });
+
+  it('posts a bounded decision analytics request and parses its audit response', async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const response = {
+      run: {
+        id: '00000000-0000-4000-8000-000000000001',
+        scorecardId: '00000000-0000-4000-8000-000000000002',
+        artifactVersionId: null,
+        artifactContentHash: null,
+        methodVersion: 'decision_analytics_v2',
+        inputHash: 'a'.repeat(64),
+        actorKind: 'user',
+        sensitivity: { baselineWinnerId: 'keep', winnerStability: 0.9, perturbationPct: 0.2, scenarios: 2000, criticalCriteria: [] },
+        impact: null,
+        createdAt: '2026-07-14T00:00:00.000Z',
+      },
+    };
+    const fakeFetch = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return Promise.resolve(new Response(JSON.stringify(response), { status: 201, headers: { 'content-type': 'application/json' } }));
+    });
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+    const result = await client.runDecisionAnalytics('00000000-0000-4000-8000-000000000009', {
+      scorecardId: response.run.scorecardId,
+    });
+    expect(result.run.inputHash).toBe('a'.repeat(64));
+    expect(calls[0]?.url).toBe('/api/chat/threads/00000000-0000-4000-8000-000000000009/decision-analytics');
+    expect(calls[0]?.init?.method).toBe('POST');
+  });
+
+  it.each([
+    { status: 404, code: 'NOT_FOUND' },
+    { status: 400, code: 'VALIDATION' },
+    { status: 409, code: 'CONFLICT' },
+  ] as const)('preserves decision analytics $code errors in the typed client', async ({ status, code }) => {
+    const fakeFetch = vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      code,
+      message: `decision analytics ${code.toLowerCase()}`,
+    }), { status, headers: { 'content-type': 'application/json' } })));
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+
+    const error = await client.runDecisionAnalytics(
+      '00000000-0000-4000-8000-000000000009',
+      { scorecardId: '00000000-0000-4000-8000-000000000002' },
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiClientError);
+    expect((error as ApiClientError).code).toBe(code);
+    expect((error as ApiClientError).status).toBe(status);
+  });
+
+  it('reads analytics bound to an immutable artifact version', async () => {
+    const calls: string[] = [];
+    const fakeFetch = vi.fn((url: string | URL | Request) => {
+      calls.push(String(url));
+      return Promise.resolve(new Response(JSON.stringify({ supported: true, latestRun: null }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      }));
+    });
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+    const result = await client.artifactVersionDecisionAnalytics(
+      '00000000-0000-4000-8000-000000000009',
+      '00000000-0000-4000-8000-000000000008',
+    );
+    expect(result).toEqual({ supported: true, latestRun: null, lineageStatus: 'unavailable', scorecard: null });
+    expect(calls[0]).toBe('/api/chat/threads/00000000-0000-4000-8000-000000000009/decision-analytics/artifact-versions/00000000-0000-4000-8000-000000000008');
+  });
+
+  it('normalizes an old API without version analytics to unsupported instead of empty', async () => {
+    const fakeFetch = vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      statusCode: 404,
+      message: 'Cannot GET /chat/threads/t/decision-analytics/artifact-versions/v',
+      error: 'Not Found',
+    }), { status: 404, headers: { 'content-type': 'application/json' } })));
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+    await expect(client.artifactVersionDecisionAnalytics(
+      '00000000-0000-4000-8000-000000000009',
+      '00000000-0000-4000-8000-000000000008',
+    )).resolves.toEqual({ supported: false, latestRun: null, lineageStatus: 'unavailable', scorecard: null });
+  });
+
+  it('preserves a canonical missing artifact error instead of treating it as an old API', async () => {
+    const fakeFetch = vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      code: 'NOT_FOUND', message: 'Cannot GET artifact version',
+    }), { status: 404, headers: { 'content-type': 'application/json' } })));
+    const client = new ConsultingApiClient({ baseUrl: '/api', fetch: fakeFetch as unknown as typeof fetch });
+    const error = await client.artifactVersionDecisionAnalytics(
+      '00000000-0000-4000-8000-000000000009',
+      '00000000-0000-4000-8000-000000000008',
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiClientError);
+    expect((error as ApiClientError).code).toBe('NOT_FOUND');
+    expect((error as ApiClientError).status).toBe(404);
+  });
+
   it('invokes fetch without binding it to the client instance', async () => {
     let capturedThis: unknown = 'unset';
     const fakeFetch = vi.fn(function (this: unknown, _url: string | URL | Request, _init?: RequestInit) {

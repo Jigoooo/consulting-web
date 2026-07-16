@@ -1,4 +1,4 @@
-import { bigint, boolean, check, foreignKey, index, integer, jsonb, numeric, pgTable, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { bigint, boolean, check, foreignKey, index, integer, jsonb, numeric, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { primaryId, softDelete, timestamps } from './_shared';
 import { artifacts, artifactVersions, evidenceItems, fileAttachments, documentExtractions } from './collab';
@@ -111,6 +111,82 @@ export const decisionScorecardItems = pgTable(
   ],
 );
 
+/** Immutable audit runs for MCDA sensitivity and optional financial impact intervals. */
+export const decisionAnalyticsRuns = pgTable(
+  'decision_analytics_runs',
+  {
+    id: primaryId,
+    sequenceNo: bigint('sequence_no', { mode: 'number' }).generatedAlwaysAsIdentity().notNull(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    threadId: uuid('thread_id')
+      .notNull()
+      .references(() => threads.id, { onDelete: 'no action' }),
+    scorecardId: uuid('scorecard_id')
+      .notNull()
+      .references(() => decisionScorecards.id, { onDelete: 'no action' }),
+    artifactVersionId: uuid('artifact_version_id').references(() => artifactVersions.id, { onDelete: 'no action' }),
+    artifactContentHash: text('artifact_content_hash'),
+    methodVersion: text('method_version').notNull(),
+    inputHash: text('input_hash').notNull(),
+    inputSnapshot: jsonb('input_snapshot').$type<Record<string, unknown>>().notNull(),
+    sensitivity: jsonb('sensitivity').$type<Record<string, unknown>>().notNull(),
+    impact: jsonb('impact').$type<Record<string, unknown> | null>(),
+    actorKind: text('actor_kind').notNull(),
+    actorUserId: uuid('actor_user_id').references(() => users.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('decision_analytics_runs_sequence_unique').on(t.sequenceNo),
+    unique('decision_analytics_runs_input_unique')
+      .on(t.workspaceId, t.scorecardId, t.inputHash, t.actorKind, t.actorUserId)
+      .nullsNotDistinct(),
+    index('decision_analytics_runs_thread_idx').on(t.threadId, t.sequenceNo),
+    index('decision_analytics_runs_artifact_version_idx').on(t.artifactVersionId, t.sequenceNo),
+    check('decision_analytics_runs_method_check', sql`${t.methodVersion} = 'decision_analytics_v2'`),
+    check('decision_analytics_runs_input_hash_check', sql`${t.inputHash} ~ '^[a-f0-9]{64}$'`),
+    check('decision_analytics_runs_artifact_pair_check', sql`(
+      (${t.artifactVersionId} IS NULL AND ${t.artifactContentHash} IS NULL)
+      OR (${t.artifactVersionId} IS NOT NULL AND ${t.artifactContentHash} ~ '^[a-f0-9]{64}$')
+    )`),
+    check('decision_analytics_runs_actor_pair_check', sql`(
+      (${t.actorKind} = 'system' AND ${t.actorUserId} IS NULL)
+      OR (${t.actorKind} = 'user' AND ${t.actorUserId} IS NOT NULL)
+    )`),
+  ],
+);
+
+/** Concurrency mutex rows that serialize immutable analytics source snapshots. */
+export const decisionAnalyticsSourceLocks = pgTable(
+  'decision_analytics_source_locks',
+  {
+    sourceKind: text('source_kind').notNull(),
+    sourceId: uuid('source_id').notNull(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    runId: uuid('run_id'),
+  },
+  (t) => [
+    primaryKey({ name: 'decision_analytics_source_locks_pk', columns: [t.sourceKind, t.sourceId] }),
+    index('decision_analytics_source_locks_run_idx').on(t.runId).where(sql`${t.runId} IS NOT NULL`),
+    check('decision_analytics_source_locks_kind_check', sql`${t.sourceKind} IN ('scorecard', 'artifact_version')`),
+  ],
+);
+
+/** One-way hashed tombstones prevent a hard-deleted tenant UUID from being resurrected. */
+export const workspaceDeletionTombstones = pgTable(
+  'workspace_deletion_tombstones',
+  {
+    workspaceIdHash: text('workspace_id_hash').primaryKey(),
+    isPermanent: boolean('is_permanent').notNull().default(true),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('workspace_deletion_tombstones_hash_check', sql`${t.workspaceIdHash} ~ '^[a-f0-9]{64}$'`),
+  ],
+);
 
 export const documentRetrievalUnits = pgTable(
   'document_retrieval_units',

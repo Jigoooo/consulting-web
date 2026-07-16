@@ -78,6 +78,9 @@ import {
   ListEvidenceResponseSchema,
   EvidenceDecisionSummaryResponseSchema,
   EvidenceDecisionSummaryV2ResponseSchema,
+  EvidenceDecisionSummaryV3ResponseSchema,
+  ArtifactVersionDecisionAnalyticsResponseSchema,
+  DecisionAnalyticsRunResponseSchema,
   ListRetrievalHitFeedbackResponseSchema,
   ReviewQueueResponseSchema,
   ArtifactContractCapabilitiesResponseSchema,
@@ -92,7 +95,10 @@ import {
   type AddEvidenceRequest,
   type ListEvidenceResponse,
   type EvidenceDecisionSummaryResponse,
-  type EvidenceDecisionSummaryV2Response,
+  type EvidenceDecisionSummaryV3Response,
+  type ArtifactVersionDecisionAnalyticsResponse,
+  type DecisionAnalyticsRunResponse,
+  type RunDecisionAnalyticsRequestInput,
   type ListRetrievalHitFeedbackResponse,
   type RecordRetrievalHitFeedbackRequest,
   type ReviewQueueResponse,
@@ -439,15 +445,44 @@ export class ConsultingApiClient {
     return this.http.request('/chat/evidence', { method: 'POST', body }, (d) => OkResponseSchema.parse(d));
   }
 
-  evidenceDecisionSummary(threadId: string): Promise<EvidenceDecisionSummaryV2Response> {
-    return this.http.request(`/chat/threads/${threadId}/evidence-decision/summary?includeJudgment=1`, { method: 'GET' }, (d) => {
+  evidenceDecisionSummary(threadId: string): Promise<EvidenceDecisionSummaryV3Response> {
+    return this.http.request(`/chat/threads/${threadId}/evidence-decision/summary?includeAnalytics=1`, { method: 'GET' }, (d) => {
+      const v3 = EvidenceDecisionSummaryV3ResponseSchema.safeParse(d);
+      if (v3.success) return v3.data;
       const v2 = EvidenceDecisionSummaryV2ResponseSchema.safeParse(d);
-      if (v2.success) return v2.data;
+      if (v2.success) return { ...v2.data, analytics: { supported: false, latestRun: null } };
       const v1: EvidenceDecisionSummaryResponse = EvidenceDecisionSummaryResponseSchema.parse(d);
       return {
         ...v1,
         judgment: { latestRun: null, blockedCount: 0 },
+        analytics: { supported: false, latestRun: null },
       };
+    });
+  }
+
+  runDecisionAnalytics(threadId: string, body: RunDecisionAnalyticsRequestInput): Promise<DecisionAnalyticsRunResponse> {
+    return this.http.request(
+      `/chat/threads/${threadId}/decision-analytics`,
+      { method: 'POST', body },
+      (d) => DecisionAnalyticsRunResponseSchema.parse(d),
+    );
+  }
+
+  artifactVersionDecisionAnalytics(threadId: string, artifactVersionId: string): Promise<ArtifactVersionDecisionAnalyticsResponse> {
+    return this.http.request(
+      `/chat/threads/${threadId}/decision-analytics/artifact-versions/${artifactVersionId}`,
+      { method: 'GET' },
+      (d) => ArtifactVersionDecisionAnalyticsResponseSchema.parse(d),
+    ).catch((error: unknown) => {
+      if (
+        error instanceof ApiClientError
+        && error.status === 404
+        && error.code === 'UNKNOWN'
+        && /^Cannot GET\b/u.test(error.message)
+      ) {
+        return { supported: false, latestRun: null, lineageStatus: 'unavailable' as const, scorecard: null };
+      }
+      throw error;
     });
   }
 

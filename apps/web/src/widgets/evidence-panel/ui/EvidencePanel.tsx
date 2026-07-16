@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { useEvidence, useProjectEvidence, useAddEvidence, useEvidenceDecisionSummary, useRetrievalHits, useRetrievalHitFeedback, useReviewQueue, useReviewQueueDecision } from '../../../lib/collab';
+import { useEvidence, useProjectEvidence, useAddEvidence, useEvidenceDecisionSummary, useRunDecisionAnalytics, useRetrievalHits, useRetrievalHitFeedback, useReviewQueue, useReviewQueueDecision } from '../../../lib/collab';
 import { composerDraftRequestStore, useHoveredMessage } from '../../../lib/threadCtx';
 import { useToast } from '../../../shared/ui/toast/Toast';
 import { Icon } from '../../../shared/icons/Icon';
-import type { EvidenceDecisionSummaryV2Response, ListRetrievalHitFeedbackResponse, RecordRetrievalHitFeedbackRequest, RetrievalFailureType, ReviewQueueFilter, ReviewQueueResponse } from '@consulting/contracts';
+import type { EvidenceDecisionSummaryV3Response, ListRetrievalHitFeedbackResponse, RecordRetrievalHitFeedbackRequest, RetrievalFailureType, ReviewQueueFilter, ReviewQueueResponse, RunDecisionAnalyticsRequestInput } from '@consulting/contracts';
 import type { IconName } from '../../../shared/icons/registry';
 import { Button } from '../../../shared/ui/button/Button';
 import { Input, Textarea } from '../../../shared/ui/input/Input';
@@ -14,6 +14,7 @@ import { searchStore } from '../../chat-thread/model/searchStore';
 import { evidenceAddErrorMessage } from './evidenceAddError';
 import { evidencePanelLoadState } from './evidencePanelState';
 import { nextRovingIndex } from '../../../shared/lib/rovingTablist';
+import { buildImpactRequest, formatKrw, type ImpactDriverDraft } from './decisionAnalyticsForm';
 import { useWorkspaceTree } from '../../../lib/spaces';
 import { useSelectedWorkspace } from '../../../lib/wsStore';
 import s from './EvidencePanel.module.css';
@@ -57,6 +58,21 @@ const reviewFilters: readonly { id: ReviewQueueFilter; label: string }[] = [
   { id: 'unsupported_claim', label: '근거부족' },
 ];
 
+export function isDecisionAnalyticsRunPending(
+  isPending: boolean,
+  variables: RunDecisionAnalyticsRequestInput | undefined,
+  scorecardId: string | undefined,
+): boolean {
+  return Boolean(isPending && scorecardId && variables?.scorecardId === scorecardId);
+}
+
+export function decisionAnalyticsRunForScorecard<T extends { scorecardId: string }>(
+  run: T | null | undefined,
+  scorecardId: string | undefined,
+): T | null {
+  return run && scorecardId && run.scorecardId === scorecardId ? run : null;
+}
+
 function modeIndex(mode: EvidenceMode) {
   return modeTabs.findIndex((item) => item.id === mode);
 }
@@ -85,6 +101,7 @@ export function EvidencePanel({ threadId, projectId, topicId }: { threadId: stri
   // without flashing a cold query state.
   const projectEv = useProjectEvidence(projectId, Boolean(projectId));
   const decision = useEvidenceDecisionSummary(threadId);
+  const decisionAnalytics = useRunDecisionAnalytics(threadId);
   const retrieval = useRetrievalHits(threadId);
   const retrievalFeedback = useRetrievalHitFeedback(threadId);
   const review = useReviewQueue(threadId, reviewFilter);
@@ -279,9 +296,17 @@ export function EvidencePanel({ threadId, projectId, topicId }: { threadId: stri
 
       {mode === 'scorecard' ? (
         <ScorecardView
+          key={decision.data?.latestScorecard?.id ?? 'empty-scorecard'}
           isLoading={decision.isLoading}
           isError={decision.isError}
           summary={decision.data}
+          canMutate={canMutateEvidence}
+          isRunning={isDecisionAnalyticsRunPending(
+            decisionAnalytics.isPending,
+            decisionAnalytics.variables,
+            decision.data?.latestScorecard?.id,
+          )}
+          onRun={(body) => decisionAnalytics.mutateAsync(body)}
           onRetry={() => void decision.refetch()}
         />
       ) : null}
@@ -464,7 +489,7 @@ export function EvidencePanel({ threadId, projectId, topicId }: { threadId: stri
   );
 }
 
-type DecisionSummary = EvidenceDecisionSummaryV2Response;
+type DecisionSummary = EvidenceDecisionSummaryV3Response;
 type RetrievalHit = ListRetrievalHitFeedbackResponse['hits'][number];
 type ReviewItem = ReviewQueueResponse['items'][number];
 
@@ -623,19 +648,68 @@ function ScorecardView({
   isLoading,
   isError,
   summary,
+  canMutate,
+  isRunning,
+  onRun,
   onRetry,
 }: {
   isLoading: boolean;
   isError: boolean;
   summary: DecisionSummary | undefined;
+  canMutate: boolean;
+  isRunning: boolean;
+  onRun: (body: RunDecisionAnalyticsRequestInput) => Promise<unknown>;
   onRetry: () => void;
 }) {
+  const toast = useToast();
+  const driverSerial = useRef(1);
+  const [impactOpen, setImpactOpen] = useState(false);
+  const [fixedMultiplier, setFixedMultiplier] = useState('');
+  const [drivers, setDrivers] = useState<ImpactDriverDraft[]>([
+    { id: 'driver_1', label: '', min: '', mode: '', max: '' },
+  ]);
+  const [impactError, setImpactError] = useState<string | null>(null);
+
+  function updateDriver(id: string, field: keyof Omit<ImpactDriverDraft, 'id'>, value: string) {
+    setDrivers((current) => current.map((driver) => driver.id === id ? { ...driver, [field]: value } : driver));
+  }
+
+  function addDriver() {
+    if (drivers.length >= 6) return;
+    driverSerial.current += 1;
+    setDrivers((current) => [...current, {
+      id: `driver_${driverSerial.current}`,
+      label: '',
+      min: '',
+      mode: '',
+      max: '',
+    }]);
+  }
+
+  async function submitImpact(scorecardId: string) {
+    const result = buildImpactRequest(fixedMultiplier, drivers);
+    if (!result.ok) {
+      setImpactError(result.message);
+      return;
+    }
+    setImpactError(null);
+    try {
+      await onRun({ scorecardId, impact: result.impact });
+      toast('success', '영향 추정이 감사 원장에 기록됐어요.');
+    } catch {
+      setImpactError('영향 추정 저장에 실패했습니다. 입력값은 유지되므로 잠시 후 다시 시도해주세요.');
+    }
+  }
+
   if (isLoading && !summary) return <PanelLoading label="결정표 불러오는 중" />;
   if (isError && !summary) {
     return <PanelError title="결정표를 불러오지 못했어요" description="결정표가 생성되지 않은 상태와는 다릅니다." onRetry={onRetry} />;
   }
   const scorecard = summary?.latestScorecard;
   if (!scorecard) return <EmptyState icon="info" title="결정표가 아직 없어요" description="답변 검증 뒤 유지/보강 같은 선택지가 점수표로 정리됩니다." />;
+  const analytics = summary.analytics;
+  const run = decisionAnalyticsRunForScorecard(analytics.latestRun, scorecard.id);
+
   return (
     <>
       {isError ? <PanelError tone="warn" title="최신 결정표를 확인하지 못했어요" description="마지막으로 불러온 결정표를 표시합니다." onRetry={onRetry} /> : null}
@@ -654,6 +728,114 @@ function ScorecardView({
             <div className={s.scoreBar}><span style={{ width: `${Math.round(item.weightedScore * 100)}%` }} /></div>
           </div>
         ))}
+
+        {!analytics.supported ? (
+          <div className={s.analyticsNotice} role="status">
+            <b>결정 분석 서버 업데이트 대기</b>
+            <span>결정표는 볼 수 있지만 안정성·영향 분석은 서버 업데이트 뒤 사용할 수 있습니다.</span>
+          </div>
+        ) : run ? (
+          <section className={s.analyticsSection} data-testid="decision-analytics-audit" aria-labelledby="decision-analytics-heading">
+            <div className={s.analyticsHead}>
+              <div>
+                <span className={s.sectionLabel}>결정 분석</span>
+                <h3 id="decision-analytics-heading">승자 안정성 {Math.round(run.sensitivity.winnerStability * 100)}%</h3>
+              </div>
+              <span>{run.sensitivity.scenarios.toLocaleString('ko-KR')}개 시나리오</span>
+            </div>
+            <div className={s.stabilityTrack} aria-label={`승자 안정성 ${Math.round(run.sensitivity.winnerStability * 100)}%`}>
+              <span style={{ width: `${Math.round(run.sensitivity.winnerStability * 100)}%` }} />
+            </div>
+            <p className={s.analyticsAssumption}>기준 가중치를 축별 ±{Math.round(run.sensitivity.perturbationPct * 100)}% 범위에서 변동한 결과입니다.</p>
+            <div className={s.analyticsSubhead}>순위 역전 임계축</div>
+            <div className={s.thresholdList}>
+              {run.sensitivity.criticalCriteria.map((criterion) => (
+                <div key={criterion.criterionId} className={s.thresholdRow} data-flips={criterion.flipsWinner || undefined}>
+                  <span>{criterion.label}</span>
+                  <b>{criterion.thresholdPct === null ? '범위 내 안정' : `가중치 ${criterion.thresholdPct > 0 ? '+' : ''}${Math.round(criterion.thresholdPct * 100)}%`}</b>
+                  <small>{criterion.challengerId ? `도전자 ${criterion.challengerId}` : '순위 유지'}</small>
+                </div>
+              ))}
+            </div>
+            {run.impact ? (
+              <>
+                <div className={s.analyticsSubhead}>재정 영향 범위 · {run.impact.unit}</div>
+                <div className={s.impactGrid}>
+                  <div><span>P10 · 하위 10% 분위</span><b>{formatKrw(run.impact.interval.p10)}</b></div>
+                  <div><span>P50 · 중앙 분위</span><b>{formatKrw(run.impact.interval.p50)}</b></div>
+                  <div><span>P90 · 상위 10% 분위</span><b>{formatKrw(run.impact.interval.p90)}</b></div>
+                </div>
+                <div className={s.thresholdList} aria-label="재정 영향 입력 가정">
+                  {run.impact.drivers.map((driver) => (
+                    <div key={driver.id} className={s.thresholdRow}>
+                      <span>{driver.label}</span>
+                      <b>{driver.min.toLocaleString('ko-KR')} / {driver.mode.toLocaleString('ko-KR')} / {driver.max.toLocaleString('ko-KR')}</b>
+                      <small>최솟값 / 기준값 / 최댓값</small>
+                    </div>
+                  ))}
+                </div>
+                <p className={s.analyticsAssumption}>입력값을 곱하는 모델 · 고정 배수 {run.impact.fixedMultiplier.toLocaleString('ko-KR')} · 삼각분포 · {run.impact.iterations.toLocaleString('ko-KR')}회 · seed {run.impact.seed}. P10/P50/P90은 입력 가정 기반 분위값이며 신뢰구간·보장액·확정 예산이 아닙니다.</p>
+              </>
+            ) : (
+              <p className={s.analyticsAssumption}>현재 기록은 순위 민감도만 포함합니다. 재정 영향은 사용자가 입력한 값으로만 계산합니다.</p>
+            )}
+            <div className={s.auditMeta}>
+              <span>{run.methodVersion} · {run.actorKind === 'system' ? '자동 실행' : '사용자 실행'} · {new Date(run.createdAt).toLocaleString('ko-KR')}</span>
+              <code title={run.inputHash}>{run.inputHash.slice(0, 16)}…</code>
+            </div>
+          </section>
+        ) : (
+          <div className={s.analyticsNotice} role="status">
+            <b>아직 분석 기록이 없습니다</b>
+            <span>다음 답변 후검증에서 순위 민감도가 자동 계산됩니다.</span>
+          </div>
+        )}
+
+        {analytics.supported && canMutate ? (
+          <section className={s.impactForm} aria-labelledby="impact-form-heading">
+            <div className={s.impactFormHead}>
+              <div>
+                <h3 id="impact-form-heading">재정 영향 직접 입력</h3>
+                <p>입력값을 곱하는 모델이며 모든 금액은 원(KRW), 각 축은 삼각분포로 계산합니다.</p>
+              </div>
+              <Button type="button" variant="ghost" size="sm" onClick={() => { setImpactOpen((open) => !open); setImpactError(null); }}>
+                {impactOpen ? '접기' : '입력 열기'}
+              </Button>
+            </div>
+            {impactOpen ? (
+              <fieldset disabled={isRunning} aria-busy={isRunning}>
+                <div className={s.impactFormBody}>
+                <label className={s.analyticsField}>
+                  <span>고정 배수</span>
+                  <Input type="number" inputMode="decimal" min="0" max="1000000" value={fixedMultiplier} onChange={(event) => setFixedMultiplier(event.target.value)} placeholder="예: 적용 개월 수" />
+                </label>
+                {drivers.map((driver, index) => (
+                  <div key={driver.id} className={s.driverGroup}>
+                    <div className={s.driverHead}>
+                      <b>영향 축 {index + 1}</b>
+                      {drivers.length > 1 ? <button type="button" className={s.driverRemove} onClick={() => setDrivers((current) => current.filter((item) => item.id !== driver.id))}>축 삭제</button> : null}
+                    </div>
+                    <Input aria-label={`영향 축 ${index + 1} 이름`} value={driver.label} onChange={(event) => updateDriver(driver.id, 'label', event.target.value)} placeholder="축 이름" />
+                    <div className={s.driverNumbers}>
+                      <Input aria-label={`영향 축 ${index + 1} 최솟값`} type="number" inputMode="decimal" min="0" value={driver.min} onChange={(event) => updateDriver(driver.id, 'min', event.target.value)} placeholder="최솟값" />
+                      <Input aria-label={`영향 축 ${index + 1} 기준값`} type="number" inputMode="decimal" min="0" value={driver.mode} onChange={(event) => updateDriver(driver.id, 'mode', event.target.value)} placeholder="기준값" />
+                      <Input aria-label={`영향 축 ${index + 1} 최댓값`} type="number" inputMode="decimal" min="0" value={driver.max} onChange={(event) => updateDriver(driver.id, 'max', event.target.value)} placeholder="최댓값" />
+                    </div>
+                  </div>
+                ))}
+                <div className={s.impactActions}>
+                  <Button type="button" variant="ghost" size="sm" disabled={drivers.length >= 6 || isRunning} onClick={addDriver}>영향 축 추가</Button>
+                  <Button type="button" variant="primary" size="sm" disabled={isRunning} onClick={() => void submitImpact(scorecard.id)}>
+                    {isRunning ? '계산 중…' : '영향 추정 실행'}
+                  </Button>
+                </div>
+                {impactError ? <p className={s.impactError} role="alert">{impactError}</p> : null}
+                  <p className={s.analyticsAssumption}>시나리오 2,000개와 영향 추정 10,000회를 사용합니다. 결과는 입력 가정의 범위이며 확정 예산이 아닙니다.</p>
+                </div>
+              </fieldset>
+            ) : null}
+          </section>
+        ) : null}
       </div>
     </>
   );
