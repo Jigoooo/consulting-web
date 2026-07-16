@@ -36,7 +36,12 @@ export interface LlmStrictJsonVerifier {
 }
 
 export type RepairWorkflowMode = 'general_chat' | 'report_decision';
-export type RepairActionId = 'remove_sentence' | 'mark_insufficient_evidence';
+export type RepairActionId = 'remove_sentence' | 'mark_insufficient_evidence' | 'qualify_conditional';
+
+// Deliberative-alignment threshold: only high-stakes unverified claims get the hard
+// refusal-to-assert hedge. Low-impact not_enough_info claims keep their substance with
+// a light evidence-status qualifier instead of being flat-deleted (reduces alignment tax).
+const HIGH_IMPACT_HEDGE_THRESHOLD = 0.8;
 
 export interface TargetedRepairAction {
   claimId: string;
@@ -168,11 +173,18 @@ function applyTargetedRepair(draftAnswer: string, verdicts: ClaimVerdict[]): { a
   const actions: TargetedRepairAction[] = [];
   const removedClaimIds = new Set<string>();
   for (const verdict of verdicts) {
-    const action: RepairActionId = verdict.verdict === 'not_enough_info' ? 'mark_insufficient_evidence' : 'remove_sentence';
-    const replacement = action === 'mark_insufficient_evidence' ? `자료 부족으로 단정하지 않습니다: ${verdict.claimText}` : '';
+    const lowImpactUnsupported = verdict.verdict === 'not_enough_info' && verdict.decisionImpact < HIGH_IMPACT_HEDGE_THRESHOLD;
+    const action: RepairActionId = verdict.verdict === 'not_enough_info'
+      ? (lowImpactUnsupported ? 'qualify_conditional' : 'mark_insufficient_evidence')
+      : 'remove_sentence';
+    const replacement =
+      action === 'qualify_conditional' ? `${verdict.claimText} (근거 확인 필요)`
+      : action === 'mark_insufficient_evidence' ? `자료 부족으로 단정하지 않습니다: ${verdict.claimText}`
+      : '';
     const before = answer;
     answer = replaceClaimSentence(answer, verdict.claimText, replacement);
-    if (answer !== before || action === 'remove_sentence') removedClaimIds.add(verdict.claimId);
+    // qualify_conditional keeps the claim in the answer, so it is not a removed claim.
+    if ((answer !== before || action === 'remove_sentence') && action !== 'qualify_conditional') removedClaimIds.add(verdict.claimId);
     actions.push({ claimId: verdict.claimId, action, before: verdict.claimText, after: replacement, reason: `${verdict.verdict}:${verdict.rationale}` });
   }
   return { answer: normalizeAnswerSpacing(answer), actions, removedClaimIds };

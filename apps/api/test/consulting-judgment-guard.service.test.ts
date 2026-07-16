@@ -60,6 +60,27 @@ describe('ConsultingJudgmentGuardService', () => {
     expect(prompt).toContain('불가/금지/확정');
   });
 
+  it('emits a compact permission-forward principle instead of the full defensive checklist when no issue fires', () => {
+    const result = service.evaluate({
+      query: '오늘 팀 회의 일정을 표로 정리해줘',
+      hits: [],
+      now: new Date('2026-07-15T00:00:00.000Z'),
+    });
+    const prompt = service.renderPromptContract(result);
+
+    expect(result.required).toBe(false);
+    expect(result.issues).toHaveLength(0);
+    // Compact principle block, not the 12-line defensive gate.
+    expect(prompt).toContain('### 컨설팅 판단 원칙');
+    expect(prompt).toContain('runtime_current_time: 2026-07-15T00:00:00.000Z');
+    expect(prompt).toContain('명확히 결론');
+    // The heavy defensive checklist must NOT be injected on zero-issue turns.
+    expect(prompt).not.toContain('### 컨설팅 판단 안전 게이트 v1');
+    expect(prompt).not.toContain('Comparator consistency');
+    expect(prompt).not.toContain('Counterargument');
+    expect(prompt).not.toContain('directly_applicable / analogical / background_only');
+  });
+
   it('warns when time-sensitive numeric evidence has no effective date and clears when a date is present', () => {
     const undated = service.evaluate({
       query: '현재 1호봉 기본급을 비교해줘',

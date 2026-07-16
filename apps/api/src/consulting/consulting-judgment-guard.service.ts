@@ -158,6 +158,20 @@ export class ConsultingJudgmentGuardService {
   }
 
   renderPromptContract(result: ConsultingJudgmentGuardResult): string {
+    // Deliberative-alignment posture: when no risk signal fired, inject a compact,
+    // permission-forward principle instead of the full 12-line defensive checklist.
+    // The heavy gate is reserved for turns that actually tripped a guard issue,
+    // which keeps low-risk chat from being pushed into hedging (alignment tax).
+    if (result.issues.length === 0) {
+      return [
+        '### 컨설팅 판단 원칙',
+        `- runtime_current_time: ${result.currentTimeIso}`,
+        '- 최신/현재 판단은 모델 기억 날짜가 아니라 위 runtime_current_time을 기준으로 한다.',
+        '- 직접 적용 근거가 있으면 명확히 결론을 내고 그 근거를 함께 제시한다(기관근거→메커니즘→So What→행동).',
+        '- 근거가 부족하거나 시간민감 수치의 기준일이 없을 때만 강도를 낮추고 확인이 필요한 지점을 밝힌다.',
+        `- detected_issues: ${result.issueSummary}`,
+      ].join('\n');
+    }
     const lines = [
       '### 컨설팅 판단 안전 게이트 v1',
       `- runtime_current_time: ${result.currentTimeIso}`,

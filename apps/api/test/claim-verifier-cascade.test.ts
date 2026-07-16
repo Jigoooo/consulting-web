@@ -338,4 +338,34 @@ describe('ClaimVerifierService cascade', () => {
     expect(report.nodeDurationsMs).toEqual(expect.objectContaining({ verify: expect.any(Number), targetedRepair: expect.any(Number), reverify: expect.any(Number) }));
     expect(report.langGraph).toEqual(expect.objectContaining({ dependencyAdded: false }));
   });
+
+  it('preserves low-impact unverified claims with a conditional qualifier but hard-hedges high-impact ones', async () => {
+    const neiNli: NliProvider = {
+      providerId: 'nei_nli',
+      model: 'nei-fixture-v1',
+      async classify() {
+        // neutral => not_enough_info for every claim in this fixture
+        return { label: 'neutral', confidence: 0.3, latencyMs: 1, rationale: 'fixture undecided' };
+      },
+    };
+    const service = new ClaimVerifierService(neiNli);
+    const neiClaims = [
+      { id: 'lo', text: '민원창구 수당 신설은 직원 만족도에 긍정적일 수 있다', decisionImpact: 0.4 },
+      { id: 'hi', text: '생활체육지도사 수당은 별표9에 따라 즉시 폐지해야 한다', decisionImpact: 0.9 },
+    ];
+    const neiEvidence = [
+      { id: 'ev', text: '해당 수당의 신설/폐지 여부는 아직 결정되지 않았고 검토 중이다', qualityScore: 60 },
+    ];
+    const draftAnswer = '민원창구 수당 신설은 직원 만족도에 긍정적일 수 있다. 생활체육지도사 수당은 별표9에 따라 즉시 폐지해야 한다.';
+
+    const report = await service.repairAndReverify({ mode: 'report_decision', draftAnswer, claims: neiClaims, evidence: neiEvidence, maxRepairRounds: 1 });
+
+    // Low-impact unverified claim keeps its substance with a light evidence-status qualifier.
+    expect(report.publishedAnswer).toContain('민원창구 수당 신설은 직원 만족도에 긍정적일 수 있다');
+    expect(report.publishedAnswer).toContain('근거 확인 필요');
+    expect(report.actions).toEqual(expect.arrayContaining([expect.objectContaining({ claimId: 'lo', action: 'qualify_conditional' })]));
+    // High-impact unverified claim still gets the hard refusal-to-assert hedge.
+    expect(report.publishedAnswer).toContain('자료 부족으로 단정하지 않습니다');
+    expect(report.actions).toEqual(expect.arrayContaining([expect.objectContaining({ claimId: 'hi', action: 'mark_insufficient_evidence' })]));
+  });
 });

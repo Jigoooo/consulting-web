@@ -99,4 +99,52 @@ describe('VerifierGatePolicyService', () => {
       expect.objectContaining({ code: 'missing_verifier_telemetry' }),
     ]));
   });
+
+  it('attaches an optional rubric (5-axis) without changing the legacy decision contract', () => {
+    const result = service.evaluate({
+      mode: 'report_decision',
+      exactnessStatus: 'passed',
+      citationIssueCount: 0,
+      cragStatus: 'sufficient',
+      verdicts: [verdict({ claimId: 'c1', verdict: 'supports', confidence: 0.9, decisionImpact: 0.6 })],
+      applicabilityByClaim: { c1: 'directly_applicable' },
+    });
+
+    // Legacy contract unchanged: a clean report still PASSes.
+    expect(result.decision).toBe('PASS');
+    // New: rubric present with 5 axes and a weighted score.
+    expect(result.rubric).toBeDefined();
+    expect(result.rubric?.axes.R5_exactness).toBeCloseTo(1.0, 4);
+    expect(result.rubric?.weighted).toBeGreaterThan(0.85);
+    expect(result.rubric?.weakAxes).toHaveLength(0);
+  });
+
+  it('surfaces weak-axis revise hints for a soft (non-blocking) report answer', () => {
+    const result = service.evaluate({
+      mode: 'analysis_draft',
+      exactnessStatus: 'passed',
+      citationIssueCount: 0,
+      cragStatus: 'ambiguous',
+      verdicts: [verdict({ claimId: 'c1', verdict: 'not_enough_info', confidence: 0.2, decisionImpact: 0.4 })],
+      applicabilityByClaim: { c1: 'cross_project' },
+    });
+
+    // analysis_draft never hard-blocks.
+    expect(result.decision).not.toBe('BLOCKED');
+    // Rubric flags the weak evidence + applicability axes with targeted hints.
+    expect(result.rubric?.weakAxes).toEqual(expect.arrayContaining(['R1_evidence', 'R2_applicability']));
+    expect(result.rubric?.reviseHints.R1_evidence).toBeTruthy();
+  });
+
+  it('omits rubric when applicability/crag signals are absent (backward compatibility)', () => {
+    const result = service.evaluate({
+      mode: 'general_chat',
+      exactnessStatus: 'blocked',
+      citationIssueCount: 1,
+      verdicts: [verdict({ claimId: 'r1', verdict: 'refutes', decisionImpact: 0.95 })],
+    });
+    // Legacy callers that don't pass cragStatus/applicability get no rubric — nothing breaks.
+    expect(result.decision).toBe('PASS_WITH_WARNINGS');
+    expect(result.rubric).toBeUndefined();
+  });
 });

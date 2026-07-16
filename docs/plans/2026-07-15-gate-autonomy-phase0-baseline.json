@@ -1,0 +1,455 @@
+{
+  "$schema_version": "1.0.0",
+  "baseline_id": "gate-autonomy-phase0-2026-07-15",
+  "current_input_pressure": {
+    "route_prompt_metrics": [
+      {
+        "chars": 5555,
+        "lines": 76,
+        "negative": {
+          "hedge_directive": 1,
+          "must": 4,
+          "prohibit": 10,
+          "verification": 22
+        },
+        "permission": {
+          "assert_permission": 0,
+          "direct_conclusion": 0
+        },
+        "platform": "telegram",
+        "route": "-1004453868195:1",
+        "sha256": "80d0cbb4cc3ae29137ef6c8a48daaff1902362685b4af27719c1b3774c48342b"
+      },
+      {
+        "chars": 6289,
+        "lines": 76,
+        "negative": {
+          "hedge_directive": 1,
+          "must": 5,
+          "prohibit": 9,
+          "verification": 23
+        },
+        "permission": {
+          "assert_permission": 0,
+          "direct_conclusion": 0
+        },
+        "platform": "telegram",
+        "route": "-1004453868195:12",
+        "sha256": "cc58967266070a5e5a456f9bd16ea362e6cf408188c7ca6f53d9b86f8fd32ddc"
+      },
+      {
+        "chars": 6309,
+        "lines": 76,
+        "negative": {
+          "hedge_directive": 1,
+          "must": 5,
+          "prohibit": 9,
+          "verification": 23
+        },
+        "permission": {
+          "assert_permission": 0,
+          "direct_conclusion": 0
+        },
+        "platform": "telegram",
+        "route": "-1004453868195:356",
+        "sha256": "f2365f903e4458a0e15b9f871538db18786f64eaf7ebbc5083e1d842dc9e3218"
+      },
+      {
+        "chars": 6289,
+        "lines": 76,
+        "negative": {
+          "hedge_directive": 1,
+          "must": 5,
+          "prohibit": 9,
+          "verification": 23
+        },
+        "permission": {
+          "assert_permission": 0,
+          "direct_conclusion": 0
+        },
+        "platform": "telegram",
+        "route": "-1004453868195:524",
+        "sha256": "e491370dab55757645101186ed632aed4680bf8e7b4b5cb16ee28ed12befff57"
+      },
+      {
+        "chars": 6313,
+        "lines": 76,
+        "negative": {
+          "hedge_directive": 1,
+          "must": 5,
+          "prohibit": 9,
+          "verification": 23
+        },
+        "permission": {
+          "assert_permission": 0,
+          "direct_conclusion": 0
+        },
+        "platform": "telegram",
+        "route": "-1004453868195:533",
+        "sha256": "11d3d0ad8f48d7290dcb5fc0f2622329c5b89fa94f970a2e6be34bf128762430"
+      },
+      {
+        "chars": 6313,
+        "lines": 76,
+        "negative": {
+          "hedge_directive": 1,
+          "must": 5,
+          "prohibit": 9,
+          "verification": 23
+        },
+        "permission": {
+          "assert_permission": 0,
+          "direct_conclusion": 0
+        },
+        "platform": "telegram",
+        "route": "-1004453868195:1060",
+        "sha256": "4856df57b95f8129ef1ed4896520cc18a824d723b36f4da158ce4abe80646da5"
+      },
+      {
+        "chars": 6292,
+        "lines": 76,
+        "negative": {
+          "hedge_directive": 1,
+          "must": 5,
+          "prohibit": 9,
+          "verification": 23
+        },
+        "permission": {
+          "assert_permission": 0,
+          "direct_conclusion": 0
+        },
+        "platform": "telegram",
+        "route": "-1004453868195:2107",
+        "sha256": "736b4dd31a8519e8287a654a0b200a4687064b8a643422971f958046f1123df3"
+      },
+      {
+        "chars": 1128,
+        "lines": 7,
+        "negative": {
+          "hedge_directive": 0,
+          "must": 2,
+          "prohibit": 4,
+          "verification": 0
+        },
+        "permission": {
+          "assert_permission": 0,
+          "direct_conclusion": 0
+        },
+        "platform": "discord",
+        "route": "1507732027330265108",
+        "sha256": "c3b598dd87aa73648d937d7c00e4e10d55d6da63d01ae1f9c5752535425926a5"
+      },
+      {
+        "chars": 5046,
+        "lines": 55,
+        "negative": {
+          "hedge_directive": 1,
+          "must": 4,
+          "prohibit": 8,
+          "verification": 20
+        },
+        "permission": {
+          "assert_permission": 0,
+          "direct_conclusion": 0
+        },
+        "platform": "discord",
+        "route": "1509181980930084895",
+        "sha256": "8568c4affeda1768c097365e2e93c10f78cc336ef6223c094130826094453c87"
+      }
+    ],
+    "static_web_prompt_surfaces": {
+      "exactness_gate": {
+        "check_kinds": [
+          "sum_equals_total",
+          "percentage_change",
+          "ratio_percent"
+        ],
+        "hard_gate_preserved": true,
+        "sha256": "f407deb22b963f2ddfd7a5822656448548400f509a4a618abd9209d281675a95"
+      },
+      "judgment_guard_render_contract": {
+        "block_chars": 1294,
+        "block_lines": 25,
+        "constraint_term_hits": 9,
+        "injection_mode": "unconditional base contract plus conditional required_actions",
+        "permission_term_hits": 0,
+        "sha256": "51182fed84bd96bddb54350665ac3cbec23f1174b159394d972371f87339b95f"
+      },
+      "memory_context_builder": {
+        "known_duplicate_surfaces": [
+          "scope_isolation",
+          "P5_data_safety",
+          "GraphRAG_usage_rules",
+          "CRAG_ambiguous",
+          "Evidence_to_Decision"
+        ],
+        "sha256": "cf2e2b70d2587dcd8ec294c2200f7f2c2f37a1cba6c9ad0cfd1b6fd96d491cc7",
+        "source_constraint_term_hits": 20,
+        "source_permission_term_hits": 0
+      },
+      "verifier_gate_policy": {
+        "analysis_draft_hard_block": false,
+        "final_export_structural_block": true,
+        "general_chat_hard_block": false,
+        "report_decision_structural_block": true,
+        "sha256": "a281a57f93d052ec82f1b5aeaca1d19d49b4a88fc2e08b7547222385eb23d228"
+      }
+    }
+  },
+  "focused_contract_tests": {
+    "command": "pnpm --filter @consulting/api exec vitest run test/verifier-gate-policy.service.test.ts test/exactness-gate.service.test.ts test/consulting-judgment-guard.service.test.ts test/consulting-memory-context.builder.test.ts --reporter=dot",
+    "duration_seconds": 2.42,
+    "exit_code": 0,
+    "test_files_passed": 4,
+    "tests_passed": 42
+  },
+  "generated_at": "2026-07-15T15:05:28.205825+00:00",
+  "latency_and_loop_footprint": {
+    "gateway_historical_per_turn": {
+      "all": {
+        "api_calls_per_turn_median": 2.69,
+        "api_calls_per_turn_p90": 9.43,
+        "input_tokens_per_turn_median": 42504,
+        "input_tokens_per_turn_p90": 155946,
+        "n_sessions": 34,
+        "tool_calls_per_turn_median": 7.0,
+        "tool_calls_per_turn_p90": 15.6,
+        "user_turns_total": 474
+      },
+      "gpt-5.5": {
+        "api_calls_per_turn_median": 3.92,
+        "api_calls_per_turn_p90": 9.43,
+        "input_tokens_per_turn_median": 35214,
+        "input_tokens_per_turn_p90": 95677,
+        "n_sessions": 5,
+        "tool_calls_per_turn_median": 5.47,
+        "tool_calls_per_turn_p90": 10.71,
+        "user_turns_total": 74
+      },
+      "gpt-5.6-sol": {
+        "api_calls_per_turn_median": 3.35,
+        "api_calls_per_turn_p90": 10.5,
+        "input_tokens_per_turn_median": 93288,
+        "input_tokens_per_turn_p90": 183786,
+        "n_sessions": 17,
+        "tool_calls_per_turn_median": 12.0,
+        "tool_calls_per_turn_p90": 18.75,
+        "user_turns_total": 254
+      }
+    },
+    "invalid_metric_rejected": "chat_messages.updated_at-created_at is 0 under atomic capture; not user-perceived latency.",
+    "web_retrieval_trace_reference": {
+      "recall_error_ms": 2267,
+      "recall_error_n": 1,
+      "recall_ok_avg_ms": 5039.5,
+      "recall_ok_n": 2,
+      "retrieval_runs_for_project": 0,
+      "status": "small_sample_reference_only",
+      "trace_spans_workspace": 14
+    }
+  },
+  "limitations": [
+    "Lexical hedge/decisive metrics are diagnostic proxies, not human quality labels.",
+    "Historical gateway/web outputs cannot be causally attributed to the current config prompt.",
+    "Web user-perceived latency is not currently recorded by chat_messages timestamps; add a proper first-token/final-token ledger in Phase 3.",
+    "Model-specific token telemetry is incomplete for some historical Claude sessions; cross-model token comparisons are excluded."
+  ],
+  "output_symptoms": {
+    "current_prompt_attribution": [
+      {
+        "best_token_coverage": 0.114,
+        "exact_contains": 0,
+        "normalized_contains": 0,
+        "route": "-1004453868195:1",
+        "sessions": 2
+      },
+      {
+        "best_token_coverage": 0.095,
+        "exact_contains": 0,
+        "normalized_contains": 0,
+        "route": "-1004453868195:12",
+        "sessions": 2
+      },
+      {
+        "best_token_coverage": 0.096,
+        "exact_contains": 0,
+        "normalized_contains": 0,
+        "route": "-1004453868195:356",
+        "sessions": 2
+      },
+      {
+        "best_token_coverage": 0.122,
+        "exact_contains": 0,
+        "normalized_contains": 0,
+        "route": "-1004453868195:524",
+        "sessions": 19
+      },
+      {
+        "best_token_coverage": 0.098,
+        "exact_contains": 0,
+        "normalized_contains": 0,
+        "route": "-1004453868195:533",
+        "sessions": 3
+      },
+      {
+        "best_token_coverage": 0.123,
+        "exact_contains": 0,
+        "normalized_contains": 0,
+        "route": "-1004453868195:1060",
+        "sessions": 11
+      },
+      {
+        "best_token_coverage": 0,
+        "exact_contains": 0,
+        "normalized_contains": 0,
+        "route": "-1004453868195:2107",
+        "sessions": 0
+      }
+    ],
+    "gateway": {
+      "discord": {
+        "all_models": {
+          "decisive_hits_total": 11,
+          "hedge_hits_total": 6,
+          "hedge_to_decisive_ratio": 0.545,
+          "median_chars": 71,
+          "n": 127,
+          "refusal_hits_total": 1,
+          "responses_with_decisive_pct": 5.5,
+          "responses_with_hedge_pct": 3.1,
+          "responses_with_refusal_pct": 0.8
+        },
+        "claude-opus-4-8": {
+          "decisive_hits_total": 9,
+          "hedge_hits_total": 3,
+          "hedge_to_decisive_ratio": 0.333,
+          "median_chars": 80,
+          "n": 86,
+          "refusal_hits_total": 1,
+          "responses_with_decisive_pct": 5.8,
+          "responses_with_hedge_pct": 2.3,
+          "responses_with_refusal_pct": 1.2
+        },
+        "claude-sonnet-4-6": {
+          "decisive_hits_total": 2,
+          "hedge_hits_total": 3,
+          "hedge_to_decisive_ratio": 1.5,
+          "median_chars": 53,
+          "n": 41,
+          "refusal_hits_total": 0,
+          "responses_with_decisive_pct": 4.9,
+          "responses_with_hedge_pct": 4.9,
+          "responses_with_refusal_pct": 0.0
+        }
+      },
+      "telegram": {
+        "all_models": {
+          "decisive_hits_total": 516,
+          "hedge_hits_total": 405,
+          "hedge_to_decisive_ratio": 0.785,
+          "median_chars": 364,
+          "n": 500,
+          "refusal_hits_total": 0,
+          "responses_with_decisive_pct": 35.6,
+          "responses_with_hedge_pct": 29.6,
+          "responses_with_refusal_pct": 0.0
+        },
+        "claude-fable-5": {
+          "decisive_hits_total": 18,
+          "hedge_hits_total": 8,
+          "hedge_to_decisive_ratio": 0.444,
+          "median_chars": 840,
+          "n": 12,
+          "refusal_hits_total": 0,
+          "responses_with_decisive_pct": 58.3,
+          "responses_with_hedge_pct": 33.3,
+          "responses_with_refusal_pct": 0.0
+        },
+        "claude-opus-4-8": {
+          "decisive_hits_total": 232,
+          "hedge_hits_total": 194,
+          "hedge_to_decisive_ratio": 0.836,
+          "median_chars": 127,
+          "n": 334,
+          "refusal_hits_total": 14,
+          "responses_with_decisive_pct": 27.5,
+          "responses_with_hedge_pct": 25.1,
+          "responses_with_refusal_pct": 2.1
+        },
+        "gpt-5.5": {
+          "decisive_hits_total": 149,
+          "hedge_hits_total": 112,
+          "hedge_to_decisive_ratio": 0.752,
+          "median_chars": 145,
+          "n": 239,
+          "refusal_hits_total": 0,
+          "responses_with_decisive_pct": 21.3,
+          "responses_with_hedge_pct": 19.7,
+          "responses_with_refusal_pct": 0.0
+        },
+        "gpt-5.6-sol": {
+          "decisive_hits_total": 311,
+          "hedge_hits_total": 245,
+          "hedge_to_decisive_ratio": 0.788,
+          "median_chars": 656,
+          "n": 228,
+          "refusal_hits_total": 0,
+          "responses_with_decisive_pct": 49.6,
+          "responses_with_hedge_pct": 37.7,
+          "responses_with_refusal_pct": 0.0
+        }
+      }
+    },
+    "status": "historical_proxy_not_attributable_to_current_prompt",
+    "warning": "Stored natural sessions do not contain the current config prompt (exact/normalized match 0). These output metrics are historical proxies only, not causal evidence for the current prompt.",
+    "web_changwon": {
+      "decisive_hits_total": 602,
+      "hedge_hits_total": 499,
+      "hedge_to_decisive_ratio": 0.829,
+      "median_chars": 508,
+      "n": 500,
+      "refusal_hits_total": 0,
+      "responses_with_decisive_pct": 40.4,
+      "responses_with_hedge_pct": 34.8,
+      "responses_with_refusal_pct": 0.0
+    }
+  },
+  "phase5_comparison_contract": {
+    "loop_tail_targets": {
+      "api_calls_per_turn_p90_max": 5,
+      "input_tokens_per_turn_p90_max": 100000,
+      "tool_calls_per_turn_p90_max": 8
+    },
+    "natural_output_after_activation": {
+      "compare": [
+        "strong_hedge_response_pct",
+        "decisive_response_pct",
+        "user_corrections",
+        "latency"
+      ],
+      "minimum_successful_samples_per_surface": 10,
+      "note": "No valid current-prompt natural baseline exists yet; collect a frozen pre-change or staged-shadow baseline before live activation if possible.",
+      "required": true,
+      "synthetic_counts_as_natural": false
+    },
+    "safety_parity": {
+      "exactness_hard_gate_regressions": 0,
+      "general_chat_new_hard_blocks": 0,
+      "report_decision_and_final_export_hard_gate_regressions": 0,
+      "scope_isolation_regressions": 0
+    },
+    "static": {
+      "assert_or_direct_conclusion_permission_min_per_route": 1,
+      "constraint_signal_reduction_min_pct": 50,
+      "judgment_guard_zero_issue_base_contract": "omit_or_single_principle",
+      "memory_context_max_duplicate_non_assertion_directive_per_bundle": 1,
+      "telegram_prompt_chars_reduction_min_pct": 50
+    }
+  },
+  "scope": {
+    "raw_content_persisted": false,
+    "repo": "/home/jigoo/.hermes/workspace/consulting-web",
+    "telegram_chat_id": "-1004453868195",
+    "web_project_id": "01fba1a5-7b16-4267-93df-f9ca6cf0462f"
+  }
+}

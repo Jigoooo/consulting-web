@@ -810,6 +810,22 @@ POST /chat/stream
   │   ├─ Evidence-to-Decision lines
   │   └─ render GraphRAG context markdown
   │
+  ├─ Gate autonomy (deliberative softening, 2026-07-15)
+  │   ├─ judgment-guard: zero-issue turns emit a compact 4-line principle
+  │   │   instead of the full 12-line defensive checklist (category-spec style)
+  │   ├─ memory-context: cross-project hedge lines are conditional on an actual
+  │   │   cross-project hit; a per-turn budgetMs degrades to budget_exceeded
+  │   │   instead of stalling the answer
+  │   ├─ claim-verifier: low-impact (<0.8) not_enough_info → qualify_conditional
+  │   │   (keep substance) instead of flat deletion; high-impact keeps hard hedge
+  │   ├─ rubric-verdict.ts: 5-axis deterministic rubric (R1 evidence / R2 applicability
+  │   │   / R3 citation / R4 calibration / R5 exactness=HARD) with mode weights,
+  │   │   weak-axis routing, and a targeted self-revision contract. No LLM self-scoring.
+  │   ├─ verifier-gate-policy: rubric attached as OPTIONAL advisory field; the legacy
+  │   │   PASS/PASS_WITH_WARNINGS/BLOCKED decision contract is unchanged
+  │   └─ gate-autonomy-ab-metrics.ts: Pareto usefulness×safety verdict
+  │       (tax_shift / hard_safety_violation block release). Exactness stays hard.
+  │
   ├─ HermesRunsClient.startRun()
   │   ├─ session_id = stableSessionId(thread, workspaceId, projectId, threadId)
   │   ├─ input = user message

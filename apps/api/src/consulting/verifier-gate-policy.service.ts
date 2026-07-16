@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { ClaimVerdict } from './evidence-to-decision.service.js';
 import type { ExactnessRunStatus } from './exactness-gate.service.js';
 import type { ConsultingJudgmentGuardIssue } from './consulting-judgment-guard.service.js';
+import { computeRubric, type RubricResult, type ApplicabilityLabel, type CragStatus } from './rubric-verdict.js';
 
 export type VerifierGateMode = 'general_chat' | 'analysis_draft' | 'report_decision' | 'final_export';
 export type VerifierGateDecision = 'PASS' | 'PASS_WITH_WARNINGS' | 'BLOCKED';
@@ -29,12 +30,23 @@ export interface VerifierGateInput {
   citationIssueCount?: number;
   verdicts?: ClaimVerdict[];
   judgmentIssues?: ConsultingJudgmentGuardIssue[];
+  /** Optional CRAG sufficiency status. Enables the rubric (lever A) when provided. */
+  cragStatus?: CragStatus;
+  /** Optional per-claim applicability labels. Enables the rubric when provided. */
+  applicabilityByClaim?: Record<string, ApplicabilityLabel>;
 }
 
 export interface VerifierGateResult {
   decision: VerifierGateDecision;
   blockers: VerifierGateIssue[];
   warnings: VerifierGateIssue[];
+  /**
+   * Optional 5-axis rubric (lever A). Present only when the caller supplies the extra
+   * signals (cragStatus + applicabilityByClaim). It is ADVISORY — the decision field
+   * above is computed by the legacy path and is unaffected by the rubric, so existing
+   * callers see identical behavior.
+   */
+  rubric?: RubricResult;
 }
 
 const HIGH_IMPACT_THRESHOLD = 0.8;
@@ -103,10 +115,31 @@ export class VerifierGatePolicyService {
       }
     }
 
-    return {
+    const result: VerifierGateResult = {
       decision: blockers.length > 0 ? 'BLOCKED' : warnings.length > 0 ? 'PASS_WITH_WARNINGS' : 'PASS',
       blockers,
       warnings,
     };
+
+    // Lever A (advisory rubric): only computed when the caller opts in by supplying the
+    // extra deliberative signals. The legacy decision above is never overridden.
+    if (input.cragStatus && input.applicabilityByClaim) {
+      result.rubric = computeRubric({
+        mode: input.mode,
+        cragStatus: input.cragStatus,
+        exactnessStatus: input.exactnessStatus ?? 'skipped',
+        citationIssueCount: input.citationIssueCount ?? 0,
+        overclaimRisk: (input.judgmentIssues ?? []).some((issue) => issue.code === 'overclaim_strength_risk'),
+        verdicts: (input.verdicts ?? []).map((verdict) => ({
+          claimId: verdict.claimId,
+          verdict: verdict.verdict,
+          confidence: verdict.confidence,
+          decisionImpact: verdict.decisionImpact,
+          applicability: input.applicabilityByClaim?.[verdict.claimId] ?? 'background_only',
+        })),
+      });
+    }
+
+    return result;
   }
 }
