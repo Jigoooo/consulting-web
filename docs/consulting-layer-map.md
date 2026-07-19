@@ -141,6 +141,7 @@ consulting-web-api-1           Up        3000/tcp, healthy
 consulting-web-hermes-proxy-1  Up        healthy
 consulting-web-redis-1         Up        6379/tcp, healthy
 consulting-web-pg-1            Up        5432/tcp, healthy
+consulting-web-brain-pg-1      Up        127.0.0.1:55418->5432/tcp, healthy
 ```
 
 compose 구조:
@@ -2090,8 +2091,8 @@ dialogue/file separate       LIKE fallback                 exact code +1000 boos
    - final_export block policy
 
 6. 운영 컨테이너
-   - web/api/pg/redis/hermes-proxy 모두 up
-   - api/pg/redis/hermes-proxy healthy
+   - web/api/pg/brain-pg/redis/hermes-proxy 모두 up
+   - api/pg/brain-pg/redis/hermes-proxy healthy
 ```
 
 ### 아직 덜 찬 것 / 주의할 것
