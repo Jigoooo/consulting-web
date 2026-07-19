@@ -1,5 +1,5 @@
 # apps/api — multi-stage build (pnpm monorepo aware)
-FROM node:22-bookworm-slim AS base
+FROM node:22-bookworm-slim@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4 AS base
 RUN corepack enable
 WORKDIR /repo
 
@@ -18,7 +18,7 @@ RUN pnpm --filter @consulting/api --prod deploy --legacy /out
 # python 3.12 slim(glibc)에서 빌드한다. Alpine/musl에는 onnxruntime wheel이 없어
 # cross-encoder rerank가 영구 fallback되므로 glibc 기반이 필수다.
 # venv 절대경로가 박히므로 런타임과 동일 경로(/app/extractor/.venv)로 생성.
-FROM python:3.12-slim-bookworm AS pybuild
+FROM python:3.12-slim-bookworm@sha256:8a7e7cc04fd3e2bd787f7f24e22d5d119aa590d429b50c95dfe12b3abe52f48b AS pybuild
 WORKDIR /app/extractor
 COPY apps/api/extractor/requirements.txt ./requirements.txt
 COPY apps/api/requirements-graphrag.txt /tmp/requirements-graphrag.txt
@@ -26,7 +26,7 @@ RUN python3 -m venv .venv \
   && .venv/bin/pip install --no-cache-dir -r requirements.txt \
   && python3 -m pip install --no-cache-dir -r /tmp/requirements-graphrag.txt
 
-FROM node:22-bookworm-slim AS runtime
+FROM node:22-bookworm-slim@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4 AS runtime
 ARG TYPST_VERSION=0.14.0
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \

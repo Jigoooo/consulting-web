@@ -139,7 +139,6 @@ text lines:    83,771
 consulting-web-web-1           Up        127.0.0.1:8088->80/tcp
 consulting-web-api-1           Up        3000/tcp, healthy
 consulting-web-hermes-proxy-1  Up        healthy
-consulting-web-cloudflared-1   Up
 consulting-web-redis-1         Up        6379/tcp, healthy
 consulting-web-pg-1            Up        5432/tcp, healthy
 ```
@@ -2091,7 +2090,7 @@ dialogue/file separate       LIKE fallback                 exact code +1000 boos
    - final_export block policy
 
 6. 운영 컨테이너
-   - web/api/pg/redis/hermes-proxy/cloudflared 모두 up
+   - web/api/pg/redis/hermes-proxy 모두 up
    - api/pg/redis/hermes-proxy healthy
 ```
 

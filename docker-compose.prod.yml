@@ -6,7 +6,7 @@ name: consulting-web
 
 services:
   pg:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
     environment:
       POSTGRES_USER: consulting
       POSTGRES_PASSWORD: ${PG_PASSWORD:?set in .env.docker}
@@ -20,8 +20,34 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # Shared consulting brain store. This is distinct from the app metadata DB (`pg`).
+  # The schema-aware healthcheck keeps API startup fail-closed on an empty/unrestored volume.
+  brain-pg:
+    image: pgvector/pgvector:pg18@sha256:212765b63c1462883de295c4c415edcd22191b8d8d46853e86ad05d4b577a4cb
+    environment:
+      POSTGRES_USER: consulting
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?set in .env.docker}
+      POSTGRES_DB: consulting
+    ports:
+      - '127.0.0.1:55418:5432'
+    volumes:
+      - brain-pg-data:/var/lib/postgresql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" &&
+          test "$$(psql -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" -Atqc
+          "SELECT (to_regclass('brain_raw.topics') IS NOT NULL AND
+          to_regclass('brain_rag.chunk_texts') IS NOT NULL)::int")" = 1
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
     command: ['redis-server', '--appendonly', 'yes']
     volumes:
       - redis-data:/data
@@ -33,7 +59,7 @@ services:
     restart: unless-stopped
 
   hermes-proxy:
-    image: alpine:3.20
+    image: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
     # Bridges Docker network -> WSL-local Hermes gateway bound on 127.0.0.1:8642.
     # It listens only on the host network; web exposure still remains 127.0.0.1:8088.
     network_mode: host
@@ -92,7 +118,7 @@ services:
       CONSULTING_BRAIN_BACKEND: pg
       CONSULTING_BRAIN_WRITE_BACKEND: pg
       CONSULTING_PG_DSN_DRIVER: psycopg
-      CONSULTING_PG_DSN: postgres://consulting:${PG_PASSWORD:?set in .env.docker}@pg18-rehearsal:5432/consulting
+      CONSULTING_PG_DSN: postgres://consulting:${PG_PASSWORD:?set in .env.docker}@brain-pg:5432/consulting
       CONSULTING_SHADOW_LOG_DIR: /brain/consulting/backups/pg18-migration/shadow-api
       CONSULTING_WRITE_LOG_DIR: /brain/consulting/backups/pg18-migration/write-shadow-api
       # Web Push (optional — endpoints degrade to no-op when unset)
@@ -107,6 +133,8 @@ services:
       - /home/jigoo/.hermes/config.yaml:/brain/hermes.config.yaml:ro
     depends_on:
       pg:
+        condition: service_healthy
+      brain-pg:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -123,9 +151,7 @@ services:
     restart: unless-stopped
 
   web:
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile
+    image: ${CONSULTING_WEB_IMAGE:-sha256:dd65c6a9a22db4015f94fd70a27e66d3f62b1bd2df0ef83e3421f2f48822a4fc}
     ports:
       - '127.0.0.1:8088:80'
     depends_on:
@@ -133,24 +159,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Phase 3 C-1 — Cloudflare Tunnel (outbound-only; no inbound ports opened).
-  # Remotely-managed tunnel: routing/hostname lives in the Zero Trust dashboard.
-  # Enable with:  docker compose --profile tunnel ... up -d
-  # Requires CLOUDFLARE_TUNNEL_TOKEN in .env.docker (never commit it).
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    profiles: ['tunnel']
-    # cloudflared natively reads TUNNEL_TOKEN from env (image has no shell).
-    # Default-empty so the base stack configs cleanly without the token;
-    # with the profile on and no token, cloudflared exits with its own error.
-    command: ['tunnel', '--no-autoupdate', 'run']
-    environment:
-      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
-    depends_on:
-      web:
-        condition: service_started
-    restart: unless-stopped
-
 volumes:
   pg-data:
+  brain-pg-data:
   redis-data:
